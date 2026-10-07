@@ -1,0 +1,28 @@
+# work-journal configuration. Every key is optional; defaults shown.
+# data_dir = "/Users/you/WorkJournal"   # default: $HOME/WorkJournal
+retention_days = 7
+close_time = "18:00"
+rollup_weekday = "Friday"
+idle_minutes = 5
+pause_auto_resume_minutes = 60
+screenshot_interval_sec = 10
+meeting_screenshot_interval_sec = 5
+audio_chunk_minutes = 5
+screenshot_width = 1440
+all_displays = false
+whisper_model = "base.en"
+diarization = "sherpa"       # "sherpa" or "off"
+voice_match_threshold = 0.75
+name_confidence_threshold = 0.7
+min_free_gb = 5
+listen_addr = "127.0.0.1:4747"
+meeting_min_two_way_minutes = 2
+excluded_apps = ["1Password", "Keychain Access"]
+excluded_title_keywords = ["Private", "Incognito"]
+meeting_apps = ["zoom.us", "Microsoft Teams", "FaceTime", "Slack"]
+meeting_title_keywords = ["Huddle", "Google Meet", "Meet -", "Microsoft Teams", "Zoom Meeting"]
+categories = ["Deep work", "Meetings", "Communication", "Admin", "Browsing/Research", "Break/Idle"]
+
+# Substring of app name or window title -> category
+[rules]
+# "Xcode" = "Deep work"
