@@ -1,0 +1,67 @@
+{{define "content"}}
+<nav class="daynav">
+  <a href="/day/{{.Prev}}" aria-label="Previous day">&larr; {{.Prev}}</a>
+  <h1>{{.Date}}{{if .IsToday}} <small>today</small>{{end}}</h1>
+  <a href="/day/{{.Next}}" aria-label="Next day">{{.Next}} &rarr;</a>
+</nav>
+
+{{if .DiskWarn}}<div class="banner disk-warning" role="alert">Disk space is low (state: {{.DiskWarn}}). Recording may be paused or raw media cleaned early.</div>{{end}}
+
+<section class="status {{if .RecorderUp}}up{{else}}down{{end}}">
+  <span class="dot" aria-hidden="true"></span>
+  <span class="status-text">{{.StatusText}}</span>
+  {{if .RecorderUp}}
+  <form method="post" action="{{if .Paused}}/resume{{else}}/pause{{end}}"><button type="submit">{{if .Paused}}Resume{{else}}Pause{{end}}</button></form>
+  {{end}}
+</section>
+
+<section>
+  <h2>Summary</h2>
+  {{if .Journal}}<pre class="journal">{{.Journal}}</pre>{{else}}<p class="muted">No journal entry for this day yet.</p>{{end}}
+</section>
+
+<section>
+  <h2>Timeline</h2>
+  <svg class="timeline" role="img" aria-label="Activity timeline" data-chart="timeline" data-spec="{{.Timeline}}"></svg>
+</section>
+
+<section>
+  <h2>Time by category</h2>
+  {{if .Totals}}
+  <ul class="totals">
+    {{range .Totals}}<li>
+      <span class="swatch" style="background:{{.Color}}"></span>
+      <span class="name">{{.Name}}</span>
+      <span class="bar" data-chart="bar" data-pct="{{.Pct}}" data-color="{{.Color}}"></span>
+      <span class="dur">{{dur .Dur}}</span>
+    </li>{{end}}
+  </ul>
+  {{else}}<p class="muted">No categorized time yet.</p>{{end}}
+</section>
+
+{{if .Meetings}}
+<section>
+  <h2>Meetings</h2>
+  <ul class="plain">{{range .Meetings}}<li><strong>{{.Title}}</strong> <span class="muted">{{.App}} · {{.Time}}</span></li>{{end}}</ul>
+</section>
+{{end}}
+
+<section>
+  <h2>Hourly notes</h2>
+  {{range .Hours}}
+  <article class="hour">
+    <header>
+      <h3><a href="/hour/{{$.Date}}/{{printf "%02d" .Hour}}">{{.Label}}</a>{{if .Summary.MainFocus}} <span class="focus">{{.Summary.MainFocus}}</span>{{end}}</h3>
+      {{if .NeedsReview}}<span class="badge warn">needs review</span>{{else if .Pending}}<span class="badge">processing</span>{{end}}
+    </header>
+    {{if .Summary.Notes}}<ul>{{range .Summary.Notes}}<li>{{.}}</li>{{end}}</ul>{{end}}
+    {{if .Summary.ActionItems}}<ul class="actions">{{range .Summary.ActionItems}}<li>{{.Text}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
+    <form method="post" action="/hour/{{$.Date}}/{{printf "%02d" .Hour}}/reprocess"><button type="submit" class="secondary">Reprocess</button></form>
+  </article>
+  {{else}}<p class="muted">No hours recorded.</p>{{end}}
+</section>
+
+<section>
+  <form method="post" action="/close-day/{{.Date}}"><button type="submit">Close the day</button></form>
+</section>
+{{end}}

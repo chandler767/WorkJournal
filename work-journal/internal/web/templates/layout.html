@@ -1,0 +1,15 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Work journal</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top"><a class="brand" href="/">Work journal</a></header>
+<main>{{template "content" .}}</main>
+<script src="/static/chart.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}

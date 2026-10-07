@@ -1,0 +1,60 @@
+{{define "content"}}
+<nav class="daynav">
+  <a href="/day/{{.Date}}">&larr; {{.Date}}</a>
+  <h1>{{.Label}}</h1>
+  <span></span>
+</nav>
+
+{{if .NeedsReview}}<div class="banner"><span class="badge warn">needs review</span>
+  This hour could not be summarized cleanly.
+  <form method="post" action="/hour/{{.Date}}/{{.Hour}}/reprocess"><button type="submit" class="secondary">Reprocess</button></form></div>{{end}}
+{{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}
+
+<section>
+  <h2>Notes</h2>
+  {{if .HasSummary}}
+    {{if .Summary.MainFocus}}<p class="focus">{{.Summary.MainFocus}}</p>{{end}}
+    <ul>{{range .Summary.Notes}}<li>{{.}}</li>{{end}}</ul>
+    {{if .Summary.ActionItems}}<h3>Action items</h3><ul class="actions">{{range .Summary.ActionItems}}<li>{{.Text}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
+  {{else}}<p class="muted">No notes yet.</p>{{end}}
+</section>
+
+<section>
+  <h2>Segments</h2>
+  {{range .Segments}}
+  <form class="seg" method="post" action="/segment/category">
+    <input type="hidden" name="date" value="{{$.Date}}">
+    <input type="hidden" name="hour" value="{{$.Hour}}">
+    <input type="hidden" name="start" value="{{.Start}}">
+    <span class="swatch" style="background:{{.Color}}"></span>
+    <span class="seg-what"><strong>{{.Clock}}</strong> {{.App}}{{if .Title}} <span class="muted">{{.Title}}</span>{{end}} <span class="muted">{{dur .Dur}}{{if eq .Source "user"}} · set by you{{end}}</span></span>
+    <select name="category" aria-label="Category for {{.App}} at {{.Clock}}">
+      {{$cur := .Category}}{{range $.Categories}}<option{{if eq . $cur}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    <button type="submit" class="secondary">Save</button>
+  </form>
+  {{else}}<p class="muted">No segments.</p>{{end}}
+</section>
+
+{{if .Screens}}
+<section>
+  <h2>Screenshots</h2>
+  <div class="scrubber" data-screens="{{.ScreensJSON}}">
+    <img alt="Screenshot" src="/media/{{.Date}}/screens/{{(index .Screens 0).File}}">
+    <input type="range" min="0" max="0" value="0" aria-label="Screenshot scrubber">
+    <output>{{(index .Screens 0).Clock}}</output>
+  </div>
+</section>
+{{end}}
+
+<section>
+  <h2>Transcript</h2>
+  {{if .Audio}}<div class="audios">{{range .Audio}}
+    <label>{{.Track}} {{printf "%d:%02d" (div60 .Start) (mod60 .Start)}}
+      <audio controls preload="none" data-track="{{.Track}}" data-start="{{.Start}}" src="/media/{{$.Date}}/audio/{{.Name}}"></audio></label>{{end}}</div>
+  {{end}}
+  {{range .Transcript}}
+  <p class="utt"><a href="#t={{.Offset}}" data-t="{{.Offset}}" data-track="{{.Track}}">{{.Clock}}</a> <strong class="spk">{{.Speaker}}</strong> {{.Text}}</p>
+  {{else}}<p class="muted">No transcript.</p>{{end}}
+</section>
+{{end}}
