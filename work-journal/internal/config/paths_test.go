@@ -48,7 +48,10 @@ func TestEnsure(t *testing.T) {
 	if err := p.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{p.Root, p.Voices(), p.Models()} {
+	if p.Logs() != filepath.Join(p.Root, "logs") {
+		t.Fatalf("logs = %s", p.Logs())
+	}
+	for _, d := range []string{p.Root, p.Voices(), p.Models(), p.Logs()} {
 		if st, err := os.Stat(d); err != nil || !st.IsDir() {
 			t.Fatalf("missing %s", d)
 		}

@@ -33,11 +33,15 @@ func (p Paths) WeeklyJournal(week string) string {
 
 func (p Paths) Voices() string { return filepath.Join(p.Root, "voices") }
 func (p Paths) Models() string { return filepath.Join(p.Root, "models") }
+func (p Paths) Logs() string   { return filepath.Join(p.Root, "logs") }
+
+// RecorderLog is where the recorder's stdout and stderr go.
+func (p Paths) RecorderLog() string { return filepath.Join(p.Logs(), "recorder.log") }
 
 // Ensure creates the root and the long-lived subdirectories.
 func (p Paths) Ensure() error {
 	for _, d := range []string{
-		p.Root, p.Voices(), p.Models(),
+		p.Root, p.Voices(), p.Models(), p.Logs(),
 		filepath.Join(p.Root, "raw"), filepath.Join(p.Root, "derived"),
 		filepath.Join(p.Root, "journal"),
 	} {

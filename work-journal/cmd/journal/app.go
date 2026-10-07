@@ -301,9 +301,11 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 }
 
 // recorderArgs launches the recorder bundle through LaunchServices (so its
-// own permissions apply) with `run` arguments from the live config.
+// own permissions apply) with `run` arguments from the live config. Its
+// stdout and stderr go to logs/recorder.log (through `open` they would be lost).
 func (a *App) recorderArgs(degraded bool) []string {
-	args := append([]string{"-W", "-n", a.Loc.RecorderApp(), "--args"}, capture.RecorderArgs(a.Cfg(), a.Paths)...)
+	logPath := a.Paths.RecorderLog()
+	args := append([]string{"--stderr", logPath, "--stdout", logPath, "-W", "-n", a.Loc.RecorderApp(), "--args"}, capture.RecorderArgs(a.Cfg(), a.Paths)...)
 	if degraded {
 		args = append(args, "--degraded")
 	}

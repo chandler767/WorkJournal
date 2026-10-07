@@ -155,8 +155,9 @@ func TestBuildWiresComponents(t *testing.T) {
 func TestRecorderArgsFollowSavedConfig(t *testing.T) {
 	a := newTestApp(t)
 	args := a.recorderArgs(false)
-	head := []string{"-W", "-n", a.Loc.RecorderApp(), "--args", "run"}
-	if !slices.Equal(args[:5], head) {
+	logPath := filepath.Join(a.Paths.Root, "logs", "recorder.log")
+	head := []string{"--stderr", logPath, "--stdout", logPath, "-W", "-n", a.Loc.RecorderApp(), "--args", "run"}
+	if !slices.Equal(args[:9], head) {
 		t.Fatalf("args = %v", args)
 	}
 	if slices.Contains(args, "--degraded") {
