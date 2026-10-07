@@ -84,9 +84,10 @@ func defaultSetupDeps(stdout, stderr io.Writer) setupDeps {
 }
 
 // runSetup prepares the data directory, writes a default config if none
-// exists, builds the recorder, downloads the whisper model and installs the
-// skills. It stops at the first failure.
-func runSetup(ctx context.Context, cfgPath string, cfg config.Config, loc Locations, deps setupDeps, out io.Writer) error {
+// exists, builds the recorder (only when missing, or always with rebuild),
+// downloads the whisper model and installs the skills. It stops at the first
+// failure.
+func runSetup(ctx context.Context, cfgPath string, cfg config.Config, loc Locations, rebuild bool, deps setupDeps, out io.Writer) error {
 	p := config.Paths{Root: cfg.DataDir}
 	if err := p.Ensure(); err != nil {
 		return fmt.Errorf("data dir: %w", err)
@@ -104,9 +105,14 @@ func runSetup(ctx context.Context, cfgPath string, cfg config.Config, loc Locati
 		fmt.Fprintf(out, "kept existing %s\n", cfgPath)
 	}
 
-	fmt.Fprintln(out, "building the recorder…")
-	if err := deps.Run(ctx, loc.ModuleRoot, filepath.Join(loc.ModuleRoot, "recorder", "build.sh")); err != nil {
-		return fmt.Errorf("build recorder: %w", err)
+	const permNote = "rebuilding resets the recorder's macOS permissions (grant them again, then run `journal doctor`)"
+	if fi, err := os.Stat(loc.RecorderBin()); err == nil && fi.Size() > 0 && !rebuild {
+		fmt.Fprintf(out, "recorder already built; pass --rebuild to rebuild it (%s)\n", permNote)
+	} else {
+		fmt.Fprintf(out, "building the recorder… note: %s\n", permNote)
+		if err := deps.Run(ctx, loc.ModuleRoot, filepath.Join(loc.ModuleRoot, "recorder", "build.sh")); err != nil {
+			return fmt.Errorf("build recorder: %w", err)
+		}
 	}
 
 	base := deps.ModelBase

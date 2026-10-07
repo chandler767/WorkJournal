@@ -23,7 +23,7 @@ From this directory:
 
 ```sh
 make build              # builds bin/journal
-bin/journal setup       # data dir + config, builds the recorder, downloads the
+bin/journal setup       # data dir + config, builds the recorder (if not built), downloads the
                         # whisper model (~148 MB for base.en), installs the skills
 bin/journal doctor      # checks everything below; fix anything marked ✗
 bin/journal serve       # recorder + scheduler + dashboard; Ctrl-C to stop
@@ -52,8 +52,9 @@ Privacy & Security:
 - Accessibility (for window titles)
 
 `journal doctor` runs the recorder's selftest and tells you which grant is missing. The app
-is ad-hoc signed, so **every rebuild resets these grants**: after `journal setup` or
-`./recorder/build.sh`, remove the stale entry and add the app again.
+is ad-hoc signed, so **every rebuild resets these grants**: after `journal setup --rebuild`
+or `./recorder/build.sh`, remove the stale entry and add the app again. A plain
+`journal setup` keeps an already-built recorder.
 
 ## Privacy
 

@@ -126,7 +126,7 @@ func TestRunSetup(t *testing.T) {
 	}
 	var out bytes.Buffer
 	loc := Locations{ModuleRoot: mod, RepoRoot: repo, SkillsDir: repo}
-	if err := runSetup(context.Background(), cfgPath, cfg, loc, deps, &out); err != nil {
+	if err := runSetup(context.Background(), cfgPath, cfg, loc, false, deps, &out); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out.String())
 	}
 	p := config.Paths{Root: cfg.DataDir}
@@ -152,7 +152,7 @@ func TestRunSetup(t *testing.T) {
 	// A second run keeps an edited config and skips the model.
 	mkfile(t, cfgPath, "retention_days = 3\n")
 	calls = nil
-	if err := runSetup(context.Background(), cfgPath, cfg, loc, deps, &out); err != nil {
+	if err := runSetup(context.Background(), cfgPath, cfg, loc, false, deps, &out); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(cfgPath); string(b) != "retention_days = 3\n" {
@@ -177,8 +177,49 @@ func TestRunSetupStopsOnFailure(t *testing.T) {
 		},
 	}
 	err := runSetup(context.Background(), filepath.Join(cfg.DataDir, "config.toml"), cfg,
-		Locations{ModuleRoot: mod, RepoRoot: repo}, deps, &bytes.Buffer{})
+		Locations{ModuleRoot: mod, RepoRoot: repo}, false, deps, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "build recorder") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// M12: an existing recorder is not rebuilt (that would reset its macOS
+// permissions) unless --rebuild is given.
+func TestRunSetupSkipsBuiltRecorderUnlessRebuild(t *testing.T) {
+	repo, mod := fakeRepo(t)
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	cfgPath := filepath.Join(cfg.DataDir, "config.toml")
+	loc := Locations{ModuleRoot: mod, RepoRoot: repo, SkillsDir: repo}
+	mkfile(t, loc.RecorderBin(), "binary")
+	var calls []runCall
+	deps := setupDeps{
+		Run: func(_ context.Context, dir, name string, args ...string) error {
+			calls = append(calls, runCall{dir, append([]string{name}, args...)})
+			return nil
+		},
+		Download: func(context.Context, string, string) (bool, error) { return true, nil },
+	}
+	var out bytes.Buffer
+	if err := runSetup(context.Background(), cfgPath, cfg, loc, false, deps, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range calls {
+		if strings.HasSuffix(c.argv[0], "build.sh") {
+			t.Fatalf("rebuilt an existing recorder: %+v", calls)
+		}
+	}
+	if !strings.Contains(out.String(), "--rebuild") || !strings.Contains(out.String(), "resets") {
+		t.Fatalf("output lacks the rebuild note:\n%s", out.String())
+	}
+	calls, out = nil, bytes.Buffer{}
+	if err := runSetup(context.Background(), cfgPath, cfg, loc, true, deps, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) == 0 || !strings.HasSuffix(calls[0].argv[0], "build.sh") {
+		t.Fatalf("--rebuild did not build: %+v", calls)
+	}
+	if !strings.Contains(out.String(), "resets") {
+		t.Fatalf("output lacks the permissions note:\n%s", out.String())
 	}
 }

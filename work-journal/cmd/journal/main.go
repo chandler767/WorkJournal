@@ -24,7 +24,8 @@ const usage = `usage: journal <command> [flags]
 
 commands:
   serve                       run the recorder, scheduler and dashboard
-  setup                       create the data dir and config, build the recorder,
+  setup [--rebuild]           create the data dir and config, build the recorder
+                              (only if missing; rebuilding resets its permissions),
                               download the whisper model, install the skills
   doctor                      check prerequisites and permissions
   process [--day D --hour H]  process pending hours, or reprocess one hour
@@ -58,6 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	day := fset.String("day", "", "day YYYY-MM-DD")
 	hour := fset.Int("hour", -1, "hour 0-23")
 	week := fset.String("week", "", "ISO week YYYY-Www")
+	rebuild := fset.Bool("rebuild", false, "setup: rebuild the recorder even if it is built")
 	if err := fset.Parse(rest); err != nil {
 		return 2
 	}
@@ -82,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch cmd {
 	case "setup":
-		err = runSetup(ctx, *cfgPath, cfg, loc, defaultSetupDeps(stdout, stderr), stdout)
+		err = runSetup(ctx, *cfgPath, cfg, loc, *rebuild, defaultSetupDeps(stdout, stderr), stdout)
 	case "doctor":
 		if !printChecks(stdout, RunChecks(defaultDoctorDeps(cfg, loc))) {
 			return 1
@@ -103,7 +105,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // allowed reports whether every flag set on the command line applies to cmd.
 func allowed(cmd string, fset *flag.FlagSet) bool {
-	extra := map[string][]string{"process": {"day", "hour"}, "close-day": {"day"}, "rollup": {"week"}}[cmd]
+	extra := map[string][]string{"setup": {"rebuild"}, "process": {"day", "hour"}, "close-day": {"day"}, "rollup": {"week"}}[cmd]
 	ok := true
 	fset.Visit(func(f *flag.Flag) {
 		switch f.Name {
