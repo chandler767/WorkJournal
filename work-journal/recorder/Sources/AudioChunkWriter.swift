@@ -13,8 +13,10 @@ func chunkEnd(after date: Date, minutes: Int) -> Date {
     return min(midnight.addingTimeInterval(Double(next) * 60), nextMidnight)
 }
 
-/// Writes one audio track as AAC mono 32 kbps chunks `raw/<day>/audio/HHMM-<track>.m4a`,
-/// rotated on `chunkMinutes` wall-clock boundaries. Thread-safe; samples may come from any thread.
+/// Writes one audio track as AAC mono 32 kbps chunks `raw/<day>/audio/HHMM-<track>.m4a`
+/// (`HHMMSS-…` when that name is taken), rotated on `chunkMinutes` wall-clock boundaries.
+/// While muted (exclusion) samples are written as silence with their original timing.
+/// Thread-safe; samples may come from any thread.
 final class AudioChunkWriter {
     let track: String
     private let dataDir: URL
@@ -24,7 +26,7 @@ final class AudioChunkWriter {
     private var input: AVAssetWriterInput?
     private var end = Date.distantPast
     private var enabled = true
-    private var blockedUntil = Date.distantPast
+    private var muted = false
     private var reportedFailure = false
 
     init(track: String, dataDir: URL, chunkMinutes: Int) {
@@ -38,7 +40,7 @@ final class AudioChunkWriter {
         queue.async { self.appendOnQueue(sample) }
     }
 
-    /// Disabling finishes the current chunk (pause, exclusion, sleep, disk guard); enabling
+    /// Disabling finishes the current chunk (pause, sleep, quit, disk guard); enabling
     /// lets the next sample open a chunk named for that time.
     func setEnabled(_ on: Bool) {
         queue.sync {
@@ -47,17 +49,25 @@ final class AudioChunkWriter {
         }
     }
 
+    /// Muted samples are replaced by silence before writing; the chunk stays open.
+    func setMuted(_ on: Bool) {
+        queue.sync { muted = on }
+    }
+
     /// Finishes the current chunk so the `.m4a` is playable. Blocks until written.
     func finish() {
         queue.sync { finishOnQueue() }
     }
 
-    private func appendOnQueue(_ sample: CMSampleBuffer) {
-        guard enabled, CMSampleBufferDataIsReady(sample), CMSampleBufferGetNumSamples(sample) > 0 else { return }
+    private func appendOnQueue(_ original: CMSampleBuffer) {
+        guard enabled, CMSampleBufferDataIsReady(original), CMSampleBufferGetNumSamples(original) > 0 else { return }
+        guard let sample = muted ? silenced(original) : original else {
+            return fail("cannot build silent sample")
+        }
         let now = Date()
         if writer != nil && now >= end { finishOnQueue() }
         if writer == nil {
-            guard now >= blockedUntil, open(at: now, sample: sample) else { return }
+            guard open(at: now, sample: sample) else { return }
         }
         guard let writer = writer, let input = input else { return }
         guard input.isReadyForMoreMediaData else { return }
@@ -71,14 +81,11 @@ final class AudioChunkWriter {
 
     private func open(at start: Date, sample: CMSampleBuffer) -> Bool {
         let dir = rawDayDir(dataDir, start).appendingPathComponent("audio")
-        let url = dir.appendingPathComponent(chunkName(start: start, track: track))
-        if FileManager.default.fileExists(atPath: url.path) {
-            // Same-minute pause/resume: the contract name is taken, so wait for the next minute
-            // rather than overwrite the earlier chunk.
-            let minute = floor(start.timeIntervalSinceReferenceDate / 60) * 60 + 60
-            blockedUntil = Date(timeIntervalSinceReferenceDate: minute)
-            return false
+        // Same-minute pause/resume: HHMM is taken, so use the exact start second.
+        let name = chunkFileName(start: start, track: track) {
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
         }
+        let url = dir.appendingPathComponent(name)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let w = try AVAssetWriter(outputURL: url, fileType: .m4a)
@@ -129,4 +136,24 @@ final class AudioChunkWriter {
         reportedFailure = true
         eprint("audio \(track): \(message)")
     }
+}
+
+/// A copy of an LPCM sample buffer with the same format, sample count and timing, all zeros.
+private func silenced(_ sample: CMSampleBuffer) -> CMSampleBuffer? {
+    guard let source = CMSampleBufferGetDataBuffer(sample),
+          let format = CMSampleBufferGetFormatDescription(sample) else { return nil }
+    let length = CMBlockBufferGetDataLength(source)
+    var block: CMBlockBuffer?
+    guard CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: length, blockAllocator: nil,
+                                             customBlockSource: nil, offsetToData: 0, dataLength: length,
+                                             flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+          let zeros = block,
+          CMBlockBufferFillDataBytes(with: 0, blockBuffer: zeros, offsetIntoDestination: 0, dataLength: length) == noErr
+    else { return nil }
+    var out: CMSampleBuffer?
+    guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: nil, dataBuffer: zeros, formatDescription: format, sampleCount: CMSampleBufferGetNumSamples(sample),
+        presentationTimeStamp: CMSampleBufferGetPresentationTimeStamp(sample), packetDescriptions: nil,
+        sampleBufferOut: &out) == noErr else { return nil }
+    return out
 }

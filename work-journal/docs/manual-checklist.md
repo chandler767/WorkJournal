@@ -48,13 +48,14 @@ open -n recorder/build/WorkJournalRecorder.app --args run \
 - [ ] Restart the recorder. Note the time, switch to 1Password for about 30 s, then switch back.
 - [ ] `tail D/activity.jsonl` shows `{"ts":…,"type":"excluded"}` (no app, bundle or title), then `included`, then an `app` event for the app you returned to. No `app` event names 1Password.
 - [ ] No `D/screens/HHMMSS.jpg` has a timestamp inside the 1Password span.
-- [ ] The audio chunk that was open ended when 1Password came up (`afinfo` shows it ending there), and the next `-system`/`-mic` chunks are named for the minute you left 1Password. Nothing was recorded in between.
+- [ ] The audio chunks keep running through the span (no new chunk starts), but `afplay` of the `-system` and `-mic` chunks is silent for the time 1Password was frontmost.
+- [ ] Opening a new Private/Incognito browser window in an already-frontmost browser also logs `excluded` within about 2 s, and no screenshot of it is written.
 - [ ] While in 1Password, `echo status | nc -U ~/WorkJournal/recorder.sock` reports `"state":"excluded"`, `"screens":false`, `"audio":false`.
 
 ## 5. Pause and resume from the menu bar
 
 - [ ] Menu bar → Pause: the icon becomes `pause.circle`, the item reads Resume, and `activity.jsonl` gains `pause`. No screenshots or audio are written while paused, and the orange mic indicator goes away.
-- [ ] Menu bar → Resume: the icon returns to `record.circle`, `activity.jsonl` gains `resume` and an `app` event, and new audio chunks are named for the resume minute.
+- [ ] Menu bar → Resume: the icon returns to `record.circle`, `activity.jsonl` gains `resume` and an `app` event, and new audio chunks are named for the resume minute (`HHMMSS-<track>.m4a` if you paused and resumed within the same minute).
 - [ ] Menu bar → Open Dashboard opens the dashboard URL in the browser.
 
 ## 6. Auto-resume after the configured minutes

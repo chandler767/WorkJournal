@@ -17,6 +17,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     var meeting = false
     var onError: ((String) -> Void)?
     var onRunning: (() -> Void)?
+    /// Synchronous exclusion re-check of the current frontmost app/title; true drops the frame.
+    var isExcludedNow: () -> Bool = { false }
 
     private let options: RunOptions
     private let systemWriter: AudioChunkWriter
@@ -132,6 +134,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private func shoot() {
         guard screensEnabled, !shooting, !displays.isEmpty else { return }
+        // Title-only exclusions (a new Private/Incognito window) fire no activation notification.
+        guard !isExcludedNow(), screensEnabled else { return }
         shooting = true
         let taken = Date()
         let gen = generation
@@ -156,7 +160,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         group.notify(queue: .main) {
             self.shooting = false
             // Drop the frame if screens were disabled (e.g. an excluded app came up) meanwhile.
-            guard self.screensEnabled, gen == self.generation, let image = sideBySide(images.compactMap { $0 }) else { return }
+            guard !self.isExcludedNow(), self.screensEnabled, gen == self.generation, let image = sideBySide(images.compactMap { $0 }) else { return }
             let thumb = thumbnail(image)
             if shouldSkipScreenshot(prev: self.lastThumb, next: thumb) { return }
             self.lastThumb = thumb

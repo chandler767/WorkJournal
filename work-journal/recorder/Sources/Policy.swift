@@ -48,3 +48,14 @@ func shouldSkipScreenshot(prev: [UInt8]?, next: [UInt8], threshold: Double = 2.0
     for i in 0..<next.count { total += abs(Int(prev[i]) - Int(next[i])) }
     return Double(total) / Double(next.count) < threshold
 }
+
+/// Chunk file name for a chunk starting at `start`: `HHMM-<track>.m4a`, or `HHMMSS-<track>.m4a`
+/// when the HHMM name already exists for that day (`exists` is asked about bare file names).
+func chunkFileName(start: Date, track: String, exists: (String) -> Bool) -> String {
+    let name = chunkName(start: start, track: track)
+    guard exists(name) else { return name }
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.dateFormat = "HHmmss"
+    return "\(f.string(from: start))-\(track).m4a"
+}

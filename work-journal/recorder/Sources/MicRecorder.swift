@@ -4,7 +4,8 @@ import CoreMedia
 
 /// Microphone → `AudioChunkWriter(track: "mic")` via an `AVAudioEngine` input tap, converted
 /// to mono Float32 48 kHz. The engine only runs while recording, so the mic indicator is off
-/// during pause, exclusion and sleep. Call from the main thread.
+/// during pause and sleep
+/// (during exclusion it keeps running and the writer stores silence). Call from the main thread.
 final class MicRecorder {
     private let writer: AudioChunkWriter
     private let engine = AVAudioEngine()

@@ -38,8 +38,10 @@ final class Recorder {
     }
 
     private var state: String { paused ? "paused" : monitor.excluded ? "excluded" : "recording" }
-    private var recordingAllowed: Bool { !paused && !monitor.excluded && !sleeping }
-    private var screensOn: Bool { recordingAllowed && disk == .normal }
+    private var recordingAllowed: Bool { !paused && !sleeping }
+    private var screensOn: Bool { recordingAllowed && !monitor.excluded && disk == .normal }
+    /// Audio writers and mic run; during exclusion they stay open but store silence so the
+    /// chunk timeline is intact.
     private var audioOn: Bool { recordingAllowed && disk != .audio_off }
 
     /// `interactive` adds the menu bar and control socket (`run`); the selftest omits them.
@@ -51,6 +53,7 @@ final class Recorder {
         monitor.onWake = { [unowned self] in sleeping = false; apply() }
         capture.onError = { [unowned self] msg in captureError = msg; report(msg) }
         capture.onRunning = { [unowned self] in captureError = nil; apply() }
+        capture.isExcludedNow = { [unowned self] in monitor.refreshExclusion() }
         mic.onError = { [unowned self] msg in micError = msg; report(msg) }
         if interactive {
             menuBar = MenuBar(dashboardURL: options.dashboardURL,
@@ -72,6 +75,8 @@ final class Recorder {
         }
         capture.meeting = monitor.meeting
         capture.screensEnabled = screensOn
+        systemWriter.setMuted(monitor.excluded)
+        micWriter.setMuted(monitor.excluded)
         systemWriter.setEnabled(audioOn)
         micWriter.setEnabled(audioOn)
         if audioOn { mic.start() } else { mic.stop() }
@@ -133,7 +138,7 @@ final class Recorder {
 
     private func statusJSON() -> String {
         let obj: [String: Any] = ["state": state, "since": rfc3339(since), "meeting": monitor.meeting,
-                                  "screens": screensOn, "audio": audioOn]
+                                  "screens": screensOn, "audio": audioOn && !monitor.excluded]
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }

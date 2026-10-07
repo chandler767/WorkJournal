@@ -13,6 +13,7 @@ func runPolicyTests() -> Int32 {
     cal.timeZone = .current
     let t1405 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 5))!
 
+    let t140530 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 5, second: 30))!
     let t1407 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 7, second: 30))!
     let t1410 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 10))!
     let t2358 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 23, minute: 58))!
@@ -36,6 +37,11 @@ func runPolicyTests() -> Int32 {
         ("chunk ends on next 5-min boundary", chunkEnd(after: t1407, minutes: 5) == t1410),
         ("chunk starting on boundary ends 5 min later", chunkEnd(after: t1405, minutes: 5) == t1410),
         ("chunk never crosses midnight", chunkEnd(after: t2358, minutes: 7) == midnight),
+        ("chunk file name free HHMM", chunkFileName(start: t140530, track: "mic", exists: { _ in false }) == "1405-mic.m4a"),
+        ("chunk file name collision HHMMSS",
+         chunkFileName(start: t140530, track: "mic", exists: { $0 == "1405-mic.m4a" }) == "140530-mic.m4a"),
+        ("chunk file name collision checks own track",
+         chunkFileName(start: t140530, track: "system", exists: { $0 == "1405-mic.m4a" }) == "1405-system.m4a"),
         ("chunk name system", chunkName(start: t1405, track: "system") == "1405-system.m4a"),
         ("identical thumbnails skipped", shouldSkipScreenshot(prev: flat, next: flat, threshold: 2.0)),
         ("inverted thumbnail not skipped", !shouldSkipScreenshot(prev: flat, next: inverted, threshold: 2.0)),

@@ -106,6 +106,14 @@ final class ActivityMonitor {
         observers = []
     }
 
+    /// Re-checks the frontmost app and window title right now (e.g. just before a screenshot),
+    /// firing any exclusion transition immediately; returns whether recording is excluded.
+    @discardableResult
+    func refreshExclusion() -> Bool {
+        poll()
+        return excluded
+    }
+
     private func poll() {
         let f = Self.frontmost()
         let nowExcluded = isExcluded(app: f.app, title: f.title, policy)
