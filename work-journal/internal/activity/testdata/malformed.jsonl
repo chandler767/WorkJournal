@@ -1,0 +1,6 @@
+{"ts":"2026-10-07T14:00:00-07:00","type":"start"}
+not json at all
+
+{"ts":"bogus","type":"app","app":"X"}
+{"ts":"2026-10-07T14:00:01-07:00"}
+{"ts":"2026-10-07T14:00:02-07:00","type":"app","app":"Arc","bundle":"company.thebrowser.Browser","title":"Docs"}
