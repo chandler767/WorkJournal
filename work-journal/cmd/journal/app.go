@@ -193,6 +193,8 @@ type App struct {
 	launch     func(bin string, args []string) (func() error, func(os.Signal) error, error)
 	// quitRunning stops a recorder still serving the socket (capture.QuitRunning).
 	quitRunning func(sock string, probe, gone time.Duration) (bool, error)
+	// closeDiarizer releases the sherpa models; nil without them.
+	closeDiarizer func()
 }
 
 // Cfg returns the live configuration.
@@ -209,8 +211,46 @@ func (a *App) SaveCfg(c config.Config) error {
 	return nil
 }
 
-// Close releases the store.
-func (a *App) Close() error { return a.Store.Close() }
+// Close releases the speaker diarizer and the store.
+func (a *App) Close() error {
+	if a.closeDiarizer != nil {
+		a.closeDiarizer()
+	}
+	return a.Store.Close()
+}
+
+// closingDiarizer is a Diarizer holding resources (the sherpa models).
+type closingDiarizer interface {
+	diarize.Diarizer
+	Close()
+}
+
+func loadSherpa(seg, emb string) (closingDiarizer, error) {
+	return diarize.NewSherpaDiarizer(seg, emb)
+}
+
+// speakerDiarizer returns the sherpa diarizer when cfg.Diarization is
+// "sherpa" and both model files exist under the models directory, with a
+// func that releases it. Otherwise (or when loading fails, which is logged)
+// it returns NoopDiarizer and a nil func: system speech is then "others".
+func speakerDiarizer(cfg config.Config, p config.Paths, load func(seg, emb string) (closingDiarizer, error), logf func(string, ...any)) (diarize.Diarizer, func()) {
+	if cfg.Diarization != "sherpa" {
+		return diarize.NoopDiarizer{}, nil
+	}
+	seg, emb := diarize.ModelPaths(p.Models())
+	for _, m := range []string{seg, emb} {
+		if fi, err := os.Stat(m); err != nil || fi.Size() == 0 {
+			logf("warning: speaker model %s missing; run `journal setup`. System speech is labelled \"others\" until then", m)
+			return diarize.NoopDiarizer{}, nil
+		}
+	}
+	d, err := load(seg, emb)
+	if err != nil {
+		logf("warning: speaker diarization disabled: %v", err)
+		return diarize.NoopDiarizer{}, nil
+	}
+	return d, d.Close
+}
 
 // Build constructs every component. It creates the data directories and
 // opens the database but starts nothing.
@@ -231,13 +271,15 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 	a.Runner = &skills.ClaudeRunner{WorkDir: opt.Loc.SkillsDir, DataDir: filepath.Join(p.Root, "derived")}
 	a.Summarizer = &process.SkillSummarizer{Runner: a.Runner, Store: st, Paths: p, Cfg: cfg, Logf: log.Printf}
 	a.Voices = &diarize.Voices{Dir: p.Voices(), Threshold: cfg.VoiceMatchThreshold}
+	var diarizer diarize.Diarizer
+	diarizer, a.closeDiarizer = speakerDiarizer(cfg, p, loadSherpa, log.Printf)
 	a.Pipeline = &process.Pipeline{
 		Cfg:         cfg,
 		Paths:       p,
 		Store:       st,
 		Transcriber: media.Whisper{Run: media.ExecRunner, Bin: "whisper-cli", Model: modelPath(p, cfg.WhisperModel)},
 		OCR:         media.RecorderOCR{Run: media.ExecRunner, Bin: opt.Loc.RecorderBin()},
-		Diarizer:    diarize.NoopDiarizer{}, // Ruling 28: no diarizer ships yet
+		Diarizer:    diarizer,
 		Voices:      a.Voices,
 		Run:         media.ExecRunner,
 		Summarize:   a.Summarizer,

@@ -114,6 +114,7 @@ func TestRunSetup(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = filepath.Join(t.TempDir(), "data")
 	cfg.WhisperModel = "tiny.en"
+	cfg.Diarization = "off" // speaker models: TestRunSetupDownloadsSpeakerModels
 	cfgPath := filepath.Join(cfg.DataDir, "config.toml")
 	var calls []runCall
 	deps := setupDeps{
@@ -189,6 +190,7 @@ func TestRunSetupSkipsBuiltRecorderUnlessRebuild(t *testing.T) {
 	repo, mod := fakeRepo(t)
 	cfg := config.Default()
 	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	cfg.Diarization = "off" // the fake Download writes no files
 	cfgPath := filepath.Join(cfg.DataDir, "config.toml")
 	loc := Locations{ModuleRoot: mod, RepoRoot: repo, SkillsDir: repo}
 	mkfile(t, loc.RecorderBin(), "binary")

@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/diarize"
 )
 
 func mkfile(t *testing.T, path, content string) {
@@ -294,5 +297,70 @@ func TestShutdownSignalsIncludeHangup(t *testing.T) {
 		if !slices.Contains(shutdownSignals, s) {
 			t.Errorf("%v not handled", s)
 		}
+	}
+}
+
+type fakeSherpa struct {
+	diarize.NoopDiarizer
+	closed bool
+}
+
+func (f *fakeSherpa) Close() { f.closed = true }
+
+func TestSpeakerDiarizerChoice(t *testing.T) {
+	p := config.Paths{Root: t.TempDir()}
+	seg, emb := diarize.ModelPaths(p.Models())
+	var loaded []string
+	fake := &fakeSherpa{}
+	var loadErr error
+	load := func(s, e string) (closingDiarizer, error) {
+		loaded = append(loaded, s, e)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		return fake, nil
+	}
+	var logs []string
+	logf := func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	cfg := config.Default()
+
+	cfg.Diarization = "off"
+	if d, c := speakerDiarizer(cfg, p, load, logf); d != (diarize.NoopDiarizer{}) || c != nil || len(loaded) != 0 {
+		t.Fatalf("off: %v close=%v loaded %v", d, c != nil, loaded)
+	}
+
+	cfg.Diarization = "sherpa"
+	if d, c := speakerDiarizer(cfg, p, load, logf); d != (diarize.NoopDiarizer{}) || c != nil || len(loaded) != 0 {
+		t.Fatalf("missing models: %v close=%v loaded %v", d, c != nil, loaded)
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0], "journal setup") {
+		t.Fatalf("missing models not logged: %q", logs)
+	}
+
+	mkfile(t, seg, "s")
+	mkfile(t, emb, "e")
+	d, c := speakerDiarizer(cfg, p, load, logf)
+	if d != fake || c == nil || strings.Join(loaded, " ") != seg+" "+emb {
+		t.Fatalf("models present: %v close=%v loaded %v", d, c != nil, loaded)
+	}
+	c()
+	if !fake.closed {
+		t.Fatal("close func did not close the diarizer")
+	}
+
+	logs = nil
+	loadErr = errors.New("bad model")
+	if d, c := speakerDiarizer(cfg, p, load, logf); d != (diarize.NoopDiarizer{}) || c != nil {
+		t.Fatalf("load error: %v close=%v", d, c != nil)
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0], "bad model") {
+		t.Fatalf("load error not logged: %q", logs)
+	}
+}
+
+func TestBuildFallsBackToNoopWithoutModels(t *testing.T) {
+	a := newTestApp(t) // default config: diarization "sherpa", no models
+	if _, ok := a.Pipeline.Diarizer.(diarize.NoopDiarizer); !ok {
+		t.Fatalf("diarizer = %T", a.Pipeline.Diarizer)
 	}
 }

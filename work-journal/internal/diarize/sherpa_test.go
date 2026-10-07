@@ -55,3 +55,13 @@ func TestPlanTurnsRenumbersAndPicksLongestSegments(t *testing.T) {
 		t.Fatalf("clips = %v, want %v", clips, wantClips)
 	}
 }
+
+func TestModelURLs(t *testing.T) {
+	// Exactly as in docs/spike-diarization.md ("recongition" is upstream's spelling).
+	if got := ReleaseBase + SegmentationRelURL; got != "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2" {
+		t.Errorf("segmentation URL = %s", got)
+	}
+	if got := ReleaseBase + EmbeddingRelURL; got != "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx" {
+		t.Errorf("embedding URL = %s", got)
+	}
+}

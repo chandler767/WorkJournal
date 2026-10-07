@@ -2,14 +2,16 @@ package diarize
 
 import "path/filepath"
 
-// Sherpa model artifacts (docs/spike-diarization.md). The upstream release
-// tag really is spelled "recongition".
+// Sherpa model artifacts (docs/spike-diarization.md). Download URLs are
+// ReleaseBase + *RelURL; the upstream release tag really is spelled
+// "recongition".
 const (
+	ReleaseBase         = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 	SegmentationDir     = "sherpa-onnx-pyannote-segmentation-3-0"
 	SegmentationArchive = SegmentationDir + ".tar.bz2"
-	SegmentationURL     = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/" + SegmentationArchive
+	SegmentationRelURL  = "/speaker-segmentation-models/" + SegmentationArchive
 	EmbeddingFile       = "nemo_en_titanet_small.onnx"
-	EmbeddingURL        = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/" + EmbeddingFile
+	EmbeddingRelURL     = "/speaker-recongition-models/" + EmbeddingFile
 )
 
 // ModelPaths returns the segmentation and embedding model files under the

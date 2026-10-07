@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"workjournal/internal/config"
+	"workjournal/internal/diarize"
 )
 
 const defaultModelBase = "https://huggingface.co"
@@ -67,9 +68,10 @@ func (d downloader) fetch(ctx context.Context, url, dest string) (skipped bool, 
 
 // setupDeps are the side effects of setup, injectable for tests.
 type setupDeps struct {
-	Run       func(ctx context.Context, dir, name string, args ...string) error
-	Download  func(ctx context.Context, url, dest string) (skipped bool, err error)
-	ModelBase string // "" means defaultModelBase
+	Run        func(ctx context.Context, dir, name string, args ...string) error
+	Download   func(ctx context.Context, url, dest string) (skipped bool, err error)
+	ModelBase  string // "" means defaultModelBase
+	SherpaBase string // "" means diarize.ReleaseBase
 }
 
 func defaultSetupDeps(stdout, stderr io.Writer) setupDeps {
@@ -85,7 +87,8 @@ func defaultSetupDeps(stdout, stderr io.Writer) setupDeps {
 
 // runSetup prepares the data directory, writes a default config if none
 // exists, builds the recorder (only when missing, or always with rebuild),
-// downloads the whisper model and installs the skills. It stops at the first
+// downloads the whisper model (and the speaker models when diarization is
+// "sherpa") and installs the skills. It stops at the first
 // failure.
 func runSetup(ctx context.Context, cfgPath string, cfg config.Config, loc Locations, rebuild bool, deps setupDeps, out io.Writer) error {
 	p := config.Paths{Root: cfg.DataDir}
@@ -127,10 +130,16 @@ func runSetup(ctx context.Context, cfgPath string, cfg config.Config, loc Locati
 		fmt.Fprintln(out, "failed")
 		return fmt.Errorf("whisper model: %w", err)
 	}
-	if skipped {
-		fmt.Fprintln(out, "already present")
-	} else {
-		fmt.Fprintln(out, "downloaded")
+	fmt.Fprintln(out, presence(skipped))
+
+	if cfg.Diarization == "sherpa" {
+		sherpaBase := deps.SherpaBase
+		if sherpaBase == "" {
+			sherpaBase = diarize.ReleaseBase
+		}
+		if err := setupSpeakerModels(ctx, p.Models(), sherpaBase, deps.Download, out); err != nil {
+			return fmt.Errorf("speaker models: %w", err)
+		}
 	}
 
 	rel, err := filepath.Rel(loc.RepoRoot, filepath.Join(loc.ModuleRoot, "skills", "work-journal"))
