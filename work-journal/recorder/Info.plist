@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>local.workjournal.recorder</string>
+    <key>CFBundleName</key>
+    <string>WorkJournalRecorder</string>
+    <key>CFBundleExecutable</key>
+    <string>recorder</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Work Journal records your microphone to transcribe meetings you are in.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Work Journal captures screenshots and system audio to build your work journal.</string>
+</dict>
+</plist>
