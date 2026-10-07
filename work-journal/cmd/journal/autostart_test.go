@@ -134,3 +134,18 @@ func TestAutostartRejectsUnknownAction(t *testing.T) {
 		t.Fatal("want error for unknown action")
 	}
 }
+
+func TestAgentPathAddsToolDirs(t *testing.T) {
+	got := agentPath("/usr/bin:/bin", "/Users/me")
+	for _, want := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/Users/me/.local/bin", "/usr/bin", "/bin"} {
+		if !strings.Contains(":"+got+":", ":"+want+":") {
+			t.Errorf("agentPath = %q, missing %s", got, want)
+		}
+	}
+	if strings.Count(got, "/usr/bin:") > 1 {
+		t.Errorf("duplicate entries: %q", got)
+	}
+	if !strings.HasPrefix(got, "/usr/bin:/bin") {
+		t.Errorf("existing order not kept first: %q", got)
+	}
+}

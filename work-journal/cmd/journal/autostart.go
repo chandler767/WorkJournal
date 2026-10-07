@@ -57,7 +57,7 @@ func defaultAutostartDeps(cfgPath string, cfg config.Config) (autostartDeps, err
 		Spec: agentSpec{
 			Journal: exe,
 			Config:  absCfg,
-			Path:    os.Getenv("PATH"),
+			Path:    agentPath(os.Getenv("PATH"), home),
 			Log:     filepath.Join(config.Paths{Root: cfg.DataDir}.Logs(), "serve.log"),
 		},
 	}, nil
@@ -146,4 +146,25 @@ func launchAgentPlist(s agentSpec) string {
 </dict>
 </plist>
 `
+}
+
+// agentPath keeps the caller's PATH and appends the usual tool locations
+// (Homebrew for whisper-cli, ~/.local/bin for claude), since launchd agents
+// don't load shell profiles and the terminal running `autostart on` may not have.
+func agentPath(current, home string) string {
+	var dirs []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	for _, d := range strings.Split(current, ":") {
+		add(d)
+	}
+	for _, d := range []string{"/opt/homebrew/bin", "/usr/local/bin", filepath.Join(home, ".local", "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"} {
+		add(d)
+	}
+	return strings.Join(dirs, ":")
 }
