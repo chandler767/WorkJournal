@@ -24,11 +24,11 @@ func (p Paths) DerivedHour(day string, hour int) string {
 }
 
 func (p Paths) DailyJournal(day string) string {
-	return filepath.Join(p.Root, "journal", "daily", day+".md")
+	return filepath.Join(p.Root, "journal", day+".md")
 }
 
 func (p Paths) WeeklyJournal(week string) string {
-	return filepath.Join(p.Root, "journal", "weekly", week+".md")
+	return filepath.Join(p.Root, "journal", week+".md")
 }
 
 func (p Paths) Voices() string { return filepath.Join(p.Root, "voices") }
@@ -39,7 +39,7 @@ func (p Paths) Ensure() error {
 	for _, d := range []string{
 		p.Root, p.Voices(), p.Models(),
 		filepath.Join(p.Root, "raw"), filepath.Join(p.Root, "derived"),
-		filepath.Dir(p.DailyJournal("x")), filepath.Dir(p.WeeklyJournal("x")),
+		filepath.Join(p.Root, "journal"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err

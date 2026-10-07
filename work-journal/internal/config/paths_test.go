@@ -13,6 +13,12 @@ func TestPaths(t *testing.T) {
 	if got := p.DerivedHour("2026-10-07", 9); !strings.HasSuffix(got, "derived/2026-10-07/09.json") {
 		t.Fatalf("got %s", got)
 	}
+	if got := p.DailyJournal("2026-10-07"); !strings.HasSuffix(got, "journal/2026-10-07.md") {
+		t.Fatalf("got %s", got)
+	}
+	if got := p.WeeklyJournal("2026-W41"); !strings.HasSuffix(got, "journal/2026-W41.md") {
+		t.Fatalf("got %s", got)
+	}
 	if got := p.Socket(); got != "/data/recorder.sock" {
 		t.Fatalf("got %s", got)
 	}
