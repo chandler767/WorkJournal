@@ -30,7 +30,13 @@ func (f *fakeControl) Status() (capture.Status, error) {
 }
 func (f *fakeControl) Send(string) error { return nil }
 
-type fakeJobs struct{ reprocessed, closed []string }
+type fakeJobs struct {
+	reprocessed, closed []string
+	enrolled            [][3]string // meeting, speaker, name
+	enrollErr           error
+	enrollSaw           *store.Store // checked at call time: participant already saved?
+	sawParticipants     []store.ParticipantRecord
+}
 
 func (f *fakeJobs) ProcessPending(context.Context) error { return nil }
 func (f *fakeJobs) ReprocessHour(_ context.Context, d string, h int) error {
@@ -44,8 +50,12 @@ func (f *fakeJobs) CloseDay(_ context.Context, d string) error {
 func (f *fakeJobs) Rollup(context.Context, string) error { return nil }
 func (f *fakeJobs) Retain(context.Context) error         { return nil }
 func (f *fakeJobs) DiskCheck(context.Context) error      { return nil }
-func (f *fakeJobs) EnrollSpeaker(context.Context, string, string, string) error {
-	return nil
+func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, sp, n string) error {
+	f.enrolled = append(f.enrolled, [3]string{m, sp, n})
+	if f.enrollSaw != nil {
+		f.sawParticipants, _ = f.enrollSaw.Participants(m)
+	}
+	return f.enrollErr
 }
 
 type env struct {

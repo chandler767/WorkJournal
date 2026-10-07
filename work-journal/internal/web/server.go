@@ -54,11 +54,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /day/{date}", s.handleDay)
 	mux.HandleFunc("GET /hour/{date}/{hh}", s.handleHour)
 	mux.HandleFunc("GET /media/{date}/{kind}/{file}", s.handleMedia)
+	mux.HandleFunc("GET /meeting/{id}", s.handleMeeting)
+	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("POST /pause", s.sameOrigin(s.handlePause))
 	mux.HandleFunc("POST /resume", s.sameOrigin(s.handleResume))
 	mux.HandleFunc("POST /close-day/{date}", s.sameOrigin(s.handleCloseDay))
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
 	mux.HandleFunc("POST /segment/category", s.sameOrigin(s.handleSegmentCategory))
+	mux.HandleFunc("POST /meeting/{id}/speaker", s.sameOrigin(s.handleSpeaker))
 	return localHostOnly(mux)
 }
 

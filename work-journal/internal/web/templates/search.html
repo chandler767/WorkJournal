@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1>Search</h1>
+<form class="search" method="get" action="/search" role="search">
+  <input type="search" name="q" value="{{.Q}}" aria-label="Search transcripts, screen text and notes" autofocus>
+  <button type="submit">Search</button>
+</form>
+{{if .Searched}}
+<section>
+  {{range .Hits}}
+  <article class="hit">
+    <p><span class="badge">{{.Kind}}</span> <span class="muted">{{.Day}} {{.When}}</span>
+      {{if .Link}}<a href="{{.Link}}">open</a>{{end}}</p>
+    <p>{{range .Segs}}{{if .Mark}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</p>
+  </article>
+  {{else}}<p class="muted">No results.</p>{{end}}
+</section>
+{{end}}
+{{end}}

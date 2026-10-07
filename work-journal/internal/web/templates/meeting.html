@@ -1,0 +1,40 @@
+{{define "content"}}
+<nav class="daynav">
+  <a href="/day/{{.Day}}">&larr; {{.Day}}</a>
+  <h1>{{.Title}}</h1>
+  <span class="muted">{{.App}} · {{.Time}}</span>
+</nav>
+
+{{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
+{{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}
+
+<section>
+  <h2>Summary</h2>
+  {{if .HasSummary}}
+    <p>{{.Summary.Summary}}</p>
+    {{if .Summary.Decisions}}<h3>Decisions</h3><ul>{{range .Summary.Decisions}}<li>{{.}}</li>{{end}}</ul>{{end}}
+    {{if .Summary.ActionItems}}<h3>Action items</h3><ul class="actions">{{range .Summary.ActionItems}}<li>{{.Text}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
+  {{else}}<p class="muted">No summary yet.</p>{{end}}
+</section>
+
+<section>
+  <h2>Speakers</h2>
+  {{range .Speakers}}
+  {{if $.CanName}}
+  <form class="speaker" method="post" action="/meeting/{{$.ID}}/speaker">
+    <input type="hidden" name="speaker" value="{{.Speaker}}">
+    <span class="spk-name">{{.Display}}{{if .Confirmed}} <span class="badge">confirmed</span>{{end}}</span>
+    <input type="text" name="name" maxlength="80" required aria-label="Name for {{.Speaker}}" placeholder="Who is this?">
+    <button type="submit" class="secondary">Confirm name</button>
+  </form>
+  {{else}}<p class="speaker"><span class="spk-name">{{.Display}}</span></p>{{end}}
+  {{else}}<p class="muted">No speakers identified.</p>{{end}}
+</section>
+
+<section>
+  <h2>Transcript</h2>
+  {{range .Transcript}}
+  <p class="utt"><span class="muted">{{.Clock}}</span> <strong class="spk">{{.Speaker}}</strong> {{.Text}}</p>
+  {{else}}<p class="muted">No transcript.</p>{{end}}
+</section>
+{{end}}

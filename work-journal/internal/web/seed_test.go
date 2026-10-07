@@ -51,7 +51,7 @@ func Seed(t *testing.T, st *store.Store, p config.Paths) {
 	must(st.ReplaceSegments(seedDay, 10, []store.SegmentRecord{
 		{Day: seedDay, Hour: 10, Start: seedTime(10, 0), End: seedTime(10, 30), App: "Safari", Title: "docs", Kind: "app", Category: "Browsing/Research", Confidence: 0.6, Source: "skill"},
 	}))
-	must(st.UpsertMeeting(store.MeetingRecord{ID: "m1", Day: seedDay, Start: seedTime(9, 10), End: seedTime(9, 30), App: "zoom.us", Title: "Standup"}))
+	must(st.UpsertMeeting(store.MeetingRecord{ID: "2026-10-07-0910-zoom", Day: seedDay, Start: seedTime(9, 10), End: seedTime(9, 30), App: "zoom.us", Title: "Standup"}))
 
 	doc := process.HourDoc{Day: seedDay, Hour: 9, Status: store.StatusDone,
 		Segments: []activity.Segment{},

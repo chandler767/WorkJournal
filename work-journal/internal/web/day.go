@@ -28,7 +28,7 @@ type hourRow struct {
 }
 
 type meetingRow struct {
-	Title, App, Time string
+	ID, Title, App, Time string
 }
 
 type tlSeg struct {
@@ -115,7 +115,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, m := range meets {
-		p.Meetings = append(p.Meetings, meetingRow{Title: m.Title, App: m.App,
+		p.Meetings = append(p.Meetings, meetingRow{ID: m.ID, Title: m.Title, App: m.App,
 			Time: m.Start.Format("15:04") + "–" + m.End.Format("15:04")})
 	}
 

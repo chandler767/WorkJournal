@@ -42,7 +42,7 @@
 {{if .Meetings}}
 <section>
   <h2>Meetings</h2>
-  <ul class="plain">{{range .Meetings}}<li><strong>{{.Title}}</strong> <span class="muted">{{.App}} · {{.Time}}</span></li>{{end}}</ul>
+  <ul class="plain">{{range .Meetings}}<li><a href="/meeting/{{.ID}}"><strong>{{.Title}}</strong></a> <span class="muted">{{.App}} · {{.Time}}</span></li>{{end}}</ul>
 </section>
 {{end}}
 
