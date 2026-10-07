@@ -6,6 +6,10 @@ import CoreMedia
 /// to mono Float32 48 kHz. The engine only runs while recording, so the mic indicator is off
 /// during pause and sleep
 /// (during exclusion it keeps running and the writer stores silence). Call from the main thread.
+/// A mic error is reported only when it differs from the last one reported (cleared when the
+/// microphone runs).
+func shouldReportMicError(_ message: String, last: String?) -> Bool { message != last }
+
 final class MicRecorder {
     private let writer: AudioChunkWriter
     private let engine = AVAudioEngine()
@@ -15,6 +19,9 @@ final class MicRecorder {
     private var framesWritten: Int64 = 0
     private var configObserver: NSObjectProtocol?
     var onError: ((String) -> Void)?
+    /// Called when the microphone starts recording, clearing any earlier error.
+    var onRunning: (() -> Void)?
+    private var lastError: String?
 
     init(writer: AudioChunkWriter) {
         self.writer = writer
@@ -39,11 +46,11 @@ final class MicRecorder {
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 DispatchQueue.main.async {
-                    if granted { self.startEngine() } else { self.onError?("microphone permission denied") }
+                    if granted { self.startEngine() } else { self.fail("microphone permission denied") }
                 }
             }
         default:
-            onError?("microphone permission denied")
+            fail("microphone permission denied")
         }
     }
 
@@ -58,7 +65,7 @@ final class MicRecorder {
         let input = engine.inputNode
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, let converter = AVAudioConverter(from: inFormat, to: format) else {
-            onError?("no usable microphone input (format \(inFormat))")
+            fail("no usable microphone input (format \(inFormat))")
             return
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { [weak self] buffer, _ in
@@ -67,10 +74,20 @@ final class MicRecorder {
         do {
             try engine.start()
             running = true
+            lastError = nil
+            onRunning?()
         } catch {
             input.removeTap(onBus: 0)
-            onError?("cannot start microphone: \(error.localizedDescription)")
+            fail("cannot start microphone: \(error.localizedDescription)")
         }
+    }
+
+    /// Reports an error once: start() runs on every state change, and the same denial
+    /// must not be logged again each time.
+    private func fail(_ message: String) {
+        guard shouldReportMicError(message, last: lastError) else { return }
+        lastError = message
+        onError?(message)
     }
 
     private func stopEngine() {

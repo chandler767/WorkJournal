@@ -63,6 +63,11 @@ final class Recorder {
         capture.onRunning = { [unowned self] in captureError = nil; apply() }
         capture.isExcludedNow = { [unowned self] in monitor.refreshExclusion() }
         mic.onError = { [unowned self] msg in micError = msg; report(msg) }
+        mic.onRunning = { [unowned self] in
+            guard micError != nil else { return }
+            micError = nil
+            updateMenu()
+        }
         monitor.start()
         capture.start()
         apply()
