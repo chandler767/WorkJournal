@@ -4,6 +4,7 @@ package retention
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,7 +46,15 @@ func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, 
 			errs = append(errs, fmt.Errorf("hours on %s: %w", name, herr))
 			continue
 		}
-		if unprocessed(hours) || hasUnrecordedMedia(p, name, hours) {
+		if unprocessed(hours) {
+			continue
+		}
+		keep, merr := hasUnrecordedMedia(p, name, hours)
+		if merr != nil {
+			errs = append(errs, fmt.Errorf("keeping %s: %w", name, merr))
+			continue
+		}
+		if keep {
 			continue
 		}
 		if rerr := os.RemoveAll(p.RawDay(name)); rerr != nil {
@@ -69,41 +78,73 @@ func unprocessed(hours []store.HourRecord) bool {
 
 // hasUnrecordedMedia reports whether the day's raw audio or screenshots cover
 // an hour that has no done or needs_review record, i.e. was never processed.
-func hasUnrecordedMedia(p config.Paths, day string, hours []store.HourRecord) bool {
+// It fails safe: unreadable media dirs or unrecognised file names are returned
+// as an error so the caller keeps the day.
+func hasUnrecordedMedia(p config.Paths, day string, hours []store.HourRecord) (bool, error) {
 	settled := map[int]bool{}
 	for _, h := range hours {
 		if h.Status == store.StatusDone || h.Status == store.StatusNeedsReview {
 			settled[h.Hour] = true
 		}
 	}
-	for hour := range rawHours(p, day) {
+	raw, err := rawHours(p, day)
+	if err != nil {
+		return true, err
+	}
+	for hour := range raw {
 		if !settled[hour] {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // rawHours returns the hours that have audio chunks or screenshots on disk.
-func rawHours(p config.Paths, day string) map[int]bool {
+// A missing dir is fine; any other read error or unknown entry is an error.
+func rawHours(p config.Paths, day string) (map[int]bool, error) {
 	out := map[int]bool{}
-	if entries, err := os.ReadDir(p.Audio(day)); err == nil {
-		for _, e := range entries {
-			if hh, _, _, _, ok := media.ParseChunkName(e.Name()); ok {
-				out[hh] = true
-			}
+	for _, d := range []struct {
+		dir   string
+		parse func(name string) (int, bool)
+	}{{p.Audio(day), parseAudioHour}, {p.Screens(day), parseScreenHour}} {
+		entries, err := os.ReadDir(d.dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
-	}
-	if entries, err := os.ReadDir(p.Screens(day)); err == nil {
+		if err != nil {
+			return nil, err
+		}
 		for _, e := range entries {
-			base, ok := strings.CutSuffix(e.Name(), ".jpg")
-			if !ok || len(base) != 6 {
+			if e.Name() == ".DS_Store" {
 				continue
 			}
-			if hh, err := strconv.Atoi(base[:2]); err == nil && hh >= 0 && hh <= 23 {
-				out[hh] = true
+			hh, ok := d.parse(e.Name())
+			if !ok || e.IsDir() {
+				return nil, fmt.Errorf("unrecognised media entry %s", filepath.Join(d.dir, e.Name()))
 			}
+			out[hh] = true
 		}
 	}
-	return out
+	return out, nil
+}
+
+func parseAudioHour(name string) (int, bool) {
+	hh, _, _, _, ok := media.ParseChunkName(name)
+	return hh, ok
+}
+
+func parseScreenHour(name string) (int, bool) {
+	base, ok := strings.CutSuffix(name, ".jpg")
+	if !ok || len(base) != 6 {
+		return 0, false
+	}
+	for _, c := range base {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	hh, _ := strconv.Atoi(base[:2])
+	mm, _ := strconv.Atoi(base[2:4])
+	ss, _ := strconv.Atoi(base[4:])
+	return hh, hh <= 23 && mm <= 59 && ss <= 59
 }

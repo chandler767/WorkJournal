@@ -19,9 +19,6 @@ func setup(t *testing.T, days ...string) (config.Paths, *store.Store) {
 		if err := os.MkdirAll(p.Audio(d), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(p.Audio(d), "a.wav"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
 	}
 	st, err := store.Open(filepath.Join(root, "j.db"))
 	if err != nil {
@@ -165,5 +162,45 @@ func TestSweepSkipsDayWithUnrecordedRawHour(t *testing.T) {
 	}
 	if !reflect.DeepEqual(removed, []string{"2026-10-03", "2026-10-04"}) {
 		t.Fatalf("removed = %v", removed)
+	}
+}
+
+func TestSweepSkipsDayWhenMediaDirUnreadable(t *testing.T) {
+	p, st := setup(t, "2026-10-01", "2026-10-02")
+	// audio becomes a regular file, so reading it as a directory fails.
+	if err := os.RemoveAll(p.Audio("2026-10-01")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Audio("2026-10-01"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	removed, err := Sweep(p, st, now, 7)
+	if err == nil {
+		t.Fatal("want error for unreadable media dir")
+	}
+	if !reflect.DeepEqual(removed, []string{"2026-10-02"}) {
+		t.Fatalf("removed = %v", removed)
+	}
+	if !exists(p.RawDay("2026-10-01")) {
+		t.Fatal("day with unreadable media deleted")
+	}
+}
+
+func TestSweepSkipsDayWithUnparseableMediaName(t *testing.T) {
+	p, st := setup(t, "2026-10-01", "2026-10-02")
+	if err := os.WriteFile(filepath.Join(p.Audio("2026-10-01"), "weird.m4a"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(p.Screens("2026-10-02"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Screens("2026-10-02"), "shot.png"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	removed, err := Sweep(p, st, now, 7)
+	if err != nil || len(removed) != 0 {
+		t.Fatalf("removed=%v err=%v", removed, err)
 	}
 }
