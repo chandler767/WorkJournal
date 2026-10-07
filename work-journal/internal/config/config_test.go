@@ -87,6 +87,8 @@ func TestValidate(t *testing.T) {
 		{"categories", func(c *Config) { c.Categories = nil }, "categories"},
 		{"voice threshold", func(c *Config) { c.VoiceMatchThreshold = 1.5 }, "voice_match_threshold"},
 		{"diarization", func(c *Config) { c.Diarization = "bogus" }, "diarization"},
+		{"relative data dir", func(c *Config) { c.DataDir = "WorkJournal" }, "data_dir"},
+		{"unexpanded tilde", func(c *Config) { c.DataDir = "~/WorkJournal" }, "data_dir"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -122,5 +124,25 @@ func TestCloseClock(t *testing.T) {
 	c.CloseTime = "07:05"
 	if h, m := c.CloseClock(); h != 7 || m != 5 {
 		t.Fatalf("got %d:%d", h, m)
+	}
+}
+
+// M10: a leading "~/" in data_dir means the home directory.
+func TestLoadExpandsTildeInDataDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("data_dir = \"~/Journal\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DataDir != filepath.Join(home, "Journal") {
+		t.Fatalf("data_dir = %q", c.DataDir)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

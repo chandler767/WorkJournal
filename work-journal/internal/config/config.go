@@ -84,6 +84,7 @@ func Load(path string) (Config, error) {
 	if _, err := toml.Decode(string(b), &c); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	c.DataDir = expandHome(c.DataDir)
 	if c.Rules == nil {
 		c.Rules = map[string]string{}
 	}
@@ -160,6 +161,9 @@ func (c Config) Validate() error {
 	if c.DataDir == "" {
 		return errors.New("data_dir must not be empty")
 	}
+	if !filepath.IsAbs(c.DataDir) {
+		return fmt.Errorf("data_dir must be an absolute path (or start with ~/), got %q", c.DataDir)
+	}
 	return nil
 }
 
@@ -175,4 +179,16 @@ func (c Config) CloseClock() (hour, minute int) {
 		return 18, 0
 	}
 	return t.Hour(), t.Minute()
+}
+
+// expandHome replaces a leading "~/" (or a bare "~") with $HOME.
+func expandHome(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p // Validate rejects the relative path
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~"))
 }
