@@ -75,3 +75,10 @@ open -n recorder/build/WorkJournalRecorder.app --args run \
 ## 8. Degraded start
 
 - [ ] Start with `--degraded` added: the icon is `exclamationmark.circle` and the menu shows a disabled "Recorder restarted after errors" item.
+
+## 9. Speaker identification on a real call
+
+- [ ] With `diarization = "sherpa"` and the models from `journal setup` (`journal doctor` shows ✓ speaker models), record a real English call of at least 5 minutes with at least one other person, then run `journal process`.
+- [ ] The meeting page shows the other voices as `Speaker 1`, `Speaker 2`, … (not "others"), and each label mostly follows one person.
+- [ ] Name a speaker on the meeting page: `voices/<name>.json` appears, that speaker's lines in the meeting show the name, and the name appears in Settings → Voice profiles.
+- [ ] Record a second call with the same person: their lines get the name automatically. If they do not, or a different person gets it, note the cosine scores and revisit `voice_match_threshold` (0.60 came from the spike's Mandarin and synthetic samples, see docs/spike-diarization.md).

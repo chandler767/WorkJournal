@@ -22,9 +22,10 @@ Summaries are written by Claude Code skills (`summarize-hour`, `summarize-meetin
 From this directory:
 
 ```sh
-make build              # builds bin/journal
+make build              # builds bin/journal (and copies the sherpa-onnx dylibs next to it)
 bin/journal setup       # data dir + config, builds the recorder (if not built), downloads the
-                        # whisper model (~148 MB for base.en), installs the skills
+                        # whisper model (~148 MB for base.en) and the speaker models (~47 MB),
+                        # installs the skills
 bin/journal doctor      # checks everything below; fix anything marked ✗
 bin/journal serve       # recorder + scheduler + dashboard; Ctrl-C to stop
 ```
@@ -42,6 +43,12 @@ bin/journal close-day [--day 2026-10-07]     # write journal/<day>.md (default t
 bin/journal rollup [--week 2026-W41]         # write journal/<week>.md (default this week)
 ```
 
+`make build` copies `libsherpa-onnx-c-api.dylib` and `libonnxruntime.dylib` from the Go
+module cache into `bin/` and links `bin/journal` to load them from its own directory, so it
+keeps working after `go clean -modcache`. Keep the three files together if you move them. A
+plain `go build ./cmd/journal` also works, but that binary loads the dylibs from the module
+cache.
+
 ## Start at login
 
 ```sh
@@ -55,6 +62,33 @@ logs to `~/WorkJournal/logs/serve.log` and is restarted if it crashes. Stop any 
 started in a terminal first. The PATH captured when you run `autostart on` is used to find
 `whisper-cli` and `claude`, so run it from a normal terminal. Use the menu-bar Pause to stop
 recording temporarily; quitting the recorder from its menu only restarts it.
+
+## Speaker identification
+
+With `diarization = "sherpa"` (the default), each system-audio chunk is split into speaker
+turns locally with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): pyannote
+segmentation 3.0 finds the turns and NeMo TitaNet-small gives each speaker a voice
+embedding. Your microphone is always "me". Other voices are labelled `Speaker 1`,
+`Speaker 2`, … within each hour, or by name once you have named them. Nothing is sent
+anywhere; diarization adds a few seconds per 5-minute chunk.
+
+- Models: `journal setup` downloads `sherpa-onnx-pyannote-segmentation-3-0/model.onnx`
+  and `nemo_en_titanet_small.onnx` into `~/WorkJournal/models/`; `journal doctor` checks
+  them. Without them, system speech is labelled "others" (a warning is logged).
+- Naming: on a meeting's page, name a speaker. While the meeting's raw audio still exists
+  (`retention_days`), its chunks are diarized again, that speaker's voice embedding is
+  saved as a voice profile in `voices/<name>.json`, and their lines in that meeting are
+  relabelled with the name. Later recordings of a voice that matches a profile get the
+  name automatically. After retention removed the audio, the name is saved but no voice
+  is learned.
+- Voice profiles stay in `voices/` on this machine and are never passed to Claude.
+  Delete them under Settings → Voice profiles.
+- Thresholds: `voice_match_threshold` (default 0.60) is the cosine similarity at which a
+  voice matches a profile or a speaker heard earlier in the same hour. Raise it if
+  different people get the same name; lower it if a known voice is not recognized. The
+  speaker clustering threshold (0.7) is fixed. Two similar voices taking quick turns may
+  be merged into one speaker.
+- Set `diarization = "off"` to label all system speech "others" and hide speaker naming.
 
 ## Permissions
 
@@ -88,8 +122,8 @@ already-built recorder.
   title containing an excluded keyword (default: Private, Incognito) is in front, no
   screenshots are taken and audio is silenced. The microphone indicator stays on during
   exclusions, because audio is silenced rather than stopped.
-- Voice profiles (`voices/`) never leave the machine and are never passed to Claude.
-  Speaker diarization is currently off (`diarization = "off"`), so no profiles are made.
+- Voice profiles (`voices/`) never leave the machine and are never passed to Claude
+  (see [Speaker identification](#speaker-identification)).
 - Only text (transcripts, screen text, activity summaries) goes to Claude. Each `claude -p`
   run uses the repo root as its working directory, so it loads that repo's project
   settings (`.claude/`, `CLAUDE.md`) and installed skills. Skill inputs are written to,
