@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/scheduler"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
 )
@@ -54,6 +56,8 @@ type dayPage struct {
 	Paused                  bool
 	StatusText              string
 	DiskWarn                string
+	SkillsMissing           bool
+	CloseFailed             bool
 	Journal                 template.HTML
 	Totals                  []totalRow
 	Hours                   []hourRow
@@ -87,7 +91,11 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	} else if !os.IsNotExist(err) {
 		http.Error(w, "read journal: "+err.Error(), http.StatusInternalServerError)
 		return
+	} else if v, _, kerr := s.Store.GetKV(scheduler.CloseFailuresKey(day)); kerr == nil {
+		n, _ := strconv.Atoi(v)
+		p.CloseFailed = n > 0
 	}
+	p.SkillsMissing = s.SkillsMissing
 
 	hours, err := s.Store.HoursOn(day)
 	if err != nil {

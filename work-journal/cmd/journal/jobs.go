@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 
 	"workjournal/internal/capture"
@@ -37,6 +38,11 @@ type Jobs struct {
 	FreeGB     func(path string) (float64, error)
 	Now        func() time.Time // nil: time.Now
 	Logf       func(string, ...any)
+
+	// heavy serializes the pipeline and journal jobs (ProcessPending,
+	// ReprocessHour, CloseDay, Rollup): the scheduler, the dashboard and the
+	// CLI may trigger them concurrently and they share hours and files.
+	heavy sync.Mutex
 }
 
 var _ scheduler.Jobs = (*Jobs)(nil)
@@ -69,12 +75,16 @@ func (j *Jobs) pipeline() *process.Pipeline {
 }
 
 func (j *Jobs) ProcessPending(ctx context.Context) error {
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
 	return j.pipeline().ProcessPending(ctx)
 }
 
 // ReprocessHour resets the hour to pending and runs it through the pipeline
 // again. It returns scheduler.ErrMediaExpired once retention removed the day.
 func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
 	if _, err := os.Stat(j.Paths.RawDay(day)); errors.Is(err, fs.ErrNotExist) {
 		return scheduler.ErrMediaExpired
 	} else if err != nil {
@@ -99,11 +109,20 @@ func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	return p.Summarize.SummarizeHour(ctx, doc)
 }
 
+// CloseDay processes pending hours first, at most once per hour (the
+// scheduler's hourly marker is shared), then writes the day's journal.
 func (j *Jobs) CloseDay(ctx context.Context, day string) error {
-	return journal.CloseDay(ctx, j.Runner, j.Store, j.Paths, day, j.pipeline().ProcessPending)
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
+	pending := func(ctx context.Context) error {
+		return scheduler.ProcessOnce(ctx, j.Store, j.now(), j.pipeline().ProcessPending)
+	}
+	return journal.CloseDay(ctx, j.Runner, j.Store, j.Paths, day, pending)
 }
 
 func (j *Jobs) Rollup(ctx context.Context, week string) error {
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
 	return journal.Rollup(ctx, j.Runner, j.Store, j.Paths, week)
 }
 

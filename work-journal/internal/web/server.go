@@ -40,6 +40,9 @@ type Server struct {
 	Control capture.Control
 	Jobs    scheduler.Jobs
 	Voices  *diarize.Voices
+	// SkillsMissing is set when no installed Claude Code skills were found:
+	// hours then cannot be summarized and the day page says so.
+	SkillsMissing bool
 }
 
 // Handler returns the dashboard's routes.

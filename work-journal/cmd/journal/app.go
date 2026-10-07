@@ -252,7 +252,12 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		FreeGB:     retention.FreeGB,
 		Logf:       log.Printf,
 	}
-	a.Scheduler = &scheduler.Scheduler{Cfg: a.Cfg, Jobs: a.Jobs, Store: st, Logf: log.Printf}
+	a.Scheduler = &scheduler.Scheduler{Cfg: a.Cfg, Jobs: a.Jobs, Store: st, Logf: log.Printf,
+		HasDailyJournal: func(day string) bool {
+			_, err := os.Stat(p.DailyJournal(day))
+			return err == nil
+		},
+	}
 	a.Supervisor = &capture.Supervisor{
 		Bin:  "/usr/bin/open",
 		Args: a.recorderArgs(false),

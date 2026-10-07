@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -327,4 +328,38 @@ func TestRejectsForeignHost(t *testing.T) {
 			t.Errorf("Host %q body %q", host, rec.Body.String())
 		}
 	}
+}
+
+// I2: a day whose close failed and has no journal offers a retry.
+func TestDayPageCloseFailedOffersRetry(t *testing.T) {
+	e := newEnv(t)
+	if err := e.st.SetKV("close_failures:2026-10-07", "3"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(e.get("/day/2026-10-07").Body.String(), "could not be generated") {
+		t.Fatal("retry shown although the journal exists")
+	}
+	if err := os.Remove(e.p.DailyJournal("2026-10-07")); err != nil {
+		t.Fatal(err)
+	}
+	b := e.get("/day/2026-10-07").Body.String()
+	mustContain(t, b, "Journal could not be generated", `action="/close-day/2026-10-07"`, ">Retry<")
+	rec := e.post("/close-day/2026-10-07", nil, nil)
+	if rec.Code != http.StatusSeeOther || len(e.jobs.closed) != 1 || e.jobs.closed[0] != "2026-10-07" {
+		t.Fatalf("retry: code %d closed %v", rec.Code, e.jobs.closed)
+	}
+	_ = e.st.SetKV("close_failures:2026-10-07", "0")
+	if strings.Contains(e.get("/day/2026-10-07").Body.String(), "could not be generated") {
+		t.Fatal("retry shown with no failures")
+	}
+}
+
+// I3: without installed skills nothing gets summarized; say so.
+func TestDayPageWarnsWhenSkillsMissing(t *testing.T) {
+	e := newEnv(t)
+	if strings.Contains(e.get("/day/2026-10-07").Body.String(), "skills-missing") {
+		t.Fatal("skills banner shown with skills present")
+	}
+	e.srv.SkillsMissing = true
+	mustContain(t, e.get("/day/2026-10-07").Body.String(), "skills-missing", "journal setup")
 }

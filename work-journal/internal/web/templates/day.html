@@ -6,6 +6,7 @@
 </nav>
 
 {{if .DiskWarn}}<div class="banner disk-warning" role="alert">Disk space is low (state: {{.DiskWarn}}). Recording may be paused or raw media cleaned early.</div>{{end}}
+{{if .SkillsMissing}}<div class="banner skills-missing" role="alert">Claude Code skills were not found, so hours are not being summarized. Run <code>journal setup</code> (it installs the skills) and restart <code>journal serve</code>.</div>{{end}}
 
 <section class="status {{if .RecorderUp}}up{{else}}down{{end}}">
   <span class="dot" aria-hidden="true"></span>
@@ -17,7 +18,7 @@
 
 <section>
   <h2>Summary</h2>
-  {{if .Journal}}<div class="journal">{{.Journal}}</div>{{else}}<p class="muted">No journal entry for this day yet.</p>{{end}}
+  {{if .Journal}}<div class="journal">{{.Journal}}</div>{{else if .CloseFailed}}<div class="banner close-failed" role="alert">Journal could not be generated — retry. <form method="post" action="/close-day/{{.Date}}"><button type="submit">Retry</button></form></div>{{else}}<p class="muted">No journal entry for this day yet.</p>{{end}}
 </section>
 
 <section>

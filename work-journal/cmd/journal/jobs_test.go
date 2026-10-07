@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -272,5 +274,130 @@ func TestJobsPipelineRebuildsWhisperModel(t *testing.T) {
 	}
 	if j.Pipeline.Transcriber.(media.Whisper).Model != "/old/ggml-base.en.bin" {
 		t.Fatal("shared pipeline mutated")
+	}
+}
+
+// closeSkills answers summarize-hour, close-day and weekly-rollup, keeping the
+// close-day input it was given.
+type closeSkills struct {
+	mu          sync.Mutex
+	called      []string
+	closeInput  string
+	inFlight    int
+	maxInFlight int
+	delay       time.Duration
+}
+
+func (f *closeSkills) Run(_ context.Context, skill, input string, out any) error {
+	f.mu.Lock()
+	f.called = append(f.called, skill)
+	f.inFlight++
+	f.maxInFlight = max(f.maxInFlight, f.inFlight)
+	f.mu.Unlock()
+	defer func() { f.mu.Lock(); f.inFlight--; f.mu.Unlock() }()
+	time.Sleep(f.delay)
+	switch skill {
+	case "summarize-hour":
+		return json.Unmarshal([]byte(`{"notes":["Drew the checkout"],"main_focus":"Checkout","action_items":[]}`), out)
+	case "close-day":
+		b, err := os.ReadFile(input)
+		if err != nil {
+			return err
+		}
+		f.mu.Lock()
+		f.closeInput = string(b)
+		f.mu.Unlock()
+		return json.Unmarshal([]byte(`{"markdown":"# Day"}`), out)
+	case "weekly-rollup":
+		return json.Unmarshal([]byte(`{"markdown":"# Week"}`), out)
+	}
+	return fmt.Errorf("fake: no output for %s", skill)
+}
+
+// withActivity gives j a pipeline over one Figma stretch on day in hour h.
+func withActivity(t *testing.T, j *Jobs, fk *closeSkills, day string, h int, now time.Time) {
+	t.Helper()
+	cfg := j.Cfg()
+	j.Runner = fk
+	j.Summarizer = &process.SkillSummarizer{Runner: fk, Store: j.Store, Paths: j.Paths, Cfg: cfg, Logf: t.Logf}
+	j.Pipeline = &process.Pipeline{
+		Cfg: cfg, Paths: j.Paths, Store: j.Store,
+		Transcriber: noTranscriber{}, OCR: noOCR{},
+		Run:       func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("no media expected") },
+		Now:       func() time.Time { return now },
+		Summarize: j.Summarizer,
+		Logf:      t.Logf,
+	}
+	j.Now = func() time.Time { return now }
+	d, _ := time.ParseInLocation("2006-01-02", day, time.Local)
+	ts := func(m int) string { return time.Date(d.Year(), d.Month(), d.Day(), h, m, 0, 0, time.Local).Format(time.RFC3339) }
+	cfg.Rules = map[string]string{"Figma": "Deep work"}
+	j.Cfg = func() config.Config { return cfg }
+	act := j.Paths.Activity(day)
+	lines := `{"ts":"` + ts(0) + `","type":"start"}` + "\n" +
+		`{"ts":"` + ts(0) + `","type":"app","app":"Figma","title":"Checkout"}` + "\n" +
+		`{"ts":"` + ts(40) + `","type":"stop"}` + "\n"
+	if err := os.MkdirAll(filepath.Dir(act), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(act, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-10 * time.Minute)
+	os.Chtimes(act, old, old)
+}
+
+// I1/I2: at 18:02 CloseDay processes hour 17 first (it has settled) and
+// records the attempt in the scheduler's hourly marker.
+func TestCloseDayIncludesSettledPreviousHour(t *testing.T) {
+	j, _, _ := newJobs(t)
+	fk := &closeSkills{}
+	withActivity(t, j, fk, "2026-10-07", 17, time.Date(2026, 10, 7, 18, 2, 0, 0, time.Local))
+	if err := j.CloseDay(context.Background(), "2026-10-07"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fk.closeInput, `"hour":17`) {
+		t.Fatalf("close-day input lacks hour 17: %s", fk.closeInput)
+	}
+	if v, _, _ := j.Store.GetKV("last_process_hour"); v != "2026-10-07T18" {
+		t.Fatalf("last_process_hour = %q", v)
+	}
+}
+
+// I2: CloseDay's internal ProcessPending goes through the hourly guard.
+func TestCloseDaySkipsProcessingAlreadyAttemptedThisHour(t *testing.T) {
+	j, _, _ := newJobs(t)
+	fk := &closeSkills{}
+	withActivity(t, j, fk, "2026-10-07", 17, time.Date(2026, 10, 7, 18, 30, 0, 0, time.Local))
+	if err := j.Store.SetKV("last_process_hour", "2026-10-07T18"); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.CloseDay(context.Background(), "2026-10-07"); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(fk.called, "summarize-hour") {
+		t.Fatalf("processed again in an attempted hour: %v", fk.called)
+	}
+}
+
+// M16: pipeline and journal jobs never run concurrently.
+func TestJobsSerializeHeavyJobs(t *testing.T) {
+	j, _, _ := newJobs(t)
+	fk := &closeSkills{delay: 30 * time.Millisecond}
+	withActivity(t, j, fk, "2026-10-07", 10, time.Date(2026, 10, 7, 18, 2, 0, 0, time.Local))
+	for _, d := range []string{"2026-10-05", "2026-10-06"} {
+		if err := os.WriteFile(j.Paths.DailyJournal(d), []byte("# "+d), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	wg.Go(func() { j.Rollup(ctx, "2026-W41") })
+	wg.Go(func() { j.Rollup(ctx, "2026-W41") })
+	wg.Go(func() { j.ProcessPending(ctx) })
+	wg.Go(func() { j.CloseDay(ctx, "2026-10-07") })
+	wg.Wait()
+	if fk.maxInFlight != 1 {
+		t.Fatalf("max concurrent skill runs = %d (calls %v)", fk.maxInFlight, fk.called)
 	}
 }
