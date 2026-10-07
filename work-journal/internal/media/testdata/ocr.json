@@ -1,0 +1,7 @@
+[
+  {"file": "/data/raw/2026-10-07/screens/101500.jpg", "text": "Terminal\n$ go test"},
+  {"file": "/data/raw/2026-10-07/screens/101510.jpg", "text": "Terminal\n$ go test\n"},
+  {"file": "/data/raw/2026-10-07/screens/101520.jpg", "text": ""},
+  {"file": "/data/raw/2026-10-07/screens/101530.jpg", "text": "Slack"},
+  {"file": "/data/raw/2026-10-07/screens/bogus.jpg", "text": "ignored"}
+]

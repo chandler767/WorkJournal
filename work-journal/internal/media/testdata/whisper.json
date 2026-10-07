@@ -1,0 +1,12 @@
+{
+  "systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0",
+  "model": {"type": "base", "multilingual": true},
+  "params": {"model": "ggml-base.en.bin", "language": "en", "translate": false},
+  "result": {"language": "en"},
+  "transcription": [
+    {"timestamps": {"from": "00:00:00,000", "to": "00:00:02,000"}, "offsets": {"from": 0, "to": 2000}, "text": " Hello."},
+    {"timestamps": {"from": "00:00:02,000", "to": "00:00:05,500"}, "offsets": {"from": 2000, "to": 5500}, "text": " [BLANK_AUDIO]"},
+    {"timestamps": {"from": "00:00:05,500", "to": "00:00:06,000"}, "offsets": {"from": 5500, "to": 6000}, "text": "   "},
+    {"timestamps": {"from": "00:01:00,250", "to": "00:01:04,750"}, "offsets": {"from": 60250, "to": 64750}, "text": " Let's ship the release today."}
+  ]
+}
