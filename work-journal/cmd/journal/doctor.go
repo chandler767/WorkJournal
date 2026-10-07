@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/media"
 )
 
 // Check is one doctor result. Fix says how to resolve a failed check.
@@ -31,6 +33,8 @@ type DoctorDeps struct {
 	Glob        func(pattern string) ([]string, error)
 	FreeGB      func(path string) (float64, error)
 	SelfTest    func(app string) error // runs `recorder selftest`; nil error means "selftest ok"
+	// ClaudeResponds runs a trivial headless prompt; nil means claude answered.
+	ClaudeResponds func() error
 }
 
 const permissionsFix = "grant WorkJournalRecorder access in System Settings → Privacy & Security → " +
@@ -60,6 +64,13 @@ func RunChecks(d DoctorDeps) []Check {
 
 	_, err = d.LookPath("claude")
 	add("claude", err == nil, "install Claude Code (https://claude.com/claude-code) so `claude` is on PATH")
+	if err != nil {
+		add("claude responds", false, "install Claude Code first")
+	} else if err := d.ClaudeResponds(); err != nil {
+		add("claude responds", false, fmt.Sprintf("%v: run `claude` and sign in", err))
+	} else {
+		add("claude responds", true, "")
+	}
 
 	add("skills", d.SkillsDir != "" && skillsInstalled(d),
 		skillsFix(d.SkillsDir))
@@ -169,4 +180,29 @@ func nearestExisting(path string) string {
 		}
 		path = parent
 	}
+}
+
+// claudeProbeTimeout bounds the "claude responds" check.
+const claudeProbeTimeout = 60 * time.Second
+
+// claudeResponds asks claude for a trivial reply with no tools and no MCP
+// servers; it fails when claude cannot run, is signed out or errors.
+func claudeResponds(run media.Runner) error {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+	defer cancel()
+	out, err := run(ctx, "claude", "-p", "Reply with OK", "--output-format", "json", "--tools", "", "--strict-mcp-config")
+	if err != nil {
+		return err
+	}
+	var env struct {
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		return fmt.Errorf("unexpected claude output: %.200s", strings.TrimSpace(string(out)))
+	}
+	if env.IsError {
+		return fmt.Errorf("claude reported an error: %.200s", env.Result)
+	}
+	return nil
 }

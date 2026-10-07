@@ -81,12 +81,14 @@ func (j *Jobs) ProcessPending(ctx context.Context) error {
 }
 
 // ReprocessHour resets the hour to pending and runs it through the pipeline
-// again. It returns scheduler.ErrMediaExpired once retention removed the day.
+// again. Once retention removed the day's raw media it summarizes the hour
+// again from its derived doc, and returns scheduler.ErrMediaExpired only when
+// that is gone too.
 func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
 	if _, err := os.Stat(j.Paths.RawDay(day)); errors.Is(err, fs.ErrNotExist) {
-		return scheduler.ErrMediaExpired
+		return j.resummarize(ctx, day, hour)
 	} else if err != nil {
 		return err
 	}
@@ -106,6 +108,24 @@ func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	if doc.Status != store.StatusTranscribed || p.Summarize == nil {
 		return nil
 	}
+	return p.Summarize.SummarizeHour(ctx, doc)
+}
+
+// resummarize runs the summarizer again on the hour's derived doc (raw
+// media already removed). Without a derived doc there is nothing left.
+func (j *Jobs) resummarize(ctx context.Context, day string, hour int) error {
+	doc, err := process.Load(j.Paths.DerivedHour(day, hour))
+	if errors.Is(err, fs.ErrNotExist) {
+		return scheduler.ErrMediaExpired
+	}
+	if err != nil {
+		return err
+	}
+	p := j.pipeline()
+	if p.Summarize == nil {
+		return errors.New("no summarizer configured")
+	}
+	doc.Day, doc.Hour, doc.Status = day, hour, store.StatusTranscribed
 	return p.Summarize.SummarizeHour(ctx, doc)
 }
 

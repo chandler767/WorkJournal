@@ -18,9 +18,15 @@ import (
 	"workjournal/internal/media"
 )
 
-// ErrInvalidOutput means a skill twice returned output that is not a JSON
-// object matching its schema (or failing the output's Validator).
+// ErrInvalidOutput means claude returned a result, but not a JSON object
+// matching the skill's schema (or passing the output's Validator), and the
+// retry did not fix it.
 var ErrInvalidOutput = errors.New("invalid skill output")
+
+// ErrUnavailable means claude produced no usable result twice (non-zero exit,
+// an is_error envelope, a per-run timeout or an unparseable envelope). It is
+// transient: the caller retries later (Ruling 34).
+var ErrUnavailable = errors.New("claude unavailable")
 
 // Validator is implemented by outputs with checks beyond the schema (for
 // example, categories limited to the configured list). A Validate error is
@@ -59,16 +65,19 @@ type resultEnvelope struct {
 }
 
 // Run invokes the skill with up to two attempts. An attempt fails on a
-// non-zero exit, a per-attempt timeout, an is_error envelope, or output that
-// is not a schema-valid JSON object; two failed attempts yield
-// ErrInvalidOutput. Only transient conditions return a plain error at once,
-// for the caller to retry later: the claude binary is missing, or ctx ended.
+// non-zero exit, a per-attempt timeout, an is_error or unparseable envelope
+// (no usable result), or a result that is not a schema-valid JSON object
+// (invalid output). When both attempts fail and either produced invalid output,
+// Run returns ErrInvalidOutput (the hour goes to review); otherwise
+// ErrUnavailable (transient; retried later, Ruling 34). A missing claude
+// binary or an ended ctx returns a plain transient error at once.
 func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any) error {
 	sch, err := schema(skill)
 	if err != nil {
 		return err
 	}
 	var lastErr error
+	invalid := false
 	for attempt := 0; attempt < 2; attempt++ {
 		stdout, err := r.exec(ctx, skill, inputPath)
 		if err != nil {
@@ -90,8 +99,12 @@ func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any
 		if lastErr = decode(sch, env.Result, out); lastErr == nil {
 			return nil
 		}
+		invalid = true
 	}
-	return fmt.Errorf("%w: %s: %v", ErrInvalidOutput, skill, lastErr)
+	if invalid {
+		return fmt.Errorf("%w: %s: %v", ErrInvalidOutput, skill, lastErr)
+	}
+	return fmt.Errorf("%w: %s: %v", ErrUnavailable, skill, lastErr)
 }
 
 // decode extracts, validates and unmarshals a skill result into out.

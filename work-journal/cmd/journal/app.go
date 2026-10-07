@@ -278,13 +278,14 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		},
 	}
 	a.Server = &web.Server{
-		Store:   st,
-		Paths:   p,
-		Cfg:     a.Cfg,
-		SaveCfg: a.SaveCfg,
-		Control: a.Control,
-		Jobs:    a.Jobs,
-		Voices:  a.Voices,
+		Store:         st,
+		Paths:         p,
+		Cfg:           a.Cfg,
+		SaveCfg:       a.SaveCfg,
+		Control:       a.Control,
+		Jobs:          a.Jobs,
+		Voices:        a.Voices,
+		SkillsMissing: opt.Loc.SkillsDir == "",
 	}
 	return a, nil
 }

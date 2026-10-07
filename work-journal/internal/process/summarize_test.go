@@ -3,7 +3,6 @@ package process
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -331,7 +330,7 @@ func TestSummarizerPropagatesRunnerError(t *testing.T) {
 	e := newSumEnv(t)
 	doc := &HourDoc{Day: day, Hour: 13, Segments: []activity.Segment{sg(activity.KindActive, "Code", "x.go", 13, 0, 30)}}
 	e.transcribed(doc)
-	e.fk.errs["summarize-hour"] = errors.New("claude: exit status 1")
+	e.fk.errs["summarize-hour"] = fmt.Errorf("%w: summarize-hour: claude: exit status 1", skills.ErrUnavailable)
 
 	if err := e.s.SummarizeHour(context.Background(), doc); err == nil {
 		t.Fatal("want error")

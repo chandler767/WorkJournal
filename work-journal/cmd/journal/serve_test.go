@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -109,5 +110,27 @@ func TestServeSmoke(t *testing.T) {
 	}
 	if !slices.Contains(ctl.sentCmds(), "quit") {
 		t.Fatalf("recorder not told to quit: %v", ctl.sent)
+	}
+}
+
+// I3: without installed skills serve says so loudly and the dashboard
+// shows a banner.
+func TestServeWarnsWhenSkillsMissing(t *testing.T) {
+	repo, mod := fakeRepo(t)
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	a, err := Build(cfg, Options{ConfigPath: filepath.Join(cfg.DataDir, "config.toml"), Loc: Locations{ModuleRoot: mod, RepoRoot: repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if !a.Server.SkillsMissing {
+		t.Fatal("dashboard not told the skills are missing")
+	}
+	if w := startupWarnings(a); len(w) != 1 || !strings.Contains(w[0], "WARNING") || !strings.Contains(w[0], "skills") {
+		t.Fatalf("warnings = %q", w)
+	}
+	if w := startupWarnings(newTestApp(t)); len(w) != 0 {
+		t.Fatalf("warnings with skills present = %q", w)
 	}
 }

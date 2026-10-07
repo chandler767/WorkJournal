@@ -43,6 +43,9 @@ func runServe(ctx context.Context, a *App) error {
 func serveOn(ctx context.Context, a *App, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	for _, w := range startupWarnings(a) {
+		log.Print(w)
+	}
 	srv := &http.Server{Handler: a.Server.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	var wg sync.WaitGroup
@@ -72,4 +75,15 @@ func serveOn(ctx context.Context, a *App, ln net.Listener) error {
 	}
 	wg.Wait()
 	return err
+}
+
+// startupWarnings lists conditions under which serve runs but cannot do
+// its job; each is logged loudly at startup.
+func startupWarnings(a *App) []string {
+	var w []string
+	if a.Loc.SkillsDir == "" {
+		w = append(w, "WARNING: no installed Claude Code skills found (.claude/skills/tessl__summarize-hour); "+
+			"hours will be recorded but not summarized. Run `journal setup` or pass --repo <repo root>.")
+	}
+	return w
 }

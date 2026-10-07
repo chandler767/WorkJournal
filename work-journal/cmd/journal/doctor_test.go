@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -35,8 +36,9 @@ func okDeps() DoctorDeps {
 		Glob: func(pattern string) ([]string, error) {
 			return []string{strings.Replace(pattern, "*summarize-hour*", "tessl__summarize-hour", 1)}, nil
 		},
-		FreeGB:   func(string) (float64, error) { return 50, nil },
-		SelfTest: func(string) error { return nil },
+		FreeGB:         func(string) (float64, error) { return 50, nil },
+		SelfTest:       func(string) error { return nil },
+		ClaudeResponds: func() error { return nil },
 	}
 }
 
@@ -70,7 +72,7 @@ func TestDoctorReportsMissingWhisper(t *testing.T) {
 
 func TestDoctorAllOK(t *testing.T) {
 	cs := RunChecks(okDeps())
-	want := []string{"whisper-cli", "whisper model", "claude", "skills", "recorder app", "recorder selftest", "free disk"}
+	want := []string{"whisper-cli", "whisper model", "claude", "claude responds", "skills", "recorder app", "recorder selftest", "free disk"}
 	if len(cs) != len(want) {
 		t.Fatalf("checks = %+v, want names %v", cs, want)
 	}
@@ -248,5 +250,53 @@ func TestSelftestReadsResultFile(t *testing.T) {
 	none := func(string, []string) error { return nil }
 	if err := recorderSelfTest("/x.app", none); err == nil {
 		t.Fatal("missing result file accepted")
+	}
+}
+
+// I3: a claude that is installed but signed out fails every skill run.
+func TestDoctorClaudeResponds(t *testing.T) {
+	d := okDeps()
+	d.ClaudeResponds = func() error { return errors.New("Invalid API key · Please run /login") }
+	c := find(t, RunChecks(d), "claude responds")
+	if c.OK || !strings.Contains(c.Fix, "run `claude` and sign in") || !strings.Contains(c.Fix, "Invalid API key") {
+		t.Fatalf("check = %+v", c)
+	}
+	d = okDeps()
+	d.LookPath = func(name string) (string, error) {
+		if name == "claude" {
+			return "", errors.New("not found")
+		}
+		return "/usr/local/bin/" + name, nil
+	}
+	d.ClaudeResponds = func() error { t.Fatal("probed a missing claude"); return nil }
+	if c := find(t, RunChecks(d), "claude responds"); c.OK {
+		t.Fatalf("check = %+v", c)
+	}
+}
+
+func TestClaudeRespondsProbe(t *testing.T) {
+	var gotArgs []string
+	var gotDeadline bool
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		_, gotDeadline = ctx.Deadline()
+		gotArgs = append([]string{name}, args...)
+		return []byte(`{"type":"result","is_error":false,"result":"OK"}`), nil
+	}
+	if err := claudeResponds(run); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"claude", "-p", "Reply with OK", "--output-format", "json", "--tools", "", "--strict-mcp-config"}
+	if !equal(gotArgs, want) || !gotDeadline {
+		t.Fatalf("args = %q deadline %v", gotArgs, gotDeadline)
+	}
+	for _, out := range []string{`{"type":"result","is_error":true,"result":"Invalid API key"}`, "Error: not logged in"} {
+		run := func(context.Context, string, ...string) ([]byte, error) { return []byte(out), nil }
+		if err := claudeResponds(run); err == nil {
+			t.Fatalf("output %q accepted", out)
+		}
+	}
+	failing := func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("exit status 1") }
+	if err := claudeResponds(failing); err == nil {
+		t.Fatal("exec error accepted")
 	}
 }

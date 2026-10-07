@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"workjournal/internal/activity"
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
 	"workjournal/internal/media"
@@ -330,7 +331,9 @@ func withActivity(t *testing.T, j *Jobs, fk *closeSkills, day string, h int, now
 	}
 	j.Now = func() time.Time { return now }
 	d, _ := time.ParseInLocation("2006-01-02", day, time.Local)
-	ts := func(m int) string { return time.Date(d.Year(), d.Month(), d.Day(), h, m, 0, 0, time.Local).Format(time.RFC3339) }
+	ts := func(m int) string {
+		return time.Date(d.Year(), d.Month(), d.Day(), h, m, 0, 0, time.Local).Format(time.RFC3339)
+	}
 	cfg.Rules = map[string]string{"Figma": "Deep work"}
 	j.Cfg = func() config.Config { return cfg }
 	act := j.Paths.Activity(day)
@@ -399,5 +402,35 @@ func TestJobsSerializeHeavyJobs(t *testing.T) {
 	wg.Wait()
 	if fk.maxInFlight != 1 {
 		t.Fatalf("max concurrent skill runs = %d (calls %v)", fk.maxInFlight, fk.called)
+	}
+}
+
+// I3: after retention removed the raw media, the derived doc is enough to
+// summarize the hour again.
+func TestReprocessHourFromDerivedWhenMediaExpired(t *testing.T) {
+	j, _, _ := newJobs(t)
+	fk := &closeSkills{}
+	withActivity(t, j, fk, "2026-10-07", 9, time.Date(2026, 10, 7, 12, 0, 0, 0, time.Local))
+	if err := os.RemoveAll(j.Paths.RawDay("2026-09-01")); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 1, 9, 0, 0, 0, time.Local)
+	doc := &process.HourDoc{Day: "2026-09-01", Hour: 9, Status: store.StatusNeedsReview,
+		Segments: []activity.Segment{{Start: start, End: start.Add(30 * time.Minute), Kind: activity.KindActive, App: "Figma", Title: "Checkout"}}}
+	if err := doc.Save(j.Paths.DerivedHour("2026-09-01", 9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Store.UpsertHour(store.HourRecord{Day: "2026-09-01", Hour: 9, Status: store.StatusNeedsReview}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.ReprocessHour(context.Background(), "2026-09-01", 9); err != nil {
+		t.Fatalf("reprocess from derived: %v", err)
+	}
+	if !slices.Contains(fk.called, "summarize-hour") {
+		t.Fatalf("skills called = %v", fk.called)
+	}
+	rec, _, _ := j.Store.Hour("2026-09-01", 9)
+	if rec.Status != store.StatusDone || !strings.Contains(rec.SummaryJSON, "Drew the checkout") {
+		t.Fatalf("hour = %+v", rec)
 	}
 }

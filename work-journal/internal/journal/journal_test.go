@@ -260,3 +260,28 @@ func TestRollupWithoutDailyJournalsWritesNothing(t *testing.T) {
 		t.Error("weekly journal written")
 	}
 }
+
+// I3: an hour without a summary is listed, not silently dropped.
+func TestCloseDayIncludesHoursWithoutSummary(t *testing.T) {
+	st, p := setup(t)
+	seedDay(t, st, "2026-10-07")
+	if err := st.UpsertHour(store.HourRecord{Day: "2026-10-07", Hour: 11, Status: store.StatusNeedsReview, UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{md: "ok"}
+	if err := CloseDay(context.Background(), r, st, p, "2026-10-07", nil); err != nil {
+		t.Fatal(err)
+	}
+	var in struct {
+		Hours []struct {
+			Hour  int      `json:"hour"`
+			Notes []string `json:"notes"`
+		} `json:"hours"`
+	}
+	if err := json.Unmarshal(r.input, &in); err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Hours) != 2 || in.Hours[1].Hour != 11 || !reflect.DeepEqual(in.Hours[1].Notes, []string{"(summary unavailable — needs review)"}) {
+		t.Fatalf("hours = %+v", in.Hours)
+	}
+}

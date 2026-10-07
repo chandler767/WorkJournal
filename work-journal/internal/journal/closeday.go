@@ -42,6 +42,9 @@ type (
 	}
 )
 
+// summaryUnavailable stands in for the notes of an hour without a summary.
+const summaryUnavailable = "(summary unavailable — needs review)"
+
 // CloseDay writes journal/<day>.md from the day's hour summaries, meetings
 // and category totals. Pending hours are processed first through
 // processPending (may be nil); its failure is logged and does not stop the
@@ -62,6 +65,7 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 	in := closeDayInput{Day: day, Hours: []hourInput{}, Meetings: []meetingInput{}}
 	for _, h := range hours {
 		if h.SummaryJSON == "" {
+			in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Notes: []string{summaryUnavailable}, ActionItems: []skills.ActionItem{}})
 			continue
 		}
 		var s skills.HourSummary

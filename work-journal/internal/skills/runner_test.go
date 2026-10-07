@@ -275,8 +275,8 @@ func TestRunnerIsErrorCountsAsAttempt(t *testing.T) {
 	f := &fakeExec{outs: []string{envelope("API Error: overloaded", true), envelope("API Error: overloaded", true)}}
 	var got HourSummary
 	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
-	if !errors.Is(err, ErrInvalidOutput) {
-		t.Fatalf("err = %v, want ErrInvalidOutput", err)
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("err = %v, want transient ErrUnavailable (Ruling 34)", err)
 	}
 	if len(f.calls) != 2 {
 		t.Fatalf("Exec called %d times, want 2", len(f.calls))
@@ -292,8 +292,8 @@ func TestRunnerExitErrorCountsAsAttempt(t *testing.T) {
 	f := &fakeExec{err: errors.New("claude: exit status 1: boom")}
 	var got HourSummary
 	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
-	if !errors.Is(err, ErrInvalidOutput) || len(f.calls) != 2 {
-		t.Fatalf("err = %v calls = %d, want ErrInvalidOutput after 2 calls", err, len(f.calls))
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrInvalidOutput) || len(f.calls) != 2 {
+		t.Fatalf("err = %v calls = %d, want transient ErrUnavailable after 2 calls", err, len(f.calls))
 	}
 }
 
@@ -324,8 +324,8 @@ func TestRunnerTimeoutCountsAsAttempt(t *testing.T) {
 		}}
 	var got HourSummary
 	err := r.Run(context.Background(), "summarize-hour", "/data/in.json", &got)
-	if !errors.Is(err, ErrInvalidOutput) || calls != 2 {
-		t.Fatalf("err = %v calls = %d, want ErrInvalidOutput after 2 timed-out attempts", err, calls)
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrInvalidOutput) || calls != 2 {
+		t.Fatalf("err = %v calls = %d, want transient ErrUnavailable after 2 timed-out attempts", err, calls)
 	}
 }
 
@@ -351,5 +351,23 @@ func TestRunnerParentCancelIsTransient(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want the context error", err)
+	}
+}
+
+// Ruling 34: output received but invalid on either attempt is
+// ErrInvalidOutput; failing to get any output twice is transient.
+func TestRunnerErrorClass(t *testing.T) {
+	var got HourSummary
+	f := &fakeExec{outs: []string{envelope("API Error: overloaded", true), envelope("no json here", false)}}
+	if err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got); !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("is_error then invalid: err = %v, want ErrInvalidOutput", err)
+	}
+	f = &fakeExec{outs: []string{envelope("no json here", false), envelope("API Error: overloaded", true)}}
+	if err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got); !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("invalid then is_error: err = %v, want ErrInvalidOutput", err)
+	}
+	f = &fakeExec{outs: []string{"not an envelope", "not an envelope"}}
+	if err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unparseable envelope: err = %v, want ErrUnavailable", err)
 	}
 }
