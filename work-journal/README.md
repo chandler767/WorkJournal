@@ -60,8 +60,9 @@ is ad-hoc signed, so **every rebuild resets these grants**: after `journal setup
 - Everything stays in `~/WorkJournal` (or your `data_dir`): `raw/` holds screenshots,
   audio and activity; `derived/` and `journal.db` hold transcripts, screen text and
   summaries; `journal/` holds the daily and weekly Markdown.
-- Raw screenshots and audio are deleted after `retention_days` (default 7), once their
-  hours are processed. Transcripts, summaries and journals are kept.
+- After `retention_days` (default 7), each day's whole `raw/<day>/` directory is deleted
+  (screenshots, audio and `activity.jsonl`), once all of that day's hours are processed.
+  Transcripts, screen text, time segments, summaries and journals are kept.
 - Exclusions: while an excluded app (default: 1Password, Keychain Access) or a window
   title containing an excluded keyword (default: Private, Incognito) is in front, no
   screenshots are taken and audio is silenced. The microphone indicator stays on during
@@ -69,7 +70,8 @@ is ad-hoc signed, so **every rebuild resets these grants**: after `journal setup
 - Voice profiles (`voices/`) never leave the machine and are never passed to Claude.
   Speaker diarization is currently off (`diarization = "off"`), so no profiles are made.
 - Only text (transcripts, screen text, activity summaries) goes to Claude. Each `claude`
-  run gets only the Skill and Read tools, no MCP servers, and read access to the data dir.
+  run gets only the Skill and Read tools, no MCP servers, and read access to `derived/`
+  only (where its input files are written), not to raw media, `voices/` or `journal.db`.
 - The dashboard binds to loopback only; `journal serve` refuses any other `listen_addr`.
 
 ## More

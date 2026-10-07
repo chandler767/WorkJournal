@@ -189,14 +189,15 @@ type App struct {
 	Supervisor *capture.Supervisor
 	Server     *web.Server
 	cfg        *cfgHolder
+	launch     func(bin string, args []string) (func() error, func(os.Signal) error, error)
 }
 
 // Cfg returns the live configuration.
 func (a *App) Cfg() config.Config { return a.cfg.get() }
 
-// SaveCfg writes c to the config file and makes it live. Settings that the
-// pipeline reads at construction (whisper model, rules) apply after restart;
-// recorder settings apply on the recorder's next start.
+// SaveCfg writes c to the config file and makes it live. Jobs rebuild the
+// pipeline and summarizer from it on every call; recorder settings apply on
+// the recorder's next start.
 func (a *App) SaveCfg(c config.Config) error {
 	if err := config.Save(a.ConfigPath, c); err != nil {
 		return err
@@ -222,9 +223,9 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Paths: p, ConfigPath: opt.ConfigPath, Loc: opt.Loc, Store: st, cfg: &cfgHolder{cfg: cfg}}
+	a := &App{Paths: p, ConfigPath: opt.ConfigPath, Loc: opt.Loc, Store: st, cfg: &cfgHolder{cfg: cfg}, launch: startProcess}
 
-	a.Runner = &skills.ClaudeRunner{WorkDir: opt.Loc.SkillsDir, DataDir: p.Root}
+	a.Runner = &skills.ClaudeRunner{WorkDir: opt.Loc.SkillsDir, DataDir: filepath.Join(p.Root, "derived")}
 	a.Summarizer = &process.SkillSummarizer{Runner: a.Runner, Store: st, Paths: p, Cfg: cfg, Logf: log.Printf}
 	a.Voices = &diarize.Voices{Dir: p.Voices(), Threshold: cfg.VoiceMatchThreshold}
 	a.Pipeline = &process.Pipeline{
@@ -241,14 +242,15 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 	}
 	a.Control = capture.NewSocketControl(p.Socket())
 	a.Jobs = &Jobs{
-		Cfg:      a.Cfg,
-		Paths:    p,
-		Store:    st,
-		Pipeline: a.Pipeline,
-		Runner:   a.Runner,
-		Control:  a.Control,
-		FreeGB:   retention.FreeGB,
-		Logf:     log.Printf,
+		Cfg:        a.Cfg,
+		Paths:      p,
+		Store:      st,
+		Pipeline:   a.Pipeline,
+		Summarizer: a.Summarizer,
+		Runner:     a.Runner,
+		Control:    a.Control,
+		FreeGB:     retention.FreeGB,
+		Logf:       log.Printf,
 	}
 	a.Scheduler = &scheduler.Scheduler{Cfg: a.Cfg, Jobs: a.Jobs, Store: st, Logf: log.Printf}
 	a.Supervisor = &capture.Supervisor{
@@ -258,7 +260,16 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		// Rebuild the arguments on every start so a restart after a
 		// settings change picks up the new exclusions.
 		Start: func(ctx context.Context, bin string, args []string) (func() error, func(os.Signal) error, error) {
-			return startProcess(bin, a.recorderArgs(slices.Contains(args, "--degraded")))
+			wait, signal, err := a.launch(bin, a.recorderArgs(slices.Contains(args, "--degraded")))
+			if err != nil {
+				return nil, nil, err
+			}
+			// The recorder starts in normal mode; make the disk guard
+			// re-send its state on the next check.
+			if kerr := st.SetKV(kvDiskState, retention.StateNormal); kerr != nil {
+				log.Printf("reset %s: %v", kvDiskState, kerr)
+			}
+			return wait, signal, nil
 		},
 	}
 	a.Server = &web.Server{

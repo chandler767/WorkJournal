@@ -11,6 +11,7 @@ import (
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
 	"workjournal/internal/journal"
+	"workjournal/internal/media"
 	"workjournal/internal/process"
 	"workjournal/internal/retention"
 	"workjournal/internal/scheduler"
@@ -26,15 +27,16 @@ var errDiarizationUnavailable = errors.New("diarization unavailable")
 // Jobs implements scheduler.Jobs on top of the pipeline, the journal skills
 // and the recorder's control socket.
 type Jobs struct {
-	Cfg      func() config.Config
-	Paths    config.Paths
-	Store    *store.Store
-	Pipeline *process.Pipeline
-	Runner   skills.Runner
-	Control  capture.Control
-	FreeGB   func(path string) (float64, error)
-	Now      func() time.Time // nil: time.Now
-	Logf     func(string, ...any)
+	Cfg        func() config.Config
+	Paths      config.Paths
+	Store      *store.Store
+	Pipeline   *process.Pipeline
+	Summarizer *process.SkillSummarizer
+	Runner     skills.Runner
+	Control    capture.Control
+	FreeGB     func(path string) (float64, error)
+	Now        func() time.Time // nil: time.Now
+	Logf       func(string, ...any)
 }
 
 var _ scheduler.Jobs = (*Jobs)(nil)
@@ -46,8 +48,28 @@ func (j *Jobs) now() time.Time {
 	return time.Now()
 }
 
+// pipeline returns a per-call copy of the pipeline and summarizer built from
+// the live config, so settings saved on the dashboard (rules, categories,
+// whisper model) apply without a restart. The shared components are not
+// mutated.
+func (j *Jobs) pipeline() *process.Pipeline {
+	cfg := j.Cfg()
+	p := *j.Pipeline
+	p.Cfg = cfg
+	if j.Summarizer != nil {
+		s := *j.Summarizer
+		s.Cfg = cfg
+		p.Summarize = &s
+	}
+	if w, ok := p.Transcriber.(media.Whisper); ok {
+		w.Model = modelPath(j.Paths, cfg.WhisperModel)
+		p.Transcriber = w
+	}
+	return &p
+}
+
 func (j *Jobs) ProcessPending(ctx context.Context) error {
-	return j.Pipeline.ProcessPending(ctx)
+	return j.pipeline().ProcessPending(ctx)
 }
 
 // ReprocessHour resets the hour to pending and runs it through the pipeline
@@ -66,18 +88,19 @@ func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	if err := j.Store.UpsertHour(rec); err != nil {
 		return err
 	}
-	doc, err := j.Pipeline.Transcribe(ctx, day, hour)
+	p := j.pipeline()
+	doc, err := p.Transcribe(ctx, day, hour)
 	if err != nil {
 		return err
 	}
-	if doc.Status != store.StatusTranscribed || j.Pipeline.Summarize == nil {
+	if doc.Status != store.StatusTranscribed || p.Summarize == nil {
 		return nil
 	}
-	return j.Pipeline.Summarize.SummarizeHour(ctx, doc)
+	return p.Summarize.SummarizeHour(ctx, doc)
 }
 
 func (j *Jobs) CloseDay(ctx context.Context, day string) error {
-	return journal.CloseDay(ctx, j.Runner, j.Store, j.Paths, day, j.Pipeline.ProcessPending)
+	return journal.CloseDay(ctx, j.Runner, j.Store, j.Paths, day, j.pipeline().ProcessPending)
 }
 
 func (j *Jobs) Rollup(ctx context.Context, week string) error {
@@ -94,8 +117,9 @@ func (j *Jobs) Retain(ctx context.Context) error {
 
 // DiskCheck tells the recorder to shed screenshots or audio when free space
 // falls below min_free_gb, and to return to normal once it recovers. A
-// command is sent only when the state changes; the new state is recorded
-// even if the recorder can't be reached.
+// command is sent only when the state changes, and the state is recorded only
+// once the recorder accepted it, so a failed send is retried next tick. The
+// recorder (re)starts in normal mode; the launcher resets the state then.
 func (j *Jobs) DiskCheck(ctx context.Context) error {
 	free, err := j.FreeGB(j.Paths.Root)
 	if err != nil {
@@ -114,7 +138,7 @@ func (j *Jobs) DiskCheck(ctx context.Context) error {
 	}
 	j.Logf("disk: %.1f GB free, recorder %s → %s", free, prev, next)
 	if err := j.Control.Send(next); err != nil {
-		j.Logf("disk: send %s: %v", next, err)
+		return fmt.Errorf("disk: send %s: %w", next, err)
 	}
 	return j.Store.SetKV(kvDiskState, next)
 }

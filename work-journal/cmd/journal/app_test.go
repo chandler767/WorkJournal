@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -140,7 +142,7 @@ func TestBuildWiresComponents(t *testing.T) {
 	if a.Supervisor.Bin != "/usr/bin/open" {
 		t.Fatalf("supervisor bin = %q", a.Supervisor.Bin)
 	}
-	if a.Runner.WorkDir != a.Loc.SkillsDir || a.Runner.DataDir != a.Paths.Root {
+	if a.Runner.WorkDir != a.Loc.SkillsDir || a.Runner.DataDir != filepath.Join(a.Paths.Root, "derived") {
 		t.Fatalf("runner = %+v", a.Runner)
 	}
 	if _, err := os.Stat(a.Paths.Models()); err != nil {
@@ -173,5 +175,75 @@ func TestRecorderArgsFollowSavedConfig(t *testing.T) {
 	}
 	if !slices.Contains(a.Jobs.Cfg().ExcludedApps, "Signal") {
 		t.Fatal("jobs see a stale config")
+	}
+}
+
+func TestRunnerReadsOnlyDerived(t *testing.T) {
+	a := newTestApp(t)
+	var argv []string
+	a.Runner.Exec = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		argv = args
+		return nil, errors.New("stop")
+	}
+	a.Runner.Run(context.Background(), "summarize-hour", "/x.json", &struct{}{})
+	i := slices.Index(argv, "--add-dir")
+	if i < 0 || i+1 >= len(argv) {
+		t.Fatalf("argv = %v", argv)
+	}
+	want := filepath.Join(a.Paths.Root, "derived")
+	if argv[i+1] != want || slices.Index(argv[i+1:], "--add-dir") > 0 {
+		t.Fatalf("--add-dir %q, want exactly %q (argv %v)", argv[i+1], want, argv)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Fatalf("derived dir missing: %v", err)
+	}
+}
+
+func TestDiskGuardResendsAfterRecorderRestart(t *testing.T) {
+	a := newTestApp(t)
+	ctl := &fakeControl{}
+	a.Jobs.Control = ctl
+	a.Jobs.FreeGB = func(string) (float64, error) { return 3, nil } // below min_free_gb 5, above 2.5
+	launches := 0
+	a.launch = func(string, []string) (func() error, func(os.Signal) error, error) {
+		launches++
+		return func() error { return nil }, func(os.Signal) error { return nil }, nil
+	}
+	ctx := context.Background()
+	if err := a.Jobs.DiskCheck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Jobs.DiskCheck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"screens_off"}; !equal(ctl.sentCmds(), want) {
+		t.Fatalf("sent %v, want %v", ctl.sentCmds(), want)
+	}
+	// The recorder restarts and comes back in normal mode.
+	if _, _, err := a.Supervisor.Start(ctx, "/usr/bin/open", a.recorderArgs(false)); err != nil {
+		t.Fatal(err)
+	}
+	if launches != 1 {
+		t.Fatalf("launches = %d", launches)
+	}
+	if err := a.Jobs.DiskCheck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"screens_off", "screens_off"}; !equal(ctl.sentCmds(), want) {
+		t.Fatalf("sent %v, want a re-send after restart %v", ctl.sentCmds(), want)
+	}
+}
+
+func TestFailedRecorderStartKeepsDiskState(t *testing.T) {
+	a := newTestApp(t)
+	a.Store.SetKV("disk_state", "audio_off")
+	a.launch = func(string, []string) (func() error, func(os.Signal) error, error) {
+		return nil, nil, errors.New("no such app")
+	}
+	if _, _, err := a.Supervisor.Start(context.Background(), "/usr/bin/open", nil); err == nil {
+		t.Fatal("start error swallowed")
+	}
+	if v, _, _ := a.Store.GetKV("disk_state"); v != "audio_off" {
+		t.Fatalf("disk_state = %q", v)
 	}
 }
