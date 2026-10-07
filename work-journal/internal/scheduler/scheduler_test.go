@@ -216,3 +216,79 @@ func TestRollupOnlyOnRollupWeekday(t *testing.T) {
 		t.Fatalf("rollup repeated: %v", got)
 	}
 }
+
+type failingProcess struct {
+	fakeJobs
+	process, retain int
+	failProcess     bool
+	failRetain      bool
+}
+
+func (f *failingProcess) ProcessPending(context.Context) error {
+	f.process++
+	if f.failProcess {
+		return fmt.Errorf("boom")
+	}
+	return nil
+}
+
+func (f *failingProcess) Retain(context.Context) error {
+	f.retain++
+	if f.failRetain {
+		return fmt.Errorf("boom")
+	}
+	return nil
+}
+
+func TestTickProcessFailureRetriesNextHourNotNextMinute(t *testing.T) {
+	s, _, _ := newSched(t)
+	fp := &failingProcess{failProcess: true}
+	s.Jobs = fp
+	ctx := context.Background()
+	s.Tick(ctx, at("2026-10-07", 10, 0))
+	s.Tick(ctx, at("2026-10-07", 10, 1))
+	if fp.process != 1 {
+		t.Fatalf("process calls after 10:01 = %d, want 1", fp.process)
+	}
+	s.Tick(ctx, at("2026-10-07", 11, 0))
+	if fp.process != 2 {
+		t.Fatalf("process calls after 11:00 = %d, want 2", fp.process)
+	}
+}
+
+func TestTickRetainFailureDoesNotBlockProcessing(t *testing.T) {
+	s, _, st := newSched(t)
+	fp := &failingProcess{failRetain: true}
+	s.Jobs = fp
+	ctx := context.Background()
+	s.Tick(ctx, at("2026-10-07", 10, 0))
+	s.Tick(ctx, at("2026-10-07", 10, 1))
+	if fp.process != 1 || fp.retain != 1 {
+		t.Fatalf("process=%d retain=%d, want 1 and 1", fp.process, fp.retain)
+	}
+	if v, _, _ := st.GetKV("last_process_hour"); v != "2026-10-07T10" {
+		t.Fatalf("process marker = %q", v)
+	}
+	s.Tick(ctx, at("2026-10-07", 11, 0))
+	if fp.process != 2 || fp.retain != 2 {
+		t.Fatalf("process=%d retain=%d, want 2 and 2", fp.process, fp.retain)
+	}
+}
+
+func TestTickCancelledContextDoesNotAdvanceMarker(t *testing.T) {
+	s, _, st := newSched(t)
+	fp := &failingProcess{failProcess: true, failRetain: true}
+	s.Jobs = fp
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.Tick(ctx, at("2026-10-07", 10, 0))
+	for _, k := range []string{"last_process_hour", "last_retain_hour"} {
+		if v, ok, _ := st.GetKV(k); ok {
+			t.Fatalf("%s advanced to %q", k, v)
+		}
+	}
+	s.Tick(context.Background(), at("2026-10-07", 10, 1))
+	if fp.process != 2 || fp.retain != 2 {
+		t.Fatalf("process=%d retain=%d, want retry", fp.process, fp.retain)
+	}
+}

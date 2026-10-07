@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/media"
 	"workjournal/internal/store"
 )
 
@@ -42,7 +45,7 @@ func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, 
 			errs = append(errs, fmt.Errorf("hours on %s: %w", name, herr))
 			continue
 		}
-		if unprocessed(hours) {
+		if unprocessed(hours) || hasUnrecordedMedia(p, name, hours) {
 			continue
 		}
 		if rerr := os.RemoveAll(p.RawDay(name)); rerr != nil {
@@ -62,4 +65,45 @@ func unprocessed(hours []store.HourRecord) bool {
 		}
 	}
 	return false
+}
+
+// hasUnrecordedMedia reports whether the day's raw audio or screenshots cover
+// an hour that has no done or needs_review record, i.e. was never processed.
+func hasUnrecordedMedia(p config.Paths, day string, hours []store.HourRecord) bool {
+	settled := map[int]bool{}
+	for _, h := range hours {
+		if h.Status == store.StatusDone || h.Status == store.StatusNeedsReview {
+			settled[h.Hour] = true
+		}
+	}
+	for hour := range rawHours(p, day) {
+		if !settled[hour] {
+			return true
+		}
+	}
+	return false
+}
+
+// rawHours returns the hours that have audio chunks or screenshots on disk.
+func rawHours(p config.Paths, day string) map[int]bool {
+	out := map[int]bool{}
+	if entries, err := os.ReadDir(p.Audio(day)); err == nil {
+		for _, e := range entries {
+			if hh, _, _, _, ok := media.ParseChunkName(e.Name()); ok {
+				out[hh] = true
+			}
+		}
+	}
+	if entries, err := os.ReadDir(p.Screens(day)); err == nil {
+		for _, e := range entries {
+			base, ok := strings.CutSuffix(e.Name(), ".jpg")
+			if !ok || len(base) != 6 {
+				continue
+			}
+			if hh, err := strconv.Atoi(base[:2]); err == nil && hh >= 0 && hh <= 23 {
+				out[hh] = true
+			}
+		}
+	}
+	return out
 }

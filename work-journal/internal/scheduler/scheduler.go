@@ -28,6 +28,7 @@ type Jobs interface {
 // KV keys holding the last completed run of each job.
 const (
 	kvProcessHour = "last_process_hour"
+	kvRetainHour  = "last_retain_hour"
 	kvCloseDay    = "last_close_day"
 	kvRollupWeek  = "last_rollup_week"
 )
@@ -94,15 +95,23 @@ func (s *Scheduler) mark(key, val string) {
 	s.step("write "+key, s.Store.SetKV(key, val))
 }
 
+// process runs ProcessPending and Retain at most once per hour each. A marker
+// advances once the job was attempted, success or failure, so a persistently
+// failing hour is retried next hour rather than every minute. Only a cancelled
+// context leaves the marker unadvanced.
 func (s *Scheduler) process(ctx context.Context, now time.Time) {
-	key := hourKey(now)
-	if s.kv(kvProcessHour) == key {
+	s.hourly(ctx, now, kvProcessHour, "process pending", s.Jobs.ProcessPending)
+	s.hourly(ctx, now, kvRetainHour, "retain", s.Jobs.Retain)
+}
+
+func (s *Scheduler) hourly(ctx context.Context, now time.Time, key, name string, job func(context.Context) error) {
+	hour := hourKey(now)
+	if s.kv(key) == hour {
 		return
 	}
-	ok := s.step("process pending", s.Jobs.ProcessPending(ctx))
-	ok = s.step("retain", s.Jobs.Retain(ctx)) && ok
-	if ok {
-		s.mark(kvProcessHour, key)
+	s.step(name, job(ctx))
+	if ctx.Err() == nil {
+		s.mark(key, hour)
 	}
 }
 

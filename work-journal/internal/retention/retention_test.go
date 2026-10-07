@@ -130,3 +130,40 @@ func TestFreeGB(t *testing.T) {
 		t.Fatalf("FreeGB = %v, %v", g, err)
 	}
 }
+
+func TestSweepSkipsDayWithUnrecordedRawHour(t *testing.T) {
+	p, st := setup(t, "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")
+	touch := func(path string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 10-01: audio for hour 9 with no record -> keep.
+	touch(filepath.Join(p.Audio("2026-10-01"), "0905-mic.m4a"))
+	// 10-02: screenshot for hour 14 with no record -> keep.
+	touch(filepath.Join(p.Screens("2026-10-02"), "142530.jpg"))
+	// 10-03: audio for hour 9 recorded done -> delete.
+	touch(filepath.Join(p.Audio("2026-10-03"), "090500-system.m4a"))
+	if err := st.UpsertHour(store.HourRecord{Day: "2026-10-03", Hour: 9, Status: store.StatusDone}); err != nil {
+		t.Fatal(err)
+	}
+	// 10-04: audio for hour 9 recorded done, screenshot hour 10 only needs_review -> delete.
+	touch(filepath.Join(p.Audio("2026-10-04"), "0905-mic.m4a"))
+	touch(filepath.Join(p.Screens("2026-10-04"), "100000.jpg"))
+	for h, s := range map[int]string{9: store.StatusDone, 10: store.StatusNeedsReview} {
+		if err := st.UpsertHour(store.HourRecord{Day: "2026-10-04", Hour: h, Status: s}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	removed, err := Sweep(p, st, now, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(removed, []string{"2026-10-03", "2026-10-04"}) {
+		t.Fatalf("removed = %v", removed)
+	}
+}
