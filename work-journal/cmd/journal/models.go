@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,10 +42,15 @@ func setupSpeakerModels(ctx context.Context, models, base string, download func(
 	}
 	if err := extractTarBz2(archive, models, diarize.SegmentationDir); err != nil {
 		fmt.Fprintln(out, "failed")
+		// Ruling 38: a kept bad archive would be "already downloaded" forever.
+		if rerr := os.Remove(archive); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return errors.Join(err, rerr)
+		}
 		return err
 	}
 	if fi, err := os.Stat(seg); err != nil || fi.Size() == 0 {
 		fmt.Fprintln(out, "failed")
+		os.Remove(archive) // re-download next time (Ruling 38)
 		return fmt.Errorf("%s has no %s", diarize.SegmentationArchive, filepath.Base(seg))
 	}
 	fmt.Fprintln(out, presence(false))

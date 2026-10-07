@@ -189,3 +189,25 @@ func TestRunSetupDiarizationOffSkipsSpeakerModels(t *testing.T) {
 		t.Fatalf("downloads = %v, want only the whisper model", urls)
 	}
 }
+
+// Ruling 38: a corrupt archive is removed so the next setup downloads it again.
+func TestExtractFailureRemovesArchive(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, diarize.SegmentationArchive)
+	mkfile(t, archive, "not a bzip2 stream")
+	var calls int
+	download := func(_ context.Context, url, dest string) (bool, error) {
+		calls++
+		if strings.HasSuffix(dest, diarize.EmbeddingFile) {
+			return false, os.WriteFile(dest, []byte("emb"), 0o644)
+		}
+		return true, nil // the corrupt archive is already there
+	}
+	err := setupSpeakerModels(context.Background(), dir, "http://x", download, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("corrupt archive accepted")
+	}
+	if _, serr := os.Stat(archive); !os.IsNotExist(serr) {
+		t.Fatalf("corrupt archive kept (err %v): %v", err, serr)
+	}
+}
