@@ -16,7 +16,12 @@ Headless skill for the work-journal app. The prompt names one input file.
 
 ## Input
 
-JSON with `day`, `hour`, `segments` (app, title, minutes), `meetings`, `transcript` (speaker, text), and `ocr` (on-screen text lines).
+JSON object with exactly these fields:
+- `day` (string, YYYY-MM-DD) and `hour` (integer, 0-23).
+- `segments`: array of `{index, app, title, minutes, category}`. `category` may be `""` and is informational only; do not copy it into the output.
+- `meetings`: array of `{id, start, end, app}` (`start`/`end` are `HH:MM`).
+- `transcript`: array of `{speaker, text}`; `You` is the mic track.
+- `ocr`: array of on-screen text lines.
 
 ## Rules specific to this skill
 
