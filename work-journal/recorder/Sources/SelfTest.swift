@@ -25,51 +25,86 @@ private func renderSelftestJPEG(to url: URL) throws {
     try jpeg.write(to: url)
 }
 
-private func appendStartEvent(dataDir: String) throws {
-    let day = DateFormatter()
-    day.locale = Locale(identifier: "en_US_POSIX")
-    day.dateFormat = "yyyy-MM-dd"
-    let dir = URL(fileURLWithPath: dataDir).appendingPathComponent("raw/\(day.string(from: Date()))")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let ts = ISO8601DateFormatter()
-    ts.timeZone = .current
-    let line = "{\"ts\":\"\(ts.string(from: Date()))\",\"type\":\"start\"}\n"
-    let file = dir.appendingPathComponent("activity.jsonl")
-    if let h = try? FileHandle(forWritingTo: file) {
-        defer { try? h.close() }
-        try h.seekToEnd()
-        try h.write(contentsOf: Data(line.utf8))
-    } else {
-        try Data(line.utf8).write(to: file)
-    }
+private func files(in dir: URL, suffix: String) -> [URL] {
+    let all = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+    return all.filter { $0.lastPathComponent.hasSuffix(suffix) }
 }
 
-/// `recorder selftest --data-dir D`
-func runSelfTest(args: [String]) -> Int32 {
-    guard let i = args.firstIndex(of: "--data-dir"), i + 1 < args.count else {
-        print("selftest failed: --data-dir is required")
-        return 1
+private func nonEmpty(_ url: URL) -> Bool {
+    ((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) > 0
+}
+
+/// Checks the media and activity a short capture wrote under `dataDir`; nil when all pass.
+private func checkCapture(dataDir: URL, day: URL) -> String? {
+    if files(in: day.appendingPathComponent("screens"), suffix: ".jpg").isEmpty {
+        return "screens: no screens/*.jpg written (Screen Recording permission?)"
     }
-    let dataDir = args[i + 1]
-    do {
-        try appendStartEvent(dataDir: dataDir)
-    } catch {
-        print("selftest failed: activity log: \(error.localizedDescription)")
-        return 1
+    let audio = day.appendingPathComponent("audio")
+    if !files(in: audio, suffix: "-system.m4a").contains(where: nonEmpty) {
+        return "audio: no non-empty *-system.m4a written (Screen & System Audio Recording permission?)"
     }
+    if !files(in: audio, suffix: "-mic.m4a").contains(where: nonEmpty) {
+        return "audio: no non-empty *-mic.m4a written (Microphone permission?)"
+    }
+    let lines = (try? String(contentsOf: day.appendingPathComponent("activity.jsonl"), encoding: .utf8)) ?? ""
+    let types = Set(lines.split(separator: "\n").compactMap { line -> String? in
+        let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        return obj?["type"] as? String
+    })
+    for want in ["start", "app"] where !types.contains(want) {
+        return "activity: no \"\(want)\" event in activity.jsonl"
+    }
+    return nil
+}
+
+private func checkOCR() -> String? {
     let img = FileManager.default.temporaryDirectory.appendingPathComponent("wj-selftest-\(UUID().uuidString).jpg")
     defer { try? FileManager.default.removeItem(at: img) }
     do {
         try renderSelftestJPEG(to: img)
         let text = try recognizeText(path: img.path)
-        guard text.range(of: "selftest", options: .caseInsensitive) != nil else {
-            print("selftest failed: ocr read \"\(text)\", expected \"selftest\"")
-            return 1
+        if text.range(of: "selftest", options: .caseInsensitive) == nil {
+            return "ocr read \"\(text)\", expected \"selftest\""
         }
     } catch {
-        print("selftest failed: ocr: \(error.localizedDescription)")
+        return "ocr: \(error.localizedDescription)"
+    }
+    return nil
+}
+
+/// `recorder selftest --data-dir D`: captures for 5 s into a fresh temp dir (never the data
+/// dir, which may be the live one), checks the output, then runs OCR. The final line goes to
+/// stdout and to `D/selftest.result` (stdout is not visible when launched through `open`).
+func runSelfTest(args: [String]) -> Int32 {
+    guard let i = args.firstIndex(of: "--data-dir"), i + 1 < args.count else {
+        print("selftest failed: --data-dir is required")
         return 1
     }
-    print("selftest ok")
-    return 0
+    let dataDir = URL(fileURLWithPath: args[i + 1])
+    let captureDir = FileManager.default.temporaryDirectory.appendingPathComponent("wj-selftest-\(UUID().uuidString)")
+    var failure: String?
+    do {
+        try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: captureDir, withIntermediateDirectories: true)
+        let started = Date()
+        try runSelftestCapture(dataDir: captureDir, seconds: 5)
+        failure = checkCapture(dataDir: captureDir, day: rawDayDir(captureDir, started))
+    } catch {
+        failure = "capture: \(error.localizedDescription)"
+    }
+    if failure == nil { failure = checkOCR() }
+
+    let line = failure.map { "selftest failed: \($0)" } ?? "selftest ok"
+    if failure == nil {
+        try? FileManager.default.removeItem(at: captureDir)
+    } else {
+        eprint("selftest: capture output kept at \(captureDir.path)")
+    }
+    print(line)
+    do {
+        try Data((line + "\n").utf8).write(to: dataDir.appendingPathComponent("selftest.result"))
+    } catch {
+        eprint("selftest: cannot write selftest.result: \(error.localizedDescription)")
+    }
+    return failure == nil ? 0 : 1
 }

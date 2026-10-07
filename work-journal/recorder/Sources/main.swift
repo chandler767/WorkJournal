@@ -13,6 +13,11 @@ func runPolicyTests() -> Int32 {
     cal.timeZone = .current
     let t1405 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 5))!
 
+    let t1407 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 7, second: 30))!
+    let t1410 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 14, minute: 10))!
+    let t2358 = cal.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 23, minute: 58))!
+    let midnight = cal.date(from: DateComponents(year: 2026, month: 1, day: 3))!
+
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
@@ -28,6 +33,9 @@ func runPolicyTests() -> Int32 {
         ("meeting interval 5", screenshotInterval(meeting: true, c) == 5),
         ("normal interval 10", screenshotInterval(meeting: false, c) == 10),
         ("chunk name mic", chunkName(start: t1405, track: "mic") == "1405-mic.m4a"),
+        ("chunk ends on next 5-min boundary", chunkEnd(after: t1407, minutes: 5) == t1410),
+        ("chunk starting on boundary ends 5 min later", chunkEnd(after: t1405, minutes: 5) == t1410),
+        ("chunk never crosses midnight", chunkEnd(after: t2358, minutes: 7) == midnight),
         ("chunk name system", chunkName(start: t1405, track: "system") == "1405-system.m4a"),
         ("identical thumbnails skipped", shouldSkipScreenshot(prev: flat, next: flat, threshold: 2.0)),
         ("inverted thumbnail not skipped", !shouldSkipScreenshot(prev: flat, next: inverted, threshold: 2.0)),
@@ -52,8 +60,7 @@ case "ocr":
 case "selftest":
     exit(runSelfTest(args: Array(args.dropFirst())))
 case "run":
-    eprint("run: not implemented")
-    exit(2)
+    exit(runRecorder(args: Array(args.dropFirst())))
 default:
     eprint("usage: recorder run|ocr|selftest|run-tests")
     exit(2)
