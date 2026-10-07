@@ -535,3 +535,31 @@ func TestYoungUnreadableChunkKeepsHourPending(t *testing.T) {
 		t.Fatalf("old unreadable chunk: err = %v", err)
 	}
 }
+
+// M18: a corrupt derived doc is rebuilt from raw, like a missing one.
+func TestCorruptDerivedDocTranscribedAgain(t *testing.T) {
+	e := newEnv(t)
+	transcribeFixture(e)
+	if err := e.st.UpsertHour(store.HourRecord{Day: day, Hour: 13, Status: store.StatusTranscribed}); err != nil {
+		t.Fatal(err)
+	}
+	path := e.paths.DerivedHour(day, 13)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{truncated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.ProcessPending(context.Background()); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if !slices.Contains(e.sum.calls, HourKey{day, 13}) {
+		t.Fatalf("hour 13 not summarized: %v", e.sum.calls)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("derived doc not rebuilt: %v", err)
+	}
+	if !strings.Contains(strings.Join(e.logs, "\n"), "transcribing again") {
+		t.Errorf("not logged: %q", e.logs)
+	}
+}

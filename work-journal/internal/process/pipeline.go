@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"time"
 
@@ -97,8 +96,9 @@ func (p *Pipeline) processHour(ctx context.Context, h HourKey) error {
 	var doc *HourDoc
 	if ok && rec.Status == store.StatusTranscribed {
 		doc, err = Load(p.Paths.DerivedHour(h.Day, h.Hour))
-		if errors.Is(err, fs.ErrNotExist) {
-			p.logf("process: derived doc for %s %02d missing; transcribing again", h.Day, h.Hour)
+		if err != nil {
+			// Missing or unparseable (e.g. truncated by a crash): rebuild it.
+			p.logf("process: derived doc for %s %02d unusable (%v); transcribing again", h.Day, h.Hour, err)
 			doc, err = p.Transcribe(ctx, h.Day, h.Hour)
 		}
 	} else {
