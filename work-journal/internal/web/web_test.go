@@ -18,6 +18,8 @@ import (
 type fakeControl struct {
 	calls     []string
 	statusErr error
+	sent      []string
+	sendErr   error
 }
 
 func (f *fakeControl) Pause() error  { f.calls = append(f.calls, "pause"); return nil }
@@ -28,7 +30,7 @@ func (f *fakeControl) Status() (capture.Status, error) {
 	}
 	return capture.Status{State: "recording", Screens: true, Audio: true}, nil
 }
-func (f *fakeControl) Send(string) error { return nil }
+func (f *fakeControl) Send(c string) error { f.sent = append(f.sent, c); return f.sendErr }
 
 type fakeJobs struct {
 	reprocessed, closed []string

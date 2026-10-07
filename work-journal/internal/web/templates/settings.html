@@ -1,0 +1,58 @@
+{{define "content"}}
+<h1>Settings</h1>
+{{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
+{{if .Error}}<div class="banner error" role="alert">{{.Error}}</div>{{end}}
+
+<form method="post" action="/settings" class="settings">
+  <section>
+    <h2>General</h2>
+    <label>Retention days <input type="number" name="retention_days" min="1" value="{{.Form.RetentionDays}}"></label>
+    <label>Close time (HH:MM) <input type="text" name="close_time" value="{{.Form.CloseTime}}"></label>
+    <label>Weekly rollup day
+      <select name="rollup_weekday">{{range .Weekdays}}<option{{if eq . $.Form.RollupWeekday}} selected{{end}}>{{.}}</option>{{end}}</select>
+    </label>
+    <label>Idle minutes <input type="number" name="idle_minutes" min="1" value="{{.Form.IdleMinutes}}"></label>
+    <label>Pause auto-resume (minutes) <input type="number" name="pause_auto_resume" min="1" value="{{.Form.PauseAutoResume}}"></label>
+  </section>
+  <section>
+    <h2>Exclusions</h2>
+    <p class="muted">One per line. Exclusion changes take effect after the recorder restarts.</p>
+    <label>Excluded apps <textarea name="excluded_apps" rows="4">{{.Form.ExcludedApps}}</textarea></label>
+    <label>Excluded title keywords <textarea name="excluded_titles" rows="4">{{.Form.ExcludedTitles}}</textarea></label>
+  </section>
+  <section>
+    <h2>Categories and rules</h2>
+    <label>Categories (one per line) <textarea name="categories" rows="6">{{.Form.Categories}}</textarea></label>
+    <label>Rules (<code>app = Category</code>, one per line) <textarea name="rules" rows="6">{{.Form.Rules}}</textarea></label>
+  </section>
+  <button type="submit">Save settings</button>
+</form>
+
+<section>
+  <h2>Recorder</h2>
+  <p class="muted">Restarting applies the current exclusions; the supervisor starts it again with new arguments.</p>
+  <form method="post" action="/settings/restart-recorder"><button type="submit" class="secondary">Restart recorder</button></form>
+</section>
+
+<section>
+  <h2>Rule suggestions</h2>
+  {{range .Suggestions}}
+  <div class="suggestion">
+    <span>{{.App}} &rarr; {{.Category}}</span>
+    <form method="post" action="/settings/rule-suggestion/accept"><input type="hidden" name="app" value="{{.App}}"><button type="submit">Accept</button></form>
+    <form method="post" action="/settings/rule-suggestion/dismiss"><input type="hidden" name="app" value="{{.App}}"><button type="submit" class="secondary">Dismiss</button></form>
+  </div>
+  {{else}}<p class="muted">No suggestions.</p>{{end}}
+</section>
+
+{{if .ShowVoices}}
+<section>
+  <h2>Voice profiles</h2>
+  {{range .Voices}}
+  <form class="suggestion" method="post" action="/settings/voice/{{urlq .}}/delete">
+    <span>{{.}}</span><button type="submit" class="secondary">Delete</button>
+  </form>
+  {{else}}<p class="muted">No voice profiles.</p>{{end}}
+</section>
+{{end}}
+{{end}}

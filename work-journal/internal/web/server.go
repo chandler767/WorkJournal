@@ -56,6 +56,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /media/{date}/{kind}/{file}", s.handleMedia)
 	mux.HandleFunc("GET /meeting/{id}", s.handleMeeting)
 	mux.HandleFunc("GET /search", s.handleSearch)
+	mux.HandleFunc("GET /settings", s.handleSettings)
+	mux.HandleFunc("POST /settings", s.sameOrigin(s.handleSettingsSave))
+	mux.HandleFunc("POST /settings/restart-recorder", s.sameOrigin(s.handleRestartRecorder))
+	mux.HandleFunc("POST /settings/rule-suggestion/{action}", s.sameOrigin(s.handleRuleSuggestion))
+	mux.HandleFunc("POST /settings/voice/{name}/delete", s.sameOrigin(s.handleVoiceDelete))
 	mux.HandleFunc("POST /pause", s.sameOrigin(s.handlePause))
 	mux.HandleFunc("POST /resume", s.sameOrigin(s.handleResume))
 	mux.HandleFunc("POST /close-day/{date}", s.sameOrigin(s.handleCloseDay))
@@ -195,6 +200,7 @@ func (s *Server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 
 var funcs = template.FuncMap{
 	"dur":   fmtDur,
+	"urlq":  url.PathEscape,
 	"div60": func(n int) int { return n / 60 },
 	"mod60": func(n int) int { return n % 60 },
 }
