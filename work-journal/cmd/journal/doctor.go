@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/diarize"
 	"workjournal/internal/media"
 )
 
@@ -58,8 +59,11 @@ func RunChecks(d DoctorDeps) []Check {
 	add("whisper model", nonEmpty(d.Stat, model),
 		fmt.Sprintf("run `journal setup` to download %s into %s", filepath.Base(model), filepath.Dir(model)))
 
-	if d.Cfg.Diarization != "off" {
-		add("diarization", false, `speaker diarization is not available in this build; set diarization = "off" in config.toml`)
+	if d.Cfg.Diarization == "sherpa" {
+		models := config.Paths{Root: d.Cfg.DataDir}.Models()
+		seg, emb := diarize.ModelPaths(models)
+		add("speaker models", nonEmpty(d.Stat, seg) && nonEmpty(d.Stat, emb),
+			"run `journal setup` to download the speaker diarization models into "+models)
 	}
 
 	_, err = d.LookPath("claude")

@@ -86,7 +86,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(func() { st.Close() })
 	Seed(t, st, p)
 	cfg := config.Default()
-	cfg.Diarization = "sherpa" // these tests exercise speaker naming; the shipped default is "off"
+	cfg.Diarization = "sherpa" // the shipped default; set explicitly because these tests need speaker naming
 	ctl, jobs := &fakeControl{}, &fakeJobs{}
 	s := &Server{Store: st, Paths: p, Cfg: func() config.Config { return cfg }, Control: ctl, Jobs: jobs}
 	return &env{srv: s, h: s.Handler(), st: st, ctl: ctl, jobs: jobs, p: p}

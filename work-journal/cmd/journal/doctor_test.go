@@ -72,7 +72,7 @@ func TestDoctorReportsMissingWhisper(t *testing.T) {
 
 func TestDoctorAllOK(t *testing.T) {
 	cs := RunChecks(okDeps())
-	want := []string{"whisper-cli", "whisper model", "claude", "claude responds", "skills", "recorder app", "recorder selftest", "free disk"}
+	want := []string{"whisper-cli", "whisper model", "speaker models", "claude", "claude responds", "skills", "recorder app", "recorder selftest", "free disk"}
 	if len(cs) != len(want) {
 		t.Fatalf("checks = %+v, want names %v", cs, want)
 	}
@@ -208,12 +208,34 @@ func TestDoctorLowDisk(t *testing.T) {
 	}
 }
 
-func TestDoctorSherpaUnavailable(t *testing.T) {
+func TestDoctorSpeakerModelsMissing(t *testing.T) {
 	d := okDeps()
 	d.Cfg.Diarization = "sherpa"
-	c := find(t, RunChecks(d), "diarization")
-	if c.OK || !strings.Contains(c.Fix, `diarization = "off"`) {
-		t.Fatalf("diarization = %+v", c)
+	var asked []string
+	d.Stat = func(p string) (fs.FileInfo, error) {
+		asked = append(asked, p)
+		if strings.HasSuffix(p, "nemo_en_titanet_small.onnx") {
+			return nil, fs.ErrNotExist
+		}
+		return fakeInfo{size: 100}, nil
+	}
+	c := find(t, RunChecks(d), "speaker models")
+	if c.OK || !strings.Contains(c.Fix, "journal setup") {
+		t.Fatalf("speaker models = %+v", c)
+	}
+	want := "/data/models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx"
+	if !strings.Contains(strings.Join(asked, " "), want) {
+		t.Fatalf("stat calls %v lack %s", asked, want)
+	}
+}
+
+func TestDoctorDiarizationOffSkipsSpeakerModels(t *testing.T) {
+	d := okDeps()
+	d.Cfg.Diarization = "off"
+	for _, c := range RunChecks(d) {
+		if c.Name == "speaker models" || c.Name == "diarization" {
+			t.Fatalf("unexpected check %+v with diarization off", c)
+		}
 	}
 }
 
