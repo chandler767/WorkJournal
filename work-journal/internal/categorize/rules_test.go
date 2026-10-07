@@ -17,8 +17,8 @@ func TestApplyRules(t *testing.T) {
 		seg(activity.KindActive, "Figma", "Checkout flow"),           // 0: app rule
 		seg(activity.KindIdle, "Figma", "Checkout flow"),             // 1: idle
 		seg(activity.KindActive, "Code", "parser.go"),                // 2: unmatched
-		seg(activity.KindPaused, "", ""),                             // 3: paused
-		seg(activity.KindGap, "", ""),                                // 4: gap
+		seg(activity.KindPaused, "", ""),                             // 3: paused, not counted
+		seg(activity.KindGap, "", ""),                                // 4: gap (asleep/off), not counted
 		seg(activity.KindExcluded, "", ""),                           // 5: excluded, not counted
 		seg(activity.KindActive, "Google Chrome", "JIRA-12 · Jira"),  // 6: title rule, case-insensitive
 		seg(activity.KindActive, "Slack", "Huddle with design team"), // 7: longest key wins
@@ -31,7 +31,7 @@ func TestApplyRules(t *testing.T) {
 		"":            "Ignored",
 	}
 	cats, unmatched := Apply(segs, rules)
-	want := []string{"Design", "Break/Idle", "", "Break/Idle", "Break/Idle", "", "Admin", "Meetings"}
+	want := []string{"Design", "Break/Idle", "", "", "", "", "Admin", "Meetings"}
 	if !reflect.DeepEqual(cats, want) {
 		t.Fatalf("cats = %q\nwant  %q", cats, want)
 	}

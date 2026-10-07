@@ -8,11 +8,11 @@ import (
 	"workjournal/internal/activity"
 )
 
-// BreakIdle is the category for idle, paused and gap time.
+// BreakIdle is the category for idle time.
 const BreakIdle = "Break/Idle"
 
-// Apply categorizes segs. Idle, paused and gap segments are BreakIdle;
-// excluded segments get "" and are not counted. Active segments match a rule
+// Apply categorizes segs. Idle segments are BreakIdle; paused, gap (asleep
+// or recorder off) and excluded segments get "" and are not counted. Active segments match a rule
 // whose key is a case-insensitive substring of the app or title, the longest
 // key winning (ties: the lexically smaller key). Active segments with no
 // match get "" and their indexes are returned in unmatched.
@@ -20,7 +20,7 @@ func Apply(segs []activity.Segment, rules map[string]string) (cats []string, unm
 	cats = make([]string, len(segs))
 	for i, s := range segs {
 		switch s.Kind {
-		case activity.KindIdle, activity.KindPaused, activity.KindGap:
+		case activity.KindIdle:
 			cats[i] = BreakIdle
 		case activity.KindActive:
 			if c, ok := match(s, rules); ok {
