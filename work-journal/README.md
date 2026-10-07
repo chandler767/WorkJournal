@@ -42,6 +42,20 @@ bin/journal close-day [--day 2026-10-07]     # write journal/<day>.md (default t
 bin/journal rollup [--week 2026-W41]         # write journal/<week>.md (default this week)
 ```
 
+## Start at login
+
+```sh
+bin/journal autostart on       # run `journal serve` at login, and start it now
+bin/journal autostart status
+bin/journal autostart off      # stop it now and at login
+```
+
+It runs as a per-user LaunchAgent (`~/Library/LaunchAgents/local.workjournal.serve.plist`) that
+logs to `~/WorkJournal/logs/serve.log` and is restarted if it crashes. Stop any `serve` you
+started in a terminal first. The PATH captured when you run `autostart on` is used to find
+`whisper-cli` and `claude`, so run it from a normal terminal. Use the menu-bar Pause to stop
+recording temporarily; quitting the recorder from its menu only restarts it.
+
 ## Permissions
 
 The recorder (`recorder/build/WorkJournalRecorder.app`) needs, in System Settings →

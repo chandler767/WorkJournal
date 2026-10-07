@@ -31,6 +31,7 @@ commands:
   process [--day D --hour H]  process pending hours, or reprocess one hour
   close-day [--day D]         write the day's journal entry (default today)
   rollup [--week W]           write the weekly rollup (default this week)
+  autostart on|off|status     run serve at login (on also starts it now; off stops it)
 
 common flags:
   --config PATH   config file (default ~/WorkJournal/config.toml)
@@ -90,6 +91,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "autostart":
+		if fset.NArg() != 1 {
+			fmt.Fprintf(stderr, "journal autostart: want on, off or status\n%s", usage)
+			return 2
+		}
+		var d autostartDeps
+		if d, err = defaultAutostartDeps(*cfgPath, cfg); err == nil {
+			err = runAutostart(fset.Arg(0), d, stdout)
+		}
 	case "serve", "process", "close-day", "rollup":
 		err = runApp(ctx, cmd, cfg, *cfgPath, loc, *day, *hour, *week)
 	default:
