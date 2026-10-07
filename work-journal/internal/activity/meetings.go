@@ -36,7 +36,7 @@ type interval struct {
 func DetectMeetings(segs []Segment, speech []SpeechSpan, c config.Config) []Meeting {
 	var cands []interval
 	for _, s := range segs {
-		if s.Kind == KindActive && isMeetingContext(s.App, s.Title, c) {
+		if (s.Kind == KindActive || s.Kind == KindIdle) && isMeetingContext(s.App, s.Title, c) {
 			cands = append(cands, interval{start: s.Start, end: s.End, app: s.App, title: s.Title, fromApp: true})
 		}
 	}

@@ -207,3 +207,26 @@ func TestMeetingsMergeShortGaps(t *testing.T) {
 		t.Fatalf("got %+v", ms)
 	}
 }
+
+func TestMeetingNotSplitByIdle(t *testing.T) {
+	segs := []Segment{
+		{at(10, 0), at(10, 10), "zoom.us", "Zoom Meeting", KindActive},
+		{at(10, 10), at(10, 30), "zoom.us", "Zoom Meeting", KindIdle},
+		{at(10, 30), at(10, 45), "zoom.us", "Zoom Meeting", KindActive},
+	}
+	ms := DetectMeetings(segs, nil, config.Default())
+	if len(ms) != 1 || !ms[0].Start.Equal(at(10, 0)) || !ms[0].End.Equal(at(10, 45)) {
+		t.Fatalf("got %+v", ms)
+	}
+}
+
+func TestSlackOnlyMeetingWhenHuddle(t *testing.T) {
+	segs := []Segment{
+		{at(9, 0), at(9, 20), "Slack", "general", KindActive},
+		{at(11, 0), at(11, 10), "Slack", "Huddle with Priya", KindActive},
+	}
+	ms := DetectMeetings(segs, nil, config.Default())
+	if len(ms) != 1 || !ms[0].Start.Equal(at(11, 0)) {
+		t.Fatalf("got %+v", ms)
+	}
+}

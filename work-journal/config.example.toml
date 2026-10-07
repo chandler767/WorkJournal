@@ -19,7 +19,7 @@ listen_addr = "127.0.0.1:4747"
 meeting_min_two_way_minutes = 2
 excluded_apps = ["1Password", "Keychain Access"]
 excluded_title_keywords = ["Private", "Incognito"]
-meeting_apps = ["zoom.us", "Microsoft Teams", "FaceTime", "Slack"]
+meeting_apps = ["zoom.us", "Microsoft Teams", "FaceTime"]
 meeting_title_keywords = ["Huddle", "Google Meet", "Meet -", "Microsoft Teams", "Zoom Meeting"]
 categories = ["Deep work", "Meetings", "Communication", "Admin", "Browsing/Research", "Break/Idle"]
 

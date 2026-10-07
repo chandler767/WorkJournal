@@ -63,7 +63,7 @@ func Default() Config {
 		MeetingMinTwoWayMinutes:      2,
 		ExcludedApps:                 []string{"1Password", "Keychain Access"},
 		ExcludedTitleKeywords:        []string{"Private", "Incognito"},
-		MeetingApps:                  []string{"zoom.us", "Microsoft Teams", "FaceTime", "Slack"},
+		MeetingApps:                  []string{"zoom.us", "Microsoft Teams", "FaceTime"},
 		MeetingTitleKeywords:         []string{"Huddle", "Google Meet", "Meet -", "Microsoft Teams", "Zoom Meeting"},
 		Categories:                   []string{"Deep work", "Meetings", "Communication", "Admin", "Browsing/Research", "Break/Idle"},
 		Rules:                        map[string]string{},
