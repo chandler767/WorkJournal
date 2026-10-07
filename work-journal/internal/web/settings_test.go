@@ -198,3 +198,76 @@ func TestSettingsNavLink(t *testing.T) {
 	e := newSettingsEnv(t)
 	mustContain(t, e.get("/search").Body.String(), `href="/settings"`)
 }
+
+func TestSettingsPreservesLowercaseWeekday(t *testing.T) {
+	e := newSettingsEnv(t)
+	e.cfg.RollupWeekday = "friday"
+	body := e.get("/settings").Body.String()
+	mustContain(t, body, "<option selected>Friday</option>")
+	f := e.form()
+	f.Set("rollup_weekday", "Friday") // what the browser submits for the rendered form
+	if rec := e.post("/settings", f, nil); rec.Code != 303 {
+		t.Fatalf("code %d", rec.Code)
+	}
+	if got := e.saves[0].RollupWeekday; got != "Friday" {
+		t.Errorf("weekday = %q", got)
+	}
+	f.Set("rollup_weekday", "friday")
+	e.post("/settings", f, nil)
+	if got := e.saves[1].RollupWeekday; got != "Friday" {
+		t.Errorf("lowercase post weekday = %q", got)
+	}
+}
+
+func TestSettingsRejectsBadCloseTime(t *testing.T) {
+	e := newSettingsEnv(t)
+	f := e.form()
+	f.Set("close_time", "25:99")
+	rec := e.post("/settings", f, nil)
+	if rec.Code != 400 || len(e.saves) != 0 {
+		t.Fatalf("code %d saves %d", rec.Code, len(e.saves))
+	}
+	mustContain(t, rec.Body.String(), "close_time")
+}
+
+func TestSettingsRejectsEmptyCategories(t *testing.T) {
+	e := newSettingsEnv(t)
+	f := e.form()
+	f.Set("categories", "\n  \n")
+	rec := e.post("/settings", f, nil)
+	if rec.Code != 400 || len(e.saves) != 0 {
+		t.Fatalf("code %d saves %d", rec.Code, len(e.saves))
+	}
+	mustContain(t, rec.Body.String(), "categories")
+}
+
+func TestSettingsRejectsNonNumeric(t *testing.T) {
+	e := newSettingsEnv(t)
+	f := e.form()
+	f.Set("retention_days", "7abc")
+	if c := e.post("/settings", f, nil).Code; c != 400 || len(e.saves) != 0 {
+		t.Fatalf("code %d saves %d", c, len(e.saves))
+	}
+}
+
+func TestSettingsPreservesHiddenFields(t *testing.T) {
+	e := newSettingsEnv(t)
+	e.cfg.DataDir, e.cfg.ListenAddr, e.cfg.WhisperModel, e.cfg.VoiceMatchThreshold = "/data/x", "127.0.0.1:9999", "small.en", 0.9
+	if rec := e.post("/settings", e.form(), nil); rec.Code != 303 {
+		t.Fatalf("code %d", rec.Code)
+	}
+	g := e.saves[0]
+	if g.DataDir != "/data/x" || g.ListenAddr != "127.0.0.1:9999" || g.WhisperModel != "small.en" || g.VoiceMatchThreshold != 0.9 {
+		t.Errorf("hidden fields changed: %+v", g)
+	}
+}
+
+func TestSettingsEscapesMarkup(t *testing.T) {
+	e := newSettingsEnv(t)
+	e.cfg.ExcludedTitleKeywords = []string{"<script>x</script>"}
+	body := e.get("/settings").Body.String()
+	if strings.Contains(body, "<script>x</script>") {
+		t.Error("markup not escaped")
+	}
+	mustContain(t, body, "&lt;script&gt;x&lt;/script&gt;")
+}

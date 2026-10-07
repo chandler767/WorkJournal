@@ -42,6 +42,18 @@ var settingsNotices = map[string]string{
 	"voicegone": "Voice profile deleted.",
 }
 
+// titleWeekday canonicalises a weekday name ("friday" -> "Friday"), the
+// spelling the select offers; unrecognised text is returned trimmed.
+func titleWeekday(v string) string {
+	v = strings.TrimSpace(v)
+	for _, d := range weekdayNames {
+		if strings.EqualFold(d, v) {
+			return d
+		}
+	}
+	return v
+}
+
 func formFromConfig(c config.Config) settingsForm {
 	rules := make([]string, 0, len(c.Rules))
 	for app, cat := range c.Rules {
@@ -103,7 +115,7 @@ func applyForm(base config.Config, f settingsForm) (config.Config, error) {
 		return c, fmt.Errorf("pause_auto_resume_minutes must be a whole number, got %q", f.PauseAutoResume)
 	}
 	c.CloseTime = strings.TrimSpace(f.CloseTime)
-	c.RollupWeekday = strings.TrimSpace(f.RollupWeekday)
+	c.RollupWeekday = titleWeekday(f.RollupWeekday)
 	c.ExcludedApps = splitLines(f.ExcludedApps)
 	c.ExcludedTitleKeywords = splitLines(f.ExcludedTitles)
 	c.Categories = splitLines(f.Categories)
