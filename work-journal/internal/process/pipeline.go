@@ -167,8 +167,8 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 	if err := p.Store.ReplaceSegments(day, hour, segmentRecords(day, hour, segs)); err != nil {
 		return nil, fmt.Errorf("store segments: %w", err)
 	}
-	if err := p.Store.ReplaceText(day, hour, textDocs(doc, start)); err != nil {
-		return nil, fmt.Errorf("index text: %w", err)
+	if err := p.IndexText(doc); err != nil {
+		return nil, err
 	}
 	if err := doc.Save(p.Paths.DerivedHour(day, hour)); err != nil {
 		return nil, fmt.Errorf("save derived doc: %w", err)

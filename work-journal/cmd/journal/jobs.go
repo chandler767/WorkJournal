@@ -11,6 +11,7 @@ import (
 
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
+	"workjournal/internal/diarize"
 	"workjournal/internal/journal"
 	"workjournal/internal/media"
 	"workjournal/internal/process"
@@ -199,8 +200,31 @@ func (j *Jobs) DiskCheck(ctx context.Context) error {
 	return j.Store.SetKV(kvDiskState, next)
 }
 
-// EnrollSpeaker would store a voice embedding for a named speaker. No
-// diarizer ships yet (Ruling 28), so there is never an embedding to enrol.
+// EnrollSpeaker learns the voice of a meeting speaker the user named and
+// relabels that speaker's utterances (process.Pipeline.EnrollSpeaker). It
+// returns errDiarizationUnavailable when diarization is off or the speaker
+// models are not loaded, and scheduler.ErrMediaExpired when the meeting's
+// raw audio is gone.
 func (j *Jobs) EnrollSpeaker(ctx context.Context, meetingID, speaker, name string) error {
-	return errDiarizationUnavailable
+	if j.Cfg().Diarization == "off" {
+		return errDiarizationUnavailable
+	}
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
+	p := j.pipeline()
+	if _, noop := p.Diarizer.(diarize.NoopDiarizer); noop || p.Diarizer == nil {
+		return errDiarizationUnavailable
+	}
+	m, ok, err := j.Store.Meeting(meetingID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("meeting %s not found", meetingID)
+	}
+	err = p.EnrollSpeaker(ctx, m, speaker, name)
+	if errors.Is(err, process.ErrNoRawAudio) {
+		return scheduler.ErrMediaExpired
+	}
+	return err
 }

@@ -16,6 +16,7 @@ import (
 	"workjournal/internal/activity"
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
+	"workjournal/internal/diarize"
 	"workjournal/internal/media"
 	"workjournal/internal/process"
 	"workjournal/internal/scheduler"
@@ -162,6 +163,81 @@ func TestEnrollSpeakerDiarizationOff(t *testing.T) {
 	err := j.EnrollSpeaker(context.Background(), "m1", "Speaker 1", "Ana")
 	if err == nil || err.Error() != "diarization unavailable" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+type oneTurnDiarizer struct{}
+
+func (oneTurnDiarizer) Diarize(context.Context, string) ([]diarize.Turn, map[int][]float32, error) {
+	return []diarize.Turn{{Start: 0, End: 10, Speaker: 0}}, map[int][]float32{0: {1, 0}}, nil
+}
+
+// enrollJobs gives j a sherpa-mode pipeline with diarizer d, a 10:00–10:30
+// meeting and hour 10's doc where "Speaker 1" talks at 10:00:02.
+func enrollJobs(t *testing.T, d diarize.Diarizer) (*Jobs, string) {
+	t.Helper()
+	j, _, _ := newJobs(t)
+	cfg := j.Cfg()
+	cfg.Diarization = "sherpa"
+	j.Cfg = func() config.Config { return cfg }
+	j.Pipeline = &process.Pipeline{
+		Cfg: cfg, Paths: j.Paths, Store: j.Store, Diarizer: d,
+		Voices: &diarize.Voices{Dir: j.Paths.Voices(), Threshold: cfg.VoiceMatchThreshold},
+		Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			return nil, os.WriteFile(args[len(args)-1], []byte("RIFF"), 0o644)
+		},
+		Logf: t.Logf,
+	}
+	at := func(m, s int) time.Time { return time.Date(2026, 10, 1, 10, m, s, 0, time.Local) }
+	doc := &process.HourDoc{Day: "2026-10-01", Hour: 10, Transcript: []media.Utterance{
+		{Start: at(0, 2), End: at(0, 6), Track: "system", Speaker: "Speaker 1", Text: "hello"},
+	}}
+	if err := doc.Save(j.Paths.DerivedHour("2026-10-01", 10)); err != nil {
+		t.Fatal(err)
+	}
+	m := store.MeetingRecord{ID: "2026-10-01-1000-zoom-us", Day: "2026-10-01", Start: at(0, 0), End: at(30, 0), App: "zoom.us"}
+	if err := j.Store.UpsertMeeting(m); err != nil {
+		t.Fatal(err)
+	}
+	mkfile(t, filepath.Join(j.Paths.Audio("2026-10-01"), "1000-system.m4a"), "audio")
+	return j, m.ID
+}
+
+func TestEnrollSpeakerEnrolsAndRelabels(t *testing.T) {
+	j, id := enrollJobs(t, oneTurnDiarizer{})
+	if err := j.EnrollSpeaker(context.Background(), id, "Speaker 1", "Ana"); err != nil {
+		t.Fatal(err)
+	}
+	if names, _ := j.Pipeline.Voices.List(); !equal(names, []string{"Ana"}) {
+		t.Fatalf("voices = %v", names)
+	}
+	doc, err := process.Load(j.Paths.DerivedHour("2026-10-01", 10))
+	if err != nil || doc.Transcript[0].Speaker != "Ana" {
+		t.Fatalf("doc = %+v, %v", doc, err)
+	}
+}
+
+func TestEnrollSpeakerMediaExpired(t *testing.T) {
+	j, id := enrollJobs(t, oneTurnDiarizer{})
+	if err := os.RemoveAll(j.Paths.RawDay("2026-10-01")); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.EnrollSpeaker(context.Background(), id, "Speaker 1", "Ana"); !errors.Is(err, scheduler.ErrMediaExpired) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEnrollSpeakerWithoutModelsIsUnavailable(t *testing.T) {
+	j, id := enrollJobs(t, diarize.NoopDiarizer{}) // Build's fallback when models are missing
+	if err := j.EnrollSpeaker(context.Background(), id, "Speaker 1", "Ana"); !errors.Is(err, errDiarizationUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEnrollSpeakerUnknownMeeting(t *testing.T) {
+	j, _ := enrollJobs(t, oneTurnDiarizer{})
+	if err := j.EnrollSpeaker(context.Background(), "2026-10-01-0900-x", "Speaker 1", "Ana"); err == nil {
+		t.Fatal("enrolled from an unknown meeting")
 	}
 }
 
