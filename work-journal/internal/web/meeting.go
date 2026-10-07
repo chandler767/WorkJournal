@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -129,6 +130,10 @@ func (s *Server) handleSpeaker(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.Cfg().Diarization == "off" {
+		http.Error(w, "speaker naming is disabled (diarization is off)", http.StatusConflict)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
@@ -137,6 +142,15 @@ func (s *Server) handleSpeaker(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if speaker == "" || utf8.RuneCountInString(speaker) > maxNameLen || name == "" || utf8.RuneCountInString(name) > maxNameLen {
 		http.Error(w, "speaker and name are required (name up to 80 characters)", http.StatusBadRequest)
+		return
+	}
+	parts, err := s.Store.Participants(m.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !slices.ContainsFunc(parts, func(p store.ParticipantRecord) bool { return p.Speaker == speaker }) {
+		http.Error(w, "unknown speaker for this meeting", http.StatusBadRequest)
 		return
 	}
 	// Save the name first: a failed enrolment must never lose it.

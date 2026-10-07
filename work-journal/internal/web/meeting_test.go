@@ -117,7 +117,7 @@ func TestConfirmSpeakerEnrolls(t *testing.T) {
 
 func TestSpeakerNameValidation(t *testing.T) {
 	e := newEnv(t)
-	seedMeeting(t, e)
+	seedMeeting(t, e, store.ParticipantRecord{Speaker: "Speaker 2", Name: "Priya", Confidence: 0.5})
 	for _, name := range []string{"", "   ", strings.Repeat("x", 81)} {
 		rec := e.post("/meeting/"+mtgID+"/speaker", url.Values{"speaker": {"Speaker 2"}, "name": {name}}, nil)
 		if rec.Code != 400 {
@@ -143,7 +143,7 @@ func TestSpeakerPostRejectsForeignOrigin(t *testing.T) {
 
 func TestEnrollWithExpiredMediaShowsMessage(t *testing.T) {
 	e := newEnv(t)
-	seedMeeting(t, e)
+	seedMeeting(t, e, store.ParticipantRecord{Speaker: "Speaker 2", Name: "Priya", Confidence: 0.5})
 	e.jobs.enrollErr = scheduler.ErrMediaExpired
 	rec := e.post("/meeting/"+mtgID+"/speaker", url.Values{"speaker": {"Speaker 2"}, "name": {"Priya"}}, nil)
 	if rec.Code != 303 {
@@ -163,7 +163,7 @@ func TestEnrollWithExpiredMediaShowsMessage(t *testing.T) {
 
 func TestEnrollOtherErrorKeepsName(t *testing.T) {
 	e := newEnv(t)
-	seedMeeting(t, e)
+	seedMeeting(t, e, store.ParticipantRecord{Speaker: "Speaker 2", Name: "Priya", Confidence: 0.5})
 	e.jobs.enrollErr = errors.New("boom")
 	rec := e.post("/meeting/"+mtgID+"/speaker", url.Values{"speaker": {"Speaker 2"}, "name": {"Priya"}}, nil)
 	loc := rec.Header().Get("Location")
@@ -220,4 +220,37 @@ func TestMeetingPageEscapesHostileInput(t *testing.T) {
 func TestDayPageLinksMeeting(t *testing.T) {
 	e := newEnv(t)
 	mustContain(t, e.get("/day/"+seedDay).Body.String(), `href="/meeting/2026-10-07-0910-zoom"`)
+}
+
+func TestNameUnknownSpeakerRejected(t *testing.T) {
+	e := newEnv(t)
+	seedMeeting(t, e, store.ParticipantRecord{Speaker: "Speaker 2", Name: "Priya", Confidence: 0.5})
+	rec := e.post("/meeting/"+mtgID+"/speaker", url.Values{"speaker": {"Speaker 99"}, "name": {"Bogus"}}, nil)
+	if rec.Code != 400 {
+		t.Fatalf("code %d", rec.Code)
+	}
+	if ps, _ := e.st.Participants(mtgID); len(ps) != 1 || ps[0].Speaker != "Speaker 2" {
+		t.Errorf("bogus participant stored: %+v", ps)
+	}
+	if len(e.jobs.enrolled) != 0 {
+		t.Error("enrolled unknown speaker")
+	}
+}
+
+func TestNameSpeakerRejectedWhenDiarizationOff(t *testing.T) {
+	e := newEnv(t)
+	seedMeeting(t, e, store.ParticipantRecord{Speaker: "Speaker 2", Name: "Priya", Confidence: 0.5})
+	cfg := e.srv.Cfg()
+	cfg.Diarization = "off"
+	e.srv.Cfg = func() config.Config { return cfg }
+	rec := e.post("/meeting/"+mtgID+"/speaker", url.Values{"speaker": {"Speaker 2"}, "name": {"Priya Shah"}}, nil)
+	if rec.Code != 409 {
+		t.Fatalf("code %d", rec.Code)
+	}
+	if ps, _ := e.st.Participants(mtgID); len(ps) != 1 || ps[0].Confirmed || ps[0].Name != "Priya" {
+		t.Errorf("participant changed: %+v", ps)
+	}
+	if len(e.jobs.enrolled) != 0 {
+		t.Error("enrolled with diarization off")
+	}
 }
