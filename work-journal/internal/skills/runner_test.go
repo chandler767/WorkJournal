@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -149,30 +150,6 @@ func TestRunnerRetriesWhenValidatorFails(t *testing.T) {
 	}
 }
 
-func TestRunnerIsErrorEnvelope(t *testing.T) {
-	f := &fakeExec{outs: []string{envelope("API Error: overloaded", true)}}
-	var got HourSummary
-	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
-	if err == nil {
-		t.Fatal("want error for is_error envelope")
-	}
-	if !strings.Contains(err.Error(), "overloaded") {
-		t.Fatalf("err = %v, want the envelope's message", err)
-	}
-}
-
-func TestRunnerExecError(t *testing.T) {
-	f := &fakeExec{err: errors.New("claude: not found")}
-	var got HourSummary
-	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
-	if err == nil || errors.Is(err, ErrInvalidOutput) {
-		t.Fatalf("err = %v, want a plain (retryable) error", err)
-	}
-	if len(f.calls) != 1 {
-		t.Fatalf("calls = %d", len(f.calls))
-	}
-}
-
 func TestRunnerUnknownSkill(t *testing.T) {
 	f := &fakeExec{outs: []string{envelope(goodHour, false)}}
 	var got HourSummary
@@ -207,6 +184,16 @@ func TestRunnerArgs(t *testing.T) {
 	}
 	if !pair("--output-format", "json") {
 		t.Errorf("missing --output-format json: %q", args)
+	}
+	// Only Skill (to load the skill) and Read exist; no MCP servers load.
+	if !pair("--tools", "Skill,Read") {
+		t.Errorf("missing --tools Skill,Read: %q", args)
+	}
+	if !slices.Contains(args, "--strict-mcp-config") {
+		t.Errorf("missing --strict-mcp-config: %q", args)
+	}
+	if slices.Contains(args, "--mcp-config") {
+		t.Errorf("--mcp-config must not be passed: %q", args)
 	}
 	want := "Use the tessl__summarize-hour skill. Input file: /data/derived/in.json. Reply with only the JSON object."
 	if !pair("-p", want) {
@@ -243,20 +230,6 @@ func TestRunnerRunsInWorkDir(t *testing.T) {
 	}
 }
 
-func TestRunnerContextCancelKillsProcess(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "slow-claude")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r := &ClaudeRunner{Bin: bin, WorkDir: dir, DataDir: dir, Timeout: 200 * time.Millisecond}
-	var got Markdown
-	err := r.Run(context.Background(), "close-day", filepath.Join(dir, "in.json"), &got)
-	if err == nil || errors.Is(err, ErrInvalidOutput) {
-		t.Fatalf("err = %v, want a timeout error", err)
-	}
-}
-
 // TestSchemasMatchSkillDocs guards against drift between the schema each
 // SKILL.md shows Claude and the schema the runner validates against.
 func TestSchemasMatchSkillDocs(t *testing.T) {
@@ -286,5 +259,97 @@ func TestSchemasMatchSkillDocs(t *testing.T) {
 		if !reflect.DeepEqual(inDoc, embedded) {
 			t.Errorf("%s: SKILL.md schema differs from internal/skills/schemas/%s.json", name, name)
 		}
+	}
+}
+
+func TestRunnerIsErrorEnvelope(t *testing.T) {
+	f := &fakeExec{outs: []string{envelope("API Error: overloaded", true)}}
+	var got HourSummary
+	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
+	if err == nil || !strings.Contains(err.Error(), "overloaded") {
+		t.Fatalf("err = %v, want the envelope's message", err)
+	}
+}
+
+func TestRunnerIsErrorCountsAsAttempt(t *testing.T) {
+	f := &fakeExec{outs: []string{envelope("API Error: overloaded", true), envelope("API Error: overloaded", true)}}
+	var got HourSummary
+	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
+	if !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("err = %v, want ErrInvalidOutput", err)
+	}
+	if len(f.calls) != 2 {
+		t.Fatalf("Exec called %d times, want 2", len(f.calls))
+	}
+
+	f = &fakeExec{outs: []string{envelope("API Error: overloaded", true), envelope(goodHour, false)}}
+	if err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got); err != nil || len(f.calls) != 2 {
+		t.Fatalf("is_error then good: err=%v calls=%d", err, len(f.calls))
+	}
+}
+
+func TestRunnerExitErrorCountsAsAttempt(t *testing.T) {
+	f := &fakeExec{err: errors.New("claude: exit status 1: boom")}
+	var got HourSummary
+	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
+	if !errors.Is(err, ErrInvalidOutput) || len(f.calls) != 2 {
+		t.Fatalf("err = %v calls = %d, want ErrInvalidOutput after 2 calls", err, len(f.calls))
+	}
+}
+
+func TestRunnerExecNotFoundIsTransient(t *testing.T) {
+	f := &fakeExec{err: &exec.Error{Name: "claude", Err: exec.ErrNotFound}}
+	var got HourSummary
+	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
+	if err == nil || errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("err = %v, want a plain (retryable) error", err)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("calls = %d", len(f.calls))
+	}
+	// The real exec path with a missing binary is transient too.
+	r := &ClaudeRunner{Bin: filepath.Join(t.TempDir(), "no-such-claude"), WorkDir: t.TempDir(), DataDir: t.TempDir()}
+	if err := r.Run(context.Background(), "close-day", "/data/in.json", &Markdown{}); err == nil || errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("missing binary: err = %v, want a plain error", err)
+	}
+}
+
+func TestRunnerTimeoutCountsAsAttempt(t *testing.T) {
+	calls := 0
+	r := &ClaudeRunner{Bin: "claude", WorkDir: "/repo", DataDir: "/data", Timeout: 50 * time.Millisecond,
+		Exec: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			calls++
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}}
+	var got HourSummary
+	err := r.Run(context.Background(), "summarize-hour", "/data/in.json", &got)
+	if !errors.Is(err, ErrInvalidOutput) || calls != 2 {
+		t.Fatalf("err = %v calls = %d, want ErrInvalidOutput after 2 timed-out attempts", err, calls)
+	}
+}
+
+// TestRunnerParentCancelIsTransient runs a real slow process and cancels the
+// caller's context: the process is killed promptly and the error is not
+// ErrInvalidOutput (the hour is retried later, not sent to review).
+func TestRunnerParentCancelIsTransient(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "slow-claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	r := &ClaudeRunner{Bin: bin, WorkDir: dir, DataDir: dir}
+	began := time.Now()
+	err := r.Run(ctx, "close-day", filepath.Join(dir, "in.json"), &Markdown{})
+	if took := time.Since(began); took > 5*time.Second {
+		t.Fatalf("Run took %s after cancel", took)
+	}
+	if err == nil || errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("err = %v, want a plain cancellation error", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the context error", err)
 	}
 }

@@ -253,7 +253,7 @@ func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) hourInput {
 		in.Meetings = append(in.Meetings, meetingBrief{ID: m.ID, Start: m.Start.Format("15:04"), End: m.End.Format("15:04"), App: m.App})
 	}
 	in.Transcript = []lineInput{}
-	for _, u := range doc.Transcript {
+	for _, u := range visibleSpeech(doc) {
 		in.Transcript = append(in.Transcript, lineInput{Speaker: speaker(u), Text: u.Text})
 	}
 	return in
@@ -298,7 +298,7 @@ func (s *SkillSummarizer) meetingInput(doc *HourDoc, m activity.Meeting) meeting
 	within := func(t time.Time) bool { return !t.Before(m.Start) && !t.After(m.End) }
 	var screens []media.ScreenText
 	for _, d := range docs {
-		for _, u := range d.Transcript {
+		for _, u := range visibleSpeech(d) {
 			if within(u.Start) {
 				in.Transcript = append(in.Transcript, lineInput{T: clock(u.Start.Sub(m.Start)), Speaker: speaker(u), Text: u.Text})
 			}
@@ -378,4 +378,20 @@ func meetingText(ms skills.MeetingSummary) string {
 		parts = append(parts, a.Text)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// visibleSpeech returns d's utterances that do not overlap an excluded or
+// paused segment; nothing said during those spans may reach a skill.
+func visibleSpeech(d *HourDoc) []media.Utterance {
+	var out []media.Utterance
+	for _, u := range d.Transcript {
+		hidden := slices.ContainsFunc(d.Segments, func(g activity.Segment) bool {
+			return (g.Kind == activity.KindExcluded || g.Kind == activity.KindPaused) &&
+				u.Start.Before(g.End) && g.Start.Before(u.End)
+		})
+		if !hidden {
+			out = append(out, u)
+		}
+	}
+	return out
 }

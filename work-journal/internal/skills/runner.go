@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os/exec"
 	"strings"
 	"time"
@@ -38,8 +39,8 @@ const DefaultTimeout = 5 * time.Minute
 // .claude/skills; the prompt names the installed skill.
 const installedPrefix = "tessl__"
 
-// ClaudeRunner runs skills through the claude CLI. It only ever grants the
-// Read tool, plus read access to DataDir where the input files live.
+// ClaudeRunner runs skills through the claude CLI. The session has only the
+// Skill and Read tools, no MCP servers, and read access to DataDir.
 type ClaudeRunner struct {
 	Bin     string // claude executable; "" means "claude"
 	WorkDir string // directory whose .claude/skills holds the installed skills
@@ -57,9 +58,11 @@ type resultEnvelope struct {
 	Result  string `json:"result"`
 }
 
-// Run invokes the skill, retrying once when the output is invalid. Exec
-// failures and is_error envelopes are returned as plain errors (the caller
-// may retry later); two invalid outputs yield ErrInvalidOutput.
+// Run invokes the skill with up to two attempts. An attempt fails on a
+// non-zero exit, a per-attempt timeout, an is_error envelope, or output that
+// is not a schema-valid JSON object; two failed attempts yield
+// ErrInvalidOutput. Only transient conditions return a plain error at once,
+// for the caller to retry later: the claude binary is missing, or ctx ended.
 func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any) error {
 	sch, err := schema(skill)
 	if err != nil {
@@ -69,7 +72,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any
 	for attempt := 0; attempt < 2; attempt++ {
 		stdout, err := r.exec(ctx, skill, inputPath)
 		if err != nil {
-			return fmt.Errorf("skill %s: %w", skill, err)
+			if ctx.Err() != nil || errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("skill %s: %w", skill, err)
+			}
+			lastErr = err // non-zero exit or per-attempt timeout
+			continue
 		}
 		var env resultEnvelope
 		if err := json.Unmarshal(stdout, &env); err != nil {
@@ -77,7 +84,8 @@ func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any
 			continue
 		}
 		if env.IsError {
-			return fmt.Errorf("skill %s: claude reported an error: %s", skill, env.Result)
+			lastErr = fmt.Errorf("claude reported an error: %s", env.Result)
+			continue
 		}
 		if lastErr = decode(sch, env.Result, out); lastErr == nil {
 			return nil
@@ -137,10 +145,15 @@ func (r *ClaudeRunner) exec(ctx context.Context, skill, inputPath string) ([]byt
 	return stdout.Bytes(), nil
 }
 
-// args never grants tools beyond Read and never bypasses permissions.
+// args makes only Skill (needed to load the skill) and Read available,
+// pre-approves Read, loads no MCP servers and never bypasses permissions.
 func (r *ClaudeRunner) args(skill, inputPath string) []string {
 	prompt := fmt.Sprintf("Use the %s%s skill. Input file: %s. Reply with only the JSON object.", installedPrefix, skill, inputPath)
-	return []string{"-p", prompt, "--output-format", "json", "--allowedTools", "Read", "--add-dir", r.DataDir}
+	return []string{"-p", prompt, "--output-format", "json",
+		"--tools", "Skill,Read", // the only tools that exist in the session
+		"--allowedTools", "Read", // pre-approved, so headless reads work
+		"--strict-mcp-config", // no MCP servers (none passed via --mcp-config)
+		"--add-dir", r.DataDir}
 }
 
 // ExtractJSON returns the first ```json fenced block in result, or else the

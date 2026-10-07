@@ -92,7 +92,7 @@ func newSumEnv(t *testing.T) *sumEnv {
 	cfg.DataDir = paths.Root
 	fk := &fakeSkills{out: map[string]string{}, errs: map[string]error{}}
 	return &sumEnv{t: t, paths: paths, st: st, fk: fk,
-		s: &SkillSummarizer{Runner: fk, Store: st, Paths: paths, Cfg: cfg}}
+		s: &SkillSummarizer{Runner: fk, Store: st, Paths: paths, Cfg: cfg, Logf: t.Logf}}
 }
 
 func sg(kind, app, title string, h, m1, m2 int) activity.Segment {
@@ -217,6 +217,8 @@ func TestSummarizerHourInputShape(t *testing.T) {
 		Transcript: []media.Utterance{
 			{Start: at(10, 11, 0), End: at(10, 11, 3), Track: "mic", Speaker: "me", Text: "hello"},
 			{Start: at(10, 12, 0), End: at(10, 12, 3), Track: "system", Speaker: "Speaker 1", Text: "hi"},
+			{Start: at(10, 29, 58), End: at(10, 30, 2), Track: "mic", Speaker: "me", Text: "straddles exclusion"},
+			{Start: at(10, 35, 0), End: at(10, 35, 4), Track: "system", Speaker: "Speaker 1", Text: "inside exclusion"},
 		},
 		Screens:  []media.ScreenText{{Time: at(10, 15, 0), File: "101500.jpg", Text: "Agenda"}},
 		Meetings: []activity.Meeting{m},
@@ -444,5 +446,57 @@ func TestSummarizerMeetingInvalidMarksNeedsReview(t *testing.T) {
 	rec := e.hour(15)
 	if rec.Status != store.StatusNeedsReview || !strings.Contains(rec.SummaryJSON, "Checkout design") {
 		t.Fatalf("hour = %+v", rec)
+	}
+}
+
+// Speech overlapping an excluded or paused span never reaches a skill, in
+// this hour or in earlier hours a meeting spans.
+func TestSummarizerMeetingInputDropsHiddenSpeech(t *testing.T) {
+	e := newSumEnv(t)
+	m := activity.Meeting{ID: "2026-10-07-1340-zoom-us", Start: at(13, 40, 0), End: at(14, 20, 0), App: "zoom.us"}
+	earlier := &HourDoc{Day: day, Hour: 13, Status: store.StatusDone,
+		Segments: []activity.Segment{
+			sg(activity.KindActive, "zoom.us", "Zoom", 13, 40, 50),
+			sg(activity.KindPaused, "", "", 13, 50, 55),
+			sg(activity.KindActive, "zoom.us", "Zoom", 13, 55, 60),
+		},
+		Transcript: []media.Utterance{
+			{Start: at(13, 45, 0), End: at(13, 45, 5), Track: "mic", Speaker: "me", Text: "visible early"},
+			{Start: at(13, 52, 0), End: at(13, 52, 5), Track: "system", Speaker: "Speaker 1", Text: "during pause"},
+		},
+	}
+	if err := earlier.Save(e.paths.DerivedHour(day, 13)); err != nil {
+		t.Fatal(err)
+	}
+	doc := &HourDoc{Day: day, Hour: 14,
+		Segments: []activity.Segment{
+			sg(activity.KindActive, "zoom.us", "Zoom", 14, 0, 10),
+			sg(activity.KindExcluded, "", "", 14, 10, 15),
+			sg(activity.KindActive, "zoom.us", "Zoom", 14, 15, 60),
+		},
+		Transcript: []media.Utterance{
+			{Start: at(14, 5, 0), End: at(14, 5, 4), Track: "system", Speaker: "Speaker 1", Text: "visible late"},
+			{Start: at(14, 12, 0), End: at(14, 12, 4), Track: "mic", Speaker: "me", Text: "during exclusion"},
+		},
+		Meetings: []activity.Meeting{m}, EndedMeetings: []string{m.ID},
+	}
+	e.transcribed(doc)
+	e.s.Cfg.Rules = map[string]string{"zoom": "Meetings"}
+	e.fk.out["summarize-hour"] = hourOut
+	e.fk.out["summarize-meeting"] = `{"participants":[],"summary":"s","decisions":[],"action_items":[]}`
+
+	if err := e.s.SummarizeHour(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.fk.calls) != 2 {
+		t.Fatalf("calls = %v", e.fk.skillsCalled())
+	}
+	hourTr, _ := json.Marshal(e.fk.calls[0].input["transcript"])
+	if want := `[{"speaker":"Speaker 1","text":"visible late"}]`; string(hourTr) != want {
+		t.Fatalf("hour transcript %s, want %s", hourTr, want)
+	}
+	meetTr, _ := json.Marshal(e.fk.calls[1].input["transcript"])
+	if want := `[{"speaker":"You","t":"00:05:00","text":"visible early"},{"speaker":"Speaker 1","t":"00:25:00","text":"visible late"}]`; string(meetTr) != want {
+		t.Fatalf("meeting transcript %s, want %s", meetTr, want)
 	}
 }
