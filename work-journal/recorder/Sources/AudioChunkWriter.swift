@@ -13,6 +13,13 @@ func chunkEnd(after date: Date, minutes: Int) -> Date {
     return min(midnight.addingTimeInterval(Double(next) * 60), nextMidnight)
 }
 
+/// Whether the open chunk ending at `end` must be finished at `now`. Both the sample path and
+/// the boundary timer use it, so a chunk is finalized at its boundary even in silence.
+func chunkDue(now: Date, end: Date) -> Bool { now >= end }
+
+/// Wall-clock delay until a chunk ending at `end` is due (0 when already due).
+func chunkFinishDelay(now: Date, end: Date) -> TimeInterval { max(0, end.timeIntervalSince(now)) }
+
 /// Writes one audio track as AAC mono 32 kbps chunks `raw/<day>/audio/HHMM-<track>.m4a`
 /// (`HHMMSS-…` when that name is taken), rotated on `chunkMinutes` wall-clock boundaries.
 /// While muted (exclusion) samples are written as silence with their original timing.
@@ -65,7 +72,7 @@ final class AudioChunkWriter {
             return fail("cannot build silent sample")
         }
         let now = Date()
-        if writer != nil && now >= end { finishOnQueue() }
+        if writer != nil && chunkDue(now: now, end: end) { finishOnQueue() }
         if writer == nil {
             guard open(at: now, sample: sample) else { return }
         }
@@ -106,11 +113,27 @@ final class AudioChunkWriter {
             input = inp
             end = chunkEnd(after: start, minutes: chunkMinutes)
             reportedFailure = false
+            scheduleBoundaryFinish(for: w)
             return true
         } catch {
             fail("cannot open \(url.lastPathComponent): \(error.localizedDescription)")
             try? FileManager.default.removeItem(at: url)
             return false
+        }
+    }
+
+    /// Finishes the chunk at its end time even when no sample arrives (silence: the system
+    /// tap delivers nothing), so the file is playable at its boundary. Wall-clock based, so
+    /// it also fires right after a wake.
+    private func scheduleBoundaryFinish(for w: AVAssetWriter) {
+        let delay = chunkFinishDelay(now: Date(), end: end)
+        queue.asyncAfter(wallDeadline: .now() + delay) { [weak self] in
+            guard let self = self, self.writer === w else { return }
+            if chunkDue(now: Date(), end: self.end) {
+                self.finishOnQueue()
+            } else {
+                self.scheduleBoundaryFinish(for: w) // fired early
+            }
         }
     }
 

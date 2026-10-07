@@ -37,6 +37,8 @@ func runPolicyTests() -> Int32 {
         ("chunk ends on next 5-min boundary", chunkEnd(after: t1407, minutes: 5) == t1410),
         ("chunk starting on boundary ends 5 min later", chunkEnd(after: t1405, minutes: 5) == t1410),
         ("chunk never crosses midnight", chunkEnd(after: t2358, minutes: 7) == midnight),
+        ("chunk due at its end", chunkDue(now: t1410, end: t1410) && !chunkDue(now: t1407, end: t1410)),
+        ("boundary finish delay", chunkFinishDelay(now: t1407, end: t1410) == 150 && chunkFinishDelay(now: t1410.addingTimeInterval(5), end: t1410) == 0),
         ("chunk file name free HHMM", chunkFileName(start: t140530, track: "mic", exists: { _ in false }) == "1405-mic.m4a"),
         ("chunk file name collision HHMMSS",
          chunkFileName(start: t140530, track: "mic", exists: { $0 == "1405-mic.m4a" }) == "140530-mic.m4a"),

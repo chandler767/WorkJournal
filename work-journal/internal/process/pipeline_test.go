@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -505,5 +506,32 @@ func TestEndedMeetingKeepsHourForSummary(t *testing.T) {
 	}
 	if !reflect.DeepEqual(e.sum.calls, []HourKey{{day, 12}, {day, 13}}) {
 		t.Fatalf("summarizer calls = %v", e.sum.calls)
+	}
+}
+
+// I6: a chunk the recorder may not have finalized yet (silence keeps it
+// open until its boundary) is not skipped: the hour waits for a retry.
+func TestYoungUnreadableChunkKeepsHourPending(t *testing.T) {
+	e := newEnv(t)
+	transcribeFixture(e)
+	young := at(15, 5, 0) // Now is 15:10: younger than chunk_minutes+2m
+	e.file("audio/1305-system.m4a", young)
+	e.bad["1305-system.m4a"] = true
+	_, err := e.p.Transcribe(context.Background(), day, 13)
+	if !errors.Is(err, ErrChunkNotReady) {
+		t.Fatalf("err = %v, want ErrChunkNotReady", err)
+	}
+	e.p.ProcessPending(context.Background())
+	if h, ok := e.hourStatus(13); ok && h.Status != store.StatusPending {
+		t.Fatalf("hour 13 = %+v, want pending", h)
+	}
+	if got, _ := e.p.PendingHours(); !slices.Contains(got, HourKey{day, 13}) {
+		t.Fatalf("hour 13 not pending: %v", got)
+	}
+	// Once the chunk is old, an unreadable chunk is skipped as before.
+	e.file("audio/1305-system.m4a", at(15, 2, 59))
+	doc, err := e.p.Transcribe(context.Background(), day, 13)
+	if err != nil || doc.Status != store.StatusTranscribed {
+		t.Fatalf("old unreadable chunk: err = %v", err)
 	}
 }

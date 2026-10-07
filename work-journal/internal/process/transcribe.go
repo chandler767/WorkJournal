@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,9 +14,16 @@ import (
 	"workjournal/internal/media"
 )
 
+// ErrChunkNotReady means an audio chunk could not be read while the recorder
+// may still be finishing it; the hour stays pending and is retried.
+var ErrChunkNotReady = errors.New("audio chunk not finished yet")
+
 // transcribeAudio converts each chunk to WAV in a per-hour temp dir,
-// transcribes it and labels system speakers. Chunks afconvert cannot read
-// are logged and skipped; a transcription error fails the hour. Returned
+// transcribes it and labels system speakers. A chunk afconvert cannot read
+// fails the hour with ErrChunkNotReady while it is younger than
+// chunk_minutes+2m (the recorder finalizes a silent chunk only at its
+// boundary); older unreadable chunks are logged and skipped. A transcription
+// error fails the hour. Returned
 // embeddings are keyed by speaker label.
 func (p *Pipeline) transcribeAudio(ctx context.Context, chunks []chunk) ([]media.Utterance, map[string][]float32, error) {
 	if len(chunks) == 0 {
@@ -39,6 +47,9 @@ func (p *Pipeline) transcribeAudio(ctx context.Context, chunks []chunk) ([]media
 		if err := media.ToWav16k(ctx, p.Run, c.path, wav); err != nil {
 			if ctx.Err() != nil {
 				return nil, nil, ctx.Err()
+			}
+			if p.chunkMayBeOpen(c.path) {
+				return nil, nil, fmt.Errorf("%w: %s: %v", ErrChunkNotReady, name, err)
 			}
 			p.logf("process: skipping unreadable chunk %s: %v", c.path, err)
 			continue
@@ -141,4 +152,15 @@ func (l *labeler) remember(label string, emb []float32) {
 		l.embs[label] = emb
 		l.labels = append(l.labels, label)
 	}
+}
+
+// chunkMayBeOpen reports whether the chunk was modified within
+// chunk_minutes+2m, so the recorder may not have finalized it yet.
+func (p *Pipeline) chunkMayBeOpen(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	limit := time.Duration(p.Cfg.AudioChunkMinutes)*time.Minute + 2*time.Minute
+	return p.now().Sub(fi.ModTime()) < limit
 }

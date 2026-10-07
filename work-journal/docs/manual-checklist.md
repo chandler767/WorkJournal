@@ -42,6 +42,7 @@ open -n recorder/build/WorkJournalRecorder.app --args run \
 - [ ] `afplay D/audio/<HHMM>-system.m4a`: you hear the other side of the call.
 - [ ] `afplay D/audio/<HHMM>-mic.m4a`: you hear your own voice.
 - [ ] `D/screens/` gained JPEGs about every 5 s during the call (meeting cadence) and every 10 s otherwise, with no new file while the screen did not change.
+- [ ] Silence for 6+ min during recording: chunk files still finalize (playable) at their boundary. With no audio playing and the mic muted, `afplay` of the previous `HHMM-system.m4a` works within a few seconds after the next 5-minute boundary, while the recorder keeps running.
 
 ## 4. 1Password is excluded
 
