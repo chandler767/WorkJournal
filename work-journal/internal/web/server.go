@@ -10,10 +10,12 @@ import (
 	"html/template"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"workjournal/internal/capture"
@@ -57,7 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /close-day/{date}", s.sameOrigin(s.handleCloseDay))
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
 	mux.HandleFunc("POST /segment/category", s.sameOrigin(s.handleSegmentCategory))
-	return mux
+	return localHostOnly(mux)
 }
 
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -98,16 +100,49 @@ func (s *Server) sameOrigin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// redirectBack sends the browser back to the referring page's path (never
-// to another host), or to fallback.
+// allowedReturn lists the page prefixes a Referer may send us back to.
+var allowedReturn = []string{"/day/", "/hour/", "/meeting/", "/week/", "/settings", "/search"}
+
+// safeReturn reports whether p is a same-site dashboard path: one leading
+// slash, no "//" or backslash, and one of the known pages.
+func safeReturn(p string) bool {
+	if p == "" || p[0] != '/' || strings.Contains(p, "//") || strings.Contains(p, "\\") {
+		return false
+	}
+	for _, pre := range allowedReturn {
+		if strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	return false
+}
+
+// redirectBack sends the browser back to the referring dashboard page, or
+// to fallback when the Referer is absent or not a known page path.
 func redirectBack(w http.ResponseWriter, r *http.Request, fallback string) {
 	to := fallback
 	if ref := r.Header.Get("Referer"); ref != "" {
-		if u, err := url.Parse(ref); err == nil && len(u.Path) > 0 && u.Path[0] == '/' {
+		if u, err := url.Parse(ref); err == nil && safeReturn(u.Path) {
 			to = u.Path
 		}
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// localHostOnly is the DNS-rebinding guard: only loopback Host names pass.
+func localHostOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		switch strings.Trim(host, "[]") {
+		case "127.0.0.1", "localhost", "::1":
+			next.ServeHTTP(w, r)
+		default:
+			http.Error(w, "forbidden host", http.StatusForbidden)
+		}
+	})
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +150,7 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "pause: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	redirectBack(w, r, "/")
+	redirectBack(w, r, "/day/"+config.DayKey(time.Now()))
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +158,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "resume: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	redirectBack(w, r, "/")
+	redirectBack(w, r, "/day/"+config.DayKey(time.Now()))
 }
 
 func (s *Server) handleCloseDay(w http.ResponseWriter, r *http.Request) {

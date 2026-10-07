@@ -77,12 +77,15 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) get(path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+	req := httptest.NewRequest("GET", path, nil)
+	req.Host = "127.0.0.1:4747"
+	e.h.ServeHTTP(rec, req)
 	return rec
 }
 
 func (e *env) post(path string, form url.Values, hdr map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", path, strings.NewReader(form.Encode()))
+	req.Host = "127.0.0.1:4747"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -192,7 +195,7 @@ func TestMediaExpiredReturns410(t *testing.T) {
 
 func TestPausePostsToControl(t *testing.T) {
 	e := newEnv(t)
-	rec := e.post("/pause", nil, map[string]string{"Referer": "http://example.com/day/2026-10-06"})
+	rec := e.post("/pause", nil, map[string]string{"Referer": "http://127.0.0.1:4747/day/2026-10-06"})
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/day/2026-10-06" {
 		t.Fatalf("got %d %q", rec.Code, rec.Header().Get("Location"))
 	}
@@ -208,7 +211,7 @@ func TestPostRejectsForeignOrigin(t *testing.T) {
 	if rec.Code != 403 || len(e.ctl.calls) != 0 {
 		t.Fatalf("got %d calls=%v", rec.Code, e.ctl.calls)
 	}
-	rec = e.post("/pause", nil, map[string]string{"Origin": "http://example.com"}) // httptest host
+	rec = e.post("/pause", nil, map[string]string{"Origin": "http://127.0.0.1:4747"}) // httptest host
 	if rec.Code != 303 {
 		t.Fatalf("same-origin = %d", rec.Code)
 	}
@@ -229,7 +232,7 @@ func TestCloseDayAndReprocess(t *testing.T) {
 func TestSegmentCategoryOverride(t *testing.T) {
 	e := newEnv(t)
 	form := url.Values{"date": {"2026-10-07"}, "hour": {"10"}, "start": {seedTime(10, 0).Format("2006-01-02T15:04:05.999999999Z07:00")}, "category": {"Deep work"}}
-	rec := e.post("/segment/category", form, map[string]string{"Referer": "http://example.com/hour/2026-10-07/10"})
+	rec := e.post("/segment/category", form, map[string]string{"Referer": "http://127.0.0.1:4747/hour/2026-10-07/10"})
 	if rec.Code != 303 || rec.Header().Get("Location") != "/hour/2026-10-07/10" {
 		t.Fatalf("got %d %q", rec.Code, rec.Header().Get("Location"))
 	}
@@ -272,5 +275,40 @@ func TestServerBindsLocalhostOnly(t *testing.T) {
 	host, _, err := net.SplitHostPort(config.Default().ListenAddr)
 	if err != nil || host != "127.0.0.1" {
 		t.Fatalf("ListenAddr host = %q err=%v", host, err)
+	}
+}
+
+func TestRedirectBackRejectsProtocolRelative(t *testing.T) {
+	e := newEnv(t)
+	for _, ref := range []string{
+		"http://127.0.0.1:4747//evil.example/x",
+		"http://127.0.0.1:4747/\\evil.example",
+		"http://127.0.0.1:4747/other/page",
+	} {
+		rec := e.post("/pause", nil, map[string]string{"Referer": ref})
+		loc := rec.Header().Get("Location")
+		if rec.Code != 303 || !strings.HasPrefix(loc, "/day/") {
+			t.Errorf("referer %q -> %d %q, want /day/ fallback", ref, rec.Code, loc)
+		}
+	}
+	rec := e.post("/pause", nil, map[string]string{"Referer": "http://127.0.0.1:4747/settings"})
+	if rec.Header().Get("Location") != "/settings" {
+		t.Errorf("settings referer -> %q", rec.Header().Get("Location"))
+	}
+}
+
+func TestRejectsForeignHost(t *testing.T) {
+	e := newEnv(t)
+	for host, want := range map[string]int{"evil.example": 403, "evil.example:4747": 403, "localhost:4747": 200, "127.0.0.1:4747": 200, "[::1]:4747": 200, "localhost": 200} {
+		req := httptest.NewRequest("GET", "/day/2026-10-07", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Host %q = %d, want %d", host, rec.Code, want)
+		}
+		if want == 403 && !strings.Contains(rec.Body.String(), "forbidden host") {
+			t.Errorf("Host %q body %q", host, rec.Body.String())
+		}
 	}
 }
