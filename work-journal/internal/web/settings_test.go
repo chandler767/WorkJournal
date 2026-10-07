@@ -21,6 +21,7 @@ type settingsEnv struct {
 func newSettingsEnv(t *testing.T) *settingsEnv {
 	t.Helper()
 	e := &settingsEnv{env: newEnv(t), cfg: config.Default()}
+	e.cfg.Diarization = "sherpa" // voice-profile tests; the shipped default is "off"
 	e.srv.Cfg = func() config.Config { return e.cfg }
 	e.srv.SaveCfg = func(c config.Config) error {
 		if err := c.Validate(); err != nil {

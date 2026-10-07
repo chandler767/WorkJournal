@@ -25,7 +25,7 @@ func TestDefaults(t *testing.T) {
 	if !found {
 		t.Fatalf("1Password not excluded: %v", c.ExcludedApps)
 	}
-	if c.Diarization != "sherpa" {
+	if c.Diarization != "off" {
 		t.Fatalf("diarization = %q", c.Diarization)
 	}
 	if err := c.Validate(); err != nil {

@@ -55,7 +55,7 @@ func Default() Config {
 		AudioChunkMinutes:            5,
 		ScreenshotWidth:              1440,
 		WhisperModel:                 "base.en",
-		Diarization:                  "sherpa",
+		Diarization:                  "off",
 		VoiceMatchThreshold:          0.75,
 		NameConfidenceThreshold:      0.7,
 		MinFreeGB:                    5,

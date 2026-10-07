@@ -130,6 +130,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(func() { st.Close() })
 	cfg := config.Default()
 	cfg.DataDir = paths.Root
+	cfg.Diarization = "sherpa" // these tests exercise diarization; the shipped default is "off"
 	e := &env{
 		t: t, paths: paths, st: st,
 		tr:  &fakeTranscriber{utts: map[string][]fu{}, errs: map[string]error{}},
