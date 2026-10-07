@@ -109,7 +109,7 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Walk every hour the meeting touches, keeping utterances in [Start, End].
-	for t := m.Start.Local().Truncate(time.Hour); t.Before(m.End); t = t.Add(time.Hour) {
+	for _, t := range hourStarts(m.Start, m.End, time.Local) {
 		doc, err := process.Load(s.Paths.DerivedHour(config.DayKey(t), t.Hour()))
 		if err != nil {
 			continue // hour not processed yet; the page shows what exists
@@ -168,4 +168,18 @@ func (s *Server) handleSpeaker(w http.ResponseWriter, r *http.Request) {
 		to += "?notice=enroll-failed"
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// hourStarts returns the local clock hours (h:00 in loc) that [start, end)
+// touches, starting with the hour holding start.
+func hourStarts(start, end time.Time, loc *time.Location) []time.Time {
+	s := start.In(loc)
+	var out []time.Time
+	for h := 0; ; h++ {
+		t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour()+h, 0, 0, 0, loc)
+		if !t.Before(end) && h > 0 {
+			return out
+		}
+		out = append(out, t)
+	}
 }

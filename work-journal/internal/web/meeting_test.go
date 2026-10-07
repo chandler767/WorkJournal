@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"workjournal/internal/config"
 	"workjournal/internal/media"
@@ -252,5 +253,26 @@ func TestNameSpeakerRejectedWhenDiarizationOff(t *testing.T) {
 	}
 	if len(e.jobs.enrolled) != 0 {
 		t.Error("enrolled with diarization off")
+	}
+}
+
+// M15: in a half-hour-offset zone, Truncate(time.Hour) lands on :30 and
+// misses the last hour; the walk steps local clock hours.
+func TestMeetingHourStartsHalfHourZone(t *testing.T) {
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		t.Skip("no tzdata:", err)
+	}
+	start := time.Date(2026, 10, 7, 10, 40, 0, 0, ist)
+	end := time.Date(2026, 10, 7, 11, 10, 0, 0, ist)
+	var got []int
+	for _, h := range hourStarts(start, end, ist) {
+		if h.Minute() != 0 {
+			t.Fatalf("hour start %s not on the hour", h)
+		}
+		got = append(got, h.Hour())
+	}
+	if len(got) != 2 || got[0] != 10 || got[1] != 11 {
+		t.Fatalf("hours = %v, want [10 11]", got)
 	}
 }
