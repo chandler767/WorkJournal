@@ -116,14 +116,14 @@ func (p *Pipeline) processHour(ctx context.Context, h HourKey) error {
 // Transcribe builds the hour's HourDoc from raw data, writes the derived
 // JSON, indexes transcript and OCR text, upserts meetings and segments, and
 // sets the hour's status: `transcribed`, or `done` with summary "{}" when the
-// hour has no speech, no screen text and no active time. On error nothing
+// hour has no speech, no screen text, no active time and ends no meeting. On error nothing
 // about the hour's status changes.
 func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourDoc, error) {
 	start, end, err := hourBounds(day, hour)
 	if err != nil {
 		return nil, err
 	}
-	events, err := p.events(day)
+	events, err := p.stateEvents(day)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 }
 
 func isEmpty(d *HourDoc) bool {
-	if len(d.Transcript) > 0 || len(d.Screens) > 0 {
+	if len(d.Transcript) > 0 || len(d.Screens) > 0 || len(d.EndedMeetings) > 0 {
 		return false
 	}
 	for _, s := range d.Segments {

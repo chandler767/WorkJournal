@@ -183,7 +183,12 @@ func (e *env) file(rel string, mtime time.Time) {
 
 // ev is one activity event at h:m on day.
 func ev(h, m int, typ string, appTitle ...string) string {
-	r := map[string]string{"ts": at(h, m, 0).Format(time.RFC3339), "type": typ}
+	return evAt(at(h, m, 0), typ, appTitle...)
+}
+
+// evAt is one activity event at t.
+func evAt(t time.Time, typ string, appTitle ...string) string {
+	r := map[string]string{"ts": t.Format(time.RFC3339), "type": typ}
 	if len(appTitle) > 0 {
 		r["app"] = appTitle[0]
 	}
@@ -196,7 +201,12 @@ func ev(h, m int, typ string, appTitle ...string) string {
 
 func (e *env) activity(mtime time.Time, lines ...string) {
 	e.t.Helper()
-	path := e.paths.Activity(day)
+	e.activityOn(day, mtime, lines...)
+}
+
+func (e *env) activityOn(d string, mtime time.Time, lines ...string) {
+	e.t.Helper()
+	path := e.paths.Activity(d)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		e.t.Fatal(err)
 	}

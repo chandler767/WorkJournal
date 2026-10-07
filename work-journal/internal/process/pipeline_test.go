@@ -415,3 +415,95 @@ func TestHourDocRoundTrip(t *testing.T) {
 		t.Errorf("temp files left behind: %v", ents)
 	}
 }
+
+// prevAt is a time on the day before `day`.
+func prevAt(h, m int) time.Time { return time.Date(2026, 10, 6, h, m, 0, 0, time.Local) }
+
+func TestStateCarriesAcrossMidnight(t *testing.T) {
+	e := newEnv(t)
+	e.activityOn("2026-10-06", old, evAt(prevAt(23, 0), "start"), evAt(prevAt(23, 30), "app", "Xcode", "App.swift"))
+	e.file("screens/001000.jpg", old)
+	e.ocr.texts["001000.jpg"] = "func main"
+
+	doc, err := e.p.Transcribe(context.Background(), day, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Segments) != 1 {
+		t.Fatalf("segments = %+v", doc.Segments)
+	}
+	s := doc.Segments[0]
+	if s.Kind != activity.KindActive || s.App != "Xcode" || !s.Start.Equal(at(0, 0, 0)) || !s.End.Equal(at(1, 0, 0)) {
+		t.Fatalf("segment = %+v", s)
+	}
+	if !reflect.DeepEqual(e.ocr.files, []string{"001000.jpg"}) || len(doc.Screens) != 1 {
+		t.Fatalf("OCR saw %v, screens %+v", e.ocr.files, doc.Screens)
+	}
+	if doc.Status != store.StatusTranscribed {
+		t.Fatalf("status = %s", doc.Status)
+	}
+}
+
+func TestExclusionCarriesAcrossMidnight(t *testing.T) {
+	e := newEnv(t)
+	e.activityOn("2026-10-06", old,
+		evAt(prevAt(23, 0), "start"), evAt(prevAt(23, 0), "app", "Bank", "acct"), evAt(prevAt(23, 50), "excluded"))
+	e.activity(old, ev(0, 30, "included"))
+	e.file("screens/001000.jpg", old)
+	e.file("screens/004000.jpg", old)
+	e.ocr.texts["001000.jpg"] = "secretbalance"
+	e.ocr.texts["004000.jpg"] = "public page"
+
+	doc, err := e.p.Transcribe(context.Background(), day, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(e.ocr.files, []string{"004000.jpg"}) {
+		t.Fatalf("OCR saw %v; screenshot in carried-over exclusion must be dropped", e.ocr.files)
+	}
+	if len(doc.Segments) != 2 || doc.Segments[0].Kind != activity.KindExcluded || doc.Segments[1].App != "Bank" {
+		t.Fatalf("segments = %+v", doc.Segments)
+	}
+	if hits, _ := e.st.Search("secretbalance", 10); len(hits) != 0 {
+		t.Fatalf("excluded text indexed: %+v", hits)
+	}
+}
+
+func TestMeetingEndingOnBoundaryEndsNextHour(t *testing.T) {
+	e := newEnv(t)
+	e.activity(old, ev(12, 0, "start"), ev(12, 0, "app", "Code"),
+		ev(12, 30, "app", "zoom.us", "Zoom Meeting"), ev(13, 0, "app", "Code"))
+	id := "2026-10-07-1230-zoom-us"
+
+	doc, err := e.p.Transcribe(context.Background(), day, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 1 || doc.Meetings[0].ID != id || len(doc.EndedMeetings) != 0 {
+		t.Fatalf("hour 12: meetings %+v ended %v", doc.Meetings, doc.EndedMeetings)
+	}
+	doc, err = e.p.Transcribe(context.Background(), day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 1 || doc.Meetings[0].ID != id || !reflect.DeepEqual(doc.EndedMeetings, []string{id}) {
+		t.Fatalf("hour 13: meetings %+v ended %v", doc.Meetings, doc.EndedMeetings)
+	}
+}
+
+func TestEndedMeetingKeepsHourForSummary(t *testing.T) {
+	e := newEnv(t)
+	// The recorder stops when the meeting ends on the boundary: hour 13 has no
+	// activity of its own, but it is where the meeting is reported ended.
+	e.activity(old, ev(12, 0, "start"), ev(12, 30, "app", "zoom.us", "Zoom Meeting"), ev(13, 0, "stop"))
+	if err := e.p.ProcessPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h, ok := e.hourStatus(13)
+	if !ok || h.Status != store.StatusTranscribed {
+		t.Fatalf("hour 13 = %+v %v; an hour that ends a meeting is not empty", h, ok)
+	}
+	if !reflect.DeepEqual(e.sum.calls, []HourKey{{day, 12}, {day, 13}}) {
+		t.Fatalf("summarizer calls = %v", e.sum.calls)
+	}
+}

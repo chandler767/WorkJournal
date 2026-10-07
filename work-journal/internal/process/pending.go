@@ -142,6 +142,26 @@ func anyFresh(paths []string, now time.Time) (bool, error) {
 	return false, nil
 }
 
+// stateEvents returns the previous day's activity events followed by day's.
+// The recorder only logs changes, so the previous day establishes the state
+// (app, exclusion, sleep, …) in effect at midnight; Segments clips to its
+// own range, so the earlier events never become segments of day.
+func (p *Pipeline) stateEvents(day string) ([]activity.Event, error) {
+	d, err := time.ParseInLocation("2006-01-02", day, time.Local)
+	if err != nil {
+		return nil, fmt.Errorf("bad day %q: %w", day, err)
+	}
+	prev, err := p.events(config.DayKey(d.AddDate(0, 0, -1)))
+	if err != nil {
+		return nil, err
+	}
+	cur, err := p.events(day)
+	if err != nil {
+		return nil, err
+	}
+	return append(prev, cur...), nil
+}
+
 // events reads the day's activity log; a missing log has no events.
 func (p *Pipeline) events(day string) ([]activity.Event, error) {
 	evs, skipped, err := activity.ReadEvents(p.Paths.Activity(day))

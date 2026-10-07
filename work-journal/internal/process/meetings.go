@@ -12,7 +12,10 @@ import (
 
 // detectMeetings runs meeting detection over [local midnight, end) using the
 // whole day's activity and the speech of this hour plus the day's earlier
-// derived hours, and returns the meetings overlapping [start, end).
+// derived hours, and returns the meetings overlapping [start, end);
+// a meeting ending exactly at start is included so the hour after its last
+// one can report it ended. events must include the previous day's (see
+// stateEvents).
 func (p *Pipeline) detectMeetings(day string, hour int, start, end time.Time, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
 	midnight := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
 	segs := activity.Segments(events, midnight, end)
@@ -31,7 +34,7 @@ func (p *Pipeline) detectMeetings(day string, hour int, start, end time.Time, ev
 	speech = appendSpeech(speech, utts)
 	var out []activity.Meeting
 	for _, m := range activity.DetectMeetings(segs, speech, p.Cfg) {
-		if m.End.After(start) && m.Start.Before(end) {
+		if !m.End.Before(start) && m.Start.Before(end) {
 			out = append(out, m)
 		}
 	}
