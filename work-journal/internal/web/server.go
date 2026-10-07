@@ -55,6 +55,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /hour/{date}/{hh}", s.handleHour)
 	mux.HandleFunc("GET /media/{date}/{kind}/{file}", s.handleMedia)
 	mux.HandleFunc("GET /meeting/{id}", s.handleMeeting)
+	mux.HandleFunc("GET /week/{week}", s.handleWeek)
+	mux.HandleFunc("POST /week/{week}/rollup", s.sameOrigin(s.handleWeekRollup))
 	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings", s.sameOrigin(s.handleSettingsSave))
@@ -199,10 +201,11 @@ func (s *Server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 // ---- rendering helpers ----
 
 var funcs = template.FuncMap{
-	"dur":   fmtDur,
-	"urlq":  url.PathEscape,
-	"div60": func(n int) int { return n / 60 },
-	"mod60": func(n int) int { return n % 60 },
+	"dur":      fmtDur,
+	"urlq":     url.PathEscape,
+	"thisWeek": func() string { return config.WeekKey(time.Now()) },
+	"div60":    func(n int) int { return n / 60 },
+	"mod60":    func(n int) int { return n % 60 },
 }
 
 func fmtDur(d time.Duration) string {

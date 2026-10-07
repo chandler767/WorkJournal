@@ -33,11 +33,11 @@ func (f *fakeControl) Status() (capture.Status, error) {
 func (f *fakeControl) Send(c string) error { f.sent = append(f.sent, c); return f.sendErr }
 
 type fakeJobs struct {
-	reprocessed, closed []string
-	enrolled            [][3]string // meeting, speaker, name
-	enrollErr           error
-	enrollSaw           *store.Store // checked at call time: participant already saved?
-	sawParticipants     []store.ParticipantRecord
+	reprocessed, closed, rolled []string
+	enrolled                    [][3]string // meeting, speaker, name
+	enrollErr                   error
+	enrollSaw                   *store.Store // checked at call time: participant already saved?
+	sawParticipants             []store.ParticipantRecord
 }
 
 func (f *fakeJobs) ProcessPending(context.Context) error { return nil }
@@ -49,9 +49,12 @@ func (f *fakeJobs) CloseDay(_ context.Context, d string) error {
 	f.closed = append(f.closed, d)
 	return nil
 }
-func (f *fakeJobs) Rollup(context.Context, string) error { return nil }
-func (f *fakeJobs) Retain(context.Context) error         { return nil }
-func (f *fakeJobs) DiskCheck(context.Context) error      { return nil }
+func (f *fakeJobs) Rollup(_ context.Context, w string) error {
+	f.rolled = append(f.rolled, w)
+	return nil
+}
+func (f *fakeJobs) Retain(context.Context) error    { return nil }
+func (f *fakeJobs) DiskCheck(context.Context) error { return nil }
 func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, sp, n string) error {
 	f.enrolled = append(f.enrolled, [3]string{m, sp, n})
 	if f.enrollSaw != nil {
@@ -124,7 +127,7 @@ func TestDayPageShowsNotesAndTotals(t *testing.T) {
 	}
 	b := rec.Body.String()
 	mustContain(t, b, "Refactored the scheduler", "Scheduler work", "Deep work", "40m", "Close the day",
-		"Shipped &lt;b&gt;scheduler&lt;/b&gt; work.", "Standup", "<svg", "recording")
+		"Shipped", "work.", "Standup", "<svg", "recording")
 	if strings.Contains(b, "<b>scheduler</b>") {
 		t.Error("journal text not escaped")
 	}

@@ -1,0 +1,32 @@
+{{define "content"}}
+<nav class="daynav">
+  <a href="/week/{{.Prev}}" aria-label="Previous week">&larr; {{.Prev}}</a>
+  <h1>{{.Week}}</h1>
+  <a href="/week/{{.Next}}" aria-label="Next week">{{.Next}} &rarr;</a>
+</nav>
+
+<section>
+  <h2>Weekly summary</h2>
+  {{if .Journal}}<div class="journal">{{.Journal}}</div>{{else}}<p class="muted">No weekly summary yet.</p>{{end}}
+  <form method="post" action="/week/{{.Week}}/rollup"><button type="submit">Roll up the week</button></form>
+</section>
+
+<section>
+  <h2>Time by day</h2>
+  {{range .Days}}
+  <article class="hour">
+    <header><h3><a href="/day/{{.Day}}">{{.Weekday}} {{.Day}}</a></h3></header>
+    {{if .Totals}}
+    <ul class="totals">
+      {{range .Totals}}<li>
+        <span class="swatch" style="background:{{.Color}}"></span>
+        <span class="name">{{.Name}}</span>
+        <span class="bar" data-chart="bar" data-pct="{{.Pct}}" data-color="{{.Color}}"></span>
+        <span class="dur">{{dur .Dur}}</span>
+      </li>{{end}}
+    </ul>
+    {{else}}<p class="muted">No categorized time.</p>{{end}}
+  </article>
+  {{end}}
+</section>
+{{end}}

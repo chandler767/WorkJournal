@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"os"
 	"sort"
@@ -53,7 +54,7 @@ type dayPage struct {
 	Paused                  bool
 	StatusText              string
 	DiskWarn                string
-	Journal                 string
+	Journal                 template.HTML
 	Totals                  []totalRow
 	Hours                   []hourRow
 	Meetings                []meetingRow
@@ -79,7 +80,10 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		p.DiskWarn = v
 	}
 	if b, err := os.ReadFile(s.Paths.DailyJournal(day)); err == nil {
-		p.Journal = string(b)
+		if p.Journal, err = renderMarkdown(string(b)); err != nil {
+			http.Error(w, "render journal: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	} else if !os.IsNotExist(err) {
 		http.Error(w, "read journal: "+err.Error(), http.StatusInternalServerError)
 		return
