@@ -69,9 +69,13 @@ is ad-hoc signed, so **every rebuild resets these grants**: after `journal setup
   exclusions, because audio is silenced rather than stopped.
 - Voice profiles (`voices/`) never leave the machine and are never passed to Claude.
   Speaker diarization is currently off (`diarization = "off"`), so no profiles are made.
-- Only text (transcripts, screen text, activity summaries) goes to Claude. Each `claude`
-  run gets only the Skill and Read tools, no MCP servers, and read access to `derived/`
-  only (where its input files are written), not to raw media, `voices/` or `journal.db`.
+- Only text (transcripts, screen text, activity summaries) goes to Claude. Each `claude -p`
+  run uses the repo root as its working directory, so it loads that repo's project
+  settings (`.claude/`, `CLAUDE.md`) and installed skills. Skill inputs are written to,
+  and read from, `derived/` only. The session has only the Skill and Read tools and no
+  MCP servers (`--strict-mcp-config`); `derived/` is added with `--add-dir`, and raw media,
+  `voices/` and `journal.db` are never passed to it. These are Claude Code's tool and
+  directory settings, not an OS sandbox.
 - The dashboard binds to loopback only; `journal serve` refuses any other `listen_addr`.
 
 ## More
