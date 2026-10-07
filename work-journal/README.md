@@ -78,7 +78,8 @@ anywhere; diarization adds a few seconds per 5-minute chunk.
 - Naming: on a meeting's page, name a speaker. While the meeting's raw audio still exists
   (`retention_days`), its chunks are diarized again, that speaker's voice embedding is
   saved as a voice profile in `voices/<name>.json`, and their lines in that meeting are
-  relabelled with the name. Later recordings of a voice that matches a profile get the
+  relabelled with the name (labels restart each hour, so a later hour whose "Speaker N"
+  sounds different is left alone). Later recordings of a voice that matches a profile get the
   name automatically. After retention removed the audio, the name is saved but no voice
   is learned.
 - Voice profiles stay in `voices/` on this machine and are never passed to Claude.

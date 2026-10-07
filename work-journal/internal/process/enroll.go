@@ -1,16 +1,19 @@
 package process
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/diarize"
 	"workjournal/internal/media"
 	"workjournal/internal/store"
 )
@@ -22,10 +25,14 @@ var ErrNoRawAudio = errors.New("no raw system audio left for the meeting")
 // EnrollSpeaker learns the voice of the meeting participant labelled
 // speaker and names it. Each system chunk overlapping the meeting is
 // diarized again; in each, the cluster whose turns best overlap the
-// utterances labelled speaker contributes its embedding. The embeddings,
-// each unit-normalized, are averaged and enrolled as name. Then the
-// speaker's system utterances within the meeting are relabelled name in the
-// derived hour docs, and those hours' text is indexed again.
+// utterances labelled speaker contributes its embedding (unit-normalized).
+// "Speaker N" labels are only consistent within one hour (Ruling 17), so the
+// embeddings are grouped by hour (Ruling 37): the hour with the most speech
+// under the label is the anchor, and only hours whose averaged embedding has
+// cosine >= VoiceMatchThreshold with the anchor's are kept. The kept
+// embeddings are averaged and enrolled as name, and the speaker's system
+// utterances within the meeting are relabelled name in the kept hours only,
+// whose text is then indexed again.
 func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, speaker, name string) error {
 	if p.Diarizer == nil || p.Voices == nil {
 		return errors.New("enroll: no diarizer or voice store configured")
@@ -44,7 +51,7 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 	defer os.RemoveAll(tmp)
 
 	docs := map[HourKey]*HourDoc{}
-	var embs [][]float32
+	byHour := map[HourKey][][]float32{}
 	for _, c := range chunks {
 		key := HourKey{config.DayKey(c.start), c.start.Hour()}
 		doc, ok := docs[key]
@@ -102,16 +109,59 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 			continue
 		}
 		if e := unit(cembs[best]); e != nil {
-			embs = append(embs, e)
+			byHour[key] = append(byHour[key], e)
 		}
 	}
-	if len(embs) == 0 {
+	if len(byHour) == 0 {
 		return fmt.Errorf("enroll: no voice found for %q in the meeting's remaining audio", speaker)
+	}
+	kept := p.matchingHours(m, speaker, docs, byHour)
+	var embs [][]float32
+	for _, k := range kept {
+		embs = append(embs, byHour[k]...)
 	}
 	if err := p.Voices.Enroll(name, mean(embs)); err != nil {
 		return err
 	}
-	return p.relabel(m, speaker, name)
+	return p.relabel(m, speaker, name, kept)
+}
+
+// matchingHours picks the anchor hour (the most speech under speaker within
+// the meeting; the earliest on a tie) and returns, in time order, the hours
+// whose averaged embedding matches the anchor's at VoiceMatchThreshold.
+func (p *Pipeline) matchingHours(m store.MeetingRecord, speaker string, docs map[HourKey]*HourDoc, byHour map[HourKey][][]float32) []HourKey {
+	var keys []HourKey
+	for k := range byHour {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b HourKey) int {
+		return cmp.Or(cmp.Compare(a.Day, b.Day), cmp.Compare(a.Hour, b.Hour))
+	})
+	speech := func(k HourKey) time.Duration {
+		var d time.Duration
+		for _, u := range docs[k].Transcript {
+			if u.Track == "system" && u.Speaker == speaker && inMeeting(m, u) {
+				d += u.End.Sub(u.Start)
+			}
+		}
+		return d
+	}
+	anchor := keys[0]
+	for _, k := range keys[1:] {
+		if speech(k) > speech(anchor) {
+			anchor = k
+		}
+	}
+	ref := mean(byHour[anchor])
+	var kept []HourKey
+	for _, k := range keys {
+		if k == anchor || diarize.Cosine(mean(byHour[k]), ref) >= p.Cfg.VoiceMatchThreshold {
+			kept = append(kept, k)
+		} else {
+			p.logf("enroll: %q in %s %02d sounds like someone else; left unchanged", speaker, k.Day, k.Hour)
+		}
+	}
+	return kept
 }
 
 type timedChunk struct {
@@ -166,17 +216,11 @@ func inMeeting(m store.MeetingRecord, u media.Utterance) bool {
 }
 
 // relabel renames speaker to name on the meeting's system utterances in
-// every hour the meeting touches, saving each changed doc and indexing its
-// text again.
-func (p *Pipeline) relabel(m store.MeetingRecord, speaker, name string) error {
-	s := m.Start.In(time.Local)
-	for h := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, time.Local); !h.After(m.End); h = h.Add(time.Hour) {
-		day, hour := config.DayKey(h), h.Hour()
-		path := p.Paths.DerivedHour(day, hour)
+// the given hours, saving each changed doc and indexing its text again.
+func (p *Pipeline) relabel(m store.MeetingRecord, speaker, name string, hours []HourKey) error {
+	for _, k := range hours {
+		path := p.Paths.DerivedHour(k.Day, k.Hour)
 		doc, err := Load(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
 		if err != nil {
 			return err
 		}

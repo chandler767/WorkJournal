@@ -136,3 +136,54 @@ func TestEnrollSpeakerVoiceNotFound(t *testing.T) {
 		t.Fatalf("relabelled without enrolling: %q", speakers(doc.Transcript))
 	}
 }
+
+// Ruling 37: "Speaker N" is only consistent within an hour, so hours whose
+// voice differs from the anchor hour (most speech) are neither enrolled nor
+// relabelled.
+func TestEnrollAcrossHoursKeepsOnlyMatchingHours(t *testing.T) {
+	e := newEnv(t)
+	e.file("audio/1350-system.m4a", old)
+	e.file("audio/1400-system.m4a", old)
+	h13 := &HourDoc{Day: day, Hour: 13, Status: store.StatusDone, Transcript: []media.Utterance{
+		sys(at(13, 50, 2), at(13, 50, 22), "Speaker 1", "long point in thirteen"),
+	}}
+	h14 := &HourDoc{Day: day, Hour: 14, Status: store.StatusDone, Transcript: []media.Utterance{
+		sys(at(14, 0, 1), at(14, 0, 6), "Speaker 1", "short point in fourteen"),
+	}}
+	for _, d := range []*HourDoc{h13, h14} {
+		if err := d.Save(e.paths.DerivedHour(day, d.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := store.MeetingRecord{ID: "2026-10-07-1350-zoom-us", Day: day, Start: at(13, 50, 0), End: at(14, 10, 0), App: "zoom.us"}
+	if err := e.st.UpsertMeeting(m); err != nil {
+		t.Fatal(err)
+	}
+	e.dz.by["1350-system"] = diar{turns: []diarize.Turn{tn(0, 25, 0)}, embs: map[int][]float32{0: {3, 0, 0}}} // A
+	e.dz.by["1400-system"] = diar{turns: []diarize.Turn{tn(0, 7, 0)}, embs: map[int][]float32{0: {0, 2, 0}}}  // B ⟂ A
+
+	if err := e.p.EnrollSpeaker(context.Background(), m, "Speaker 1", "Priya"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(e.paths.Voices(), "priya.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prof struct {
+		Embeddings [][]float32 `json:"embeddings"`
+	}
+	if err := json.Unmarshal(b, &prof); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(prof.Embeddings, [][]float32{{1, 0, 0}}) {
+		t.Fatalf("enrolled %v, want only hour 13's normalized A", prof.Embeddings)
+	}
+	d13, _ := Load(e.paths.DerivedHour(day, 13))
+	d14, _ := Load(e.paths.DerivedHour(day, 14))
+	if got := speakers(d13.Transcript); !reflect.DeepEqual(got, []string{"Priya: long point in thirteen"}) {
+		t.Fatalf("hour 13 = %q", got)
+	}
+	if got := speakers(d14.Transcript); !reflect.DeepEqual(got, []string{"Speaker 1: short point in fourteen"}) {
+		t.Fatalf("hour 14 = %q (a different voice must keep its label)", got)
+	}
+}
