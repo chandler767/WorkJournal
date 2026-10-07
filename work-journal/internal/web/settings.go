@@ -63,7 +63,7 @@ func formFromConfig(c config.Config) settingsForm {
 	return settingsForm{
 		RetentionDays:   strconv.Itoa(c.RetentionDays),
 		CloseTime:       c.CloseTime,
-		RollupWeekday:   c.RollupWeekday,
+		RollupWeekday:   titleWeekday(c.RollupWeekday),
 		IdleMinutes:     strconv.Itoa(c.IdleMinutes),
 		PauseAutoResume: strconv.Itoa(c.PauseAutoResumeMinutes),
 		ExcludedApps:    strings.Join(c.ExcludedApps, "\n"),
