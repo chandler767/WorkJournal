@@ -176,7 +176,12 @@ final class Recorder {
     }
 }
 
-private func promptForAccessibility() {
+private var promptedForAccessibility = false
+
+private func promptForAccessibilityIfNeeded(interactive: Bool) {
+    guard shouldPromptForAccessibility(trusted: AXIsProcessTrusted(), interactive: interactive,
+                                       alreadyPrompted: promptedForAccessibility) else { return }
+    promptedForAccessibility = true
     let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
     _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
 }
@@ -193,7 +198,7 @@ func runRecorder(args: [String]) -> Int32 {
     }
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
-    promptForAccessibility()
+    promptForAccessibilityIfNeeded(interactive: true)
     let recorder = Recorder(options: options)
     do {
         try recorder.start(interactive: true)
@@ -224,7 +229,6 @@ func runSelftestCapture(dataDir: URL, seconds: TimeInterval) throws {
     options.dataDir = dataDir
     options.policy.interval = 1
     options.policy.meetingInterval = 1
-    promptForAccessibility()
     let recorder = Recorder(options: options)
     try recorder.start(interactive: false)
     RunLoop.main.run(until: Date().addingTimeInterval(seconds))

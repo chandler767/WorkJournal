@@ -59,3 +59,10 @@ func chunkFileName(start: Date, track: String, exists: (String) -> Bool) -> Stri
     f.dateFormat = "HHmmss"
     return "\(f.string(from: start))-\(track).m4a"
 }
+
+/// Whether to show the system Accessibility prompt: only for the interactive recorder,
+/// only when not already trusted, and at most once per process. Prompting a trusted
+/// process, or prompting from the selftest, just produces repeated dialogs.
+func shouldPromptForAccessibility(trusted: Bool, interactive: Bool, alreadyPrompted: Bool) -> Bool {
+    interactive && !trusted && !alreadyPrompted
+}

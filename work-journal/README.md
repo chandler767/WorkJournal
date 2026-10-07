@@ -51,10 +51,16 @@ Privacy & Security:
 - Microphone
 - Accessibility (for window titles)
 
-`journal doctor` runs the recorder's selftest and tells you which grant is missing. The app
-is ad-hoc signed, so **every rebuild resets these grants**: after `journal setup --rebuild`
-or `./recorder/build.sh`, remove the stale entry and add the app again. A plain
-`journal setup` keeps an already-built recorder.
+`journal doctor` runs the recorder's selftest (including Accessibility) and tells you which
+grant is missing.
+
+**Keep grants across rebuilds:** create a self-signed code-signing certificate named
+`WorkJournal Local Signing` (Keychain Access → Certificate Assistant → Create a Certificate…,
+Identity Type "Self-Signed Root", Certificate Type "Code Signing"). `recorder/build.sh` signs with
+it when present (override with `WORKJOURNAL_SIGN_IDENTITY`), so macOS keeps the grants after
+rebuilds. Without it the app is ad-hoc signed and **every rebuild resets the grants**: remove the
+stale entry with − and add the app again with +. A plain `journal setup` keeps an
+already-built recorder.
 
 ## Privacy
 

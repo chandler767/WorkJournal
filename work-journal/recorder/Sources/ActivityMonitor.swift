@@ -155,6 +155,7 @@ final class ActivityMonitor {
 
     /// Needs Accessibility permission; returns "" without it.
     private static func focusedWindowTitle(pid: pid_t) -> String {
+        guard AXIsProcessTrusted() else { return "" } // untrusted AX calls can re-trigger the system prompt
         let axApp = AXUIElementCreateApplication(pid)
         var window: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &window) == .success,

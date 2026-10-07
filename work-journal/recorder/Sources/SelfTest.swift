@@ -93,6 +93,9 @@ func runSelfTest(args: [String]) -> Int32 {
         failure = "capture: \(error.localizedDescription)"
     }
     if failure == nil { failure = checkOCR() }
+    if failure == nil && !AXIsProcessTrusted() {
+        failure = "accessibility: not granted (System Settings → Privacy & Security → Accessibility: remove WorkJournalRecorder with −, then add it again with +)"
+    }
 
     let line = failure.map { "selftest failed: \($0)" } ?? "selftest ok"
     if failure == nil {
