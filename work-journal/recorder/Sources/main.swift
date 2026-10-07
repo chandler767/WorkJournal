@@ -22,7 +22,7 @@ func runPolicyTests() -> Int32 {
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
-    let checks: [(String, Bool)] = [
+    let checks: [(String, Bool)] = socketChecks() + [
         ("excluded app 1Password", isExcluded(app: "1Password", title: "", c)),
         ("excluded app case-insensitive", isExcluded(app: "1password", title: "", c)),
         ("excluded title Private Browsing", isExcluded(app: "Safari", title: "Private Browsing — x", c)),
@@ -55,6 +55,43 @@ func runPolicyTests() -> Int32 {
     if failed > 0 { return 1 }
     print("run-tests ok (\(checks.count) checks)")
     return 0
+}
+
+/// Control-socket ownership: a live listener is detected and never unlinked; a stale socket
+/// file is. Uses a temp dir; the probe connections are never answered (main is busy here).
+func socketChecks() -> [(String, Bool)] {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wjrt-\(getpid())")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("r.sock").path
+    var out: [(String, Bool)] = [("no socket file: no listener", !socketHasListener(path: path))]
+    let first = ControlServer(path: path) { _ in ("ok", nil) }
+    guard (try? first.start()) != nil else { return out + [("first control server starts", false)] }
+    out.append(("live socket has a listener", socketHasListener(path: path)))
+    var refused = false
+    do { try ControlServer(path: path) { _ in ("ok", nil) }.start() } catch is AnotherRecorderRunning { refused = true } catch {}
+    out.append(("second control server refuses a live socket", refused))
+    out.append(("refused start leaves the live socket in place", socketHasListener(path: path)))
+    first.stop()
+    out.append(("stopped server: no listener", !socketHasListener(path: path)))
+    // A stale socket file (bound, never listened on, not unlinked) is replaced.
+    let s = socket(AF_UNIX, SOCK_STREAM, 0)
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &addr.sun_path) { buf in
+        let b = Array(path.utf8)
+        buf.copyBytes(from: b)
+        buf[b.count] = 0
+    }
+    _ = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+    }
+    close(s)
+    out.append(("stale socket: no listener", FileManager.default.fileExists(atPath: path) && !socketHasListener(path: path)))
+    let third = ControlServer(path: path) { _ in ("ok", nil) }
+    out.append(("stale socket is replaced", (try? third.start()) != nil && socketHasListener(path: path)))
+    third.stop()
+    return out
 }
 
 let args = Array(CommandLine.arguments.dropFirst())

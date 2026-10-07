@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
+	"time"
 
 	"workjournal/internal/config"
 )
@@ -245,5 +247,51 @@ func TestFailedRecorderStartKeepsDiskState(t *testing.T) {
 	}
 	if v, _, _ := a.Store.GetKV("disk_state"); v != "audio_off" {
 		t.Fatalf("disk_state = %q", v)
+	}
+}
+
+// I4: every recorder start first quits a recorder still serving the socket.
+func TestRecorderStartQuitsRunningRecorderFirst(t *testing.T) {
+	a := newTestApp(t)
+	var order []string
+	a.quitRunning = func(sock string, probe, gone time.Duration) (bool, error) {
+		if sock != a.Paths.Socket() || probe != time.Second || gone != 5*time.Second {
+			t.Errorf("quitRunning(%q, %s, %s)", sock, probe, gone)
+		}
+		order = append(order, "quit")
+		return true, nil
+	}
+	a.launch = func(string, []string) (func() error, func(os.Signal) error, error) {
+		order = append(order, "launch")
+		return func() error { return nil }, func(os.Signal) error { return nil }, nil
+	}
+	if _, _, err := a.Supervisor.Start(context.Background(), "/usr/bin/open", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !equal(order, []string{"quit", "launch"}) {
+		t.Fatalf("order = %v", order)
+	}
+	// A recorder that will not quit is logged; the launch still goes ahead
+	// (the new recorder refuses to start while the old one is serving).
+	order = nil
+	a.quitRunning = func(string, time.Duration, time.Duration) (bool, error) {
+		order = append(order, "quit")
+		return true, errors.New("did not exit")
+	}
+	if _, _, err := a.Supervisor.Start(context.Background(), "/usr/bin/open", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !equal(order, []string{"quit", "launch"}) {
+		t.Fatalf("order = %v", order)
+	}
+}
+
+// I4: closing the terminal (SIGHUP) shuts serve down cleanly, so the
+// recorder gets its quit instead of being orphaned.
+func TestShutdownSignalsIncludeHangup(t *testing.T) {
+	for _, s := range []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+		if !slices.Contains(shutdownSignals, s) {
+			t.Errorf("%v not handled", s)
+		}
 	}
 }

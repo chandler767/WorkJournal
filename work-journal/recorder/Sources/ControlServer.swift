@@ -3,6 +3,35 @@ import Foundation
 /// Unix-socket control listener: one newline-terminated command per connection, one
 /// newline-terminated reply. Commands are handled on the main thread; `then` runs on the
 /// main thread after the reply has been written (used by `quit`).
+/// Thrown by `ControlServer.start` when another process is serving the socket.
+struct AnotherRecorderRunning: LocalizedError {
+    var errorDescription: String? { "another recorder is running" }
+}
+
+/// Reports whether a process accepts connections on the unix socket at `path`; false when
+/// the file is missing, is not a socket, or is a stale socket nobody listens on.
+func socketHasListener(path: String) -> Bool {
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return false }
+    withUnsafeMutableBytes(of: &addr.sun_path) { buf in
+        buf.copyBytes(from: bytes)
+        buf[bytes.count] = 0
+    }
+    let s = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard s >= 0 else { return false }
+    defer { close(s) }
+    var nosig: Int32 = 1
+    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
+    let r = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(s, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    return r == 0
+}
+
 final class ControlServer {
     typealias Handler = (String) -> (reply: String, then: (() -> Void)?)
 
@@ -26,7 +55,11 @@ final class ControlServer {
             buf.copyBytes(from: bytes)
             buf[bytes.count] = 0
         }
-        unlink(path) // stale socket from a previous run
+        // A live listener means another recorder owns the socket: refuse rather than
+        // unlink it (two recorders would record everything twice). Only a stale socket
+        // file from a crashed run is removed.
+        if socketHasListener(path: path) { throw AnotherRecorderRunning() }
+        unlink(path)
         let s = socket(AF_UNIX, SOCK_STREAM, 0)
         guard s >= 0 else { throw posixError("socket") }
         let bound = withUnsafePointer(to: &addr) {

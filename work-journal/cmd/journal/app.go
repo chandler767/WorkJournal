@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
@@ -190,6 +191,8 @@ type App struct {
 	Server     *web.Server
 	cfg        *cfgHolder
 	launch     func(bin string, args []string) (func() error, func(os.Signal) error, error)
+	// quitRunning stops a recorder still serving the socket (capture.QuitRunning).
+	quitRunning func(sock string, probe, gone time.Duration) (bool, error)
 }
 
 // Cfg returns the live configuration.
@@ -223,7 +226,7 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Paths: p, ConfigPath: opt.ConfigPath, Loc: opt.Loc, Store: st, cfg: &cfgHolder{cfg: cfg}, launch: startProcess}
+	a := &App{Paths: p, ConfigPath: opt.ConfigPath, Loc: opt.Loc, Store: st, cfg: &cfgHolder{cfg: cfg}, launch: startProcess, quitRunning: capture.QuitRunning}
 
 	a.Runner = &skills.ClaudeRunner{WorkDir: opt.Loc.SkillsDir, DataDir: filepath.Join(p.Root, "derived")}
 	a.Summarizer = &process.SkillSummarizer{Runner: a.Runner, Store: st, Paths: p, Cfg: cfg, Logf: log.Printf}
@@ -265,6 +268,13 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		// Rebuild the arguments on every start so a restart after a
 		// settings change picks up the new exclusions.
 		Start: func(ctx context.Context, bin string, args []string) (func() error, func(os.Signal) error, error) {
+			// A recorder orphaned by an earlier serve (killed without its
+			// quit) would otherwise keep recording beside the new one.
+			if found, err := a.quitRunning(p.Socket(), time.Second, 5*time.Second); err != nil {
+				log.Printf("recorder: %v", err)
+			} else if found {
+				log.Printf("recorder: quit a recorder that was already running")
+			}
 			wait, signal, err := a.launch(bin, a.recorderArgs(slices.Contains(args, "--degraded")))
 			if err != nil {
 				return nil, nil, err

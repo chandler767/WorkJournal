@@ -377,3 +377,104 @@ func TestSupervisorStopsGracefullyWithinTimeout(t *testing.T) {
 		t.Error("signal sent although process exited within timeout")
 	}
 }
+
+// fakeRecorder serves the control socket; on quit it replies ok and then,
+// unless stubborn, removes the socket after a short delay like the recorder.
+func fakeRecorder(t *testing.T, sock string, stubborn bool) (cmds func() []string) {
+	t.Helper()
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []string
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 64)
+			n, _ := c.Read(buf)
+			cmd := strings.TrimSpace(string(buf[:n]))
+			mu.Lock()
+			got = append(got, cmd)
+			mu.Unlock()
+			if cmd == "status" {
+				c.Write([]byte(`{"state":"recording","since":"2026-10-07T09:30:00Z"}` + "\n"))
+			} else {
+				c.Write([]byte("ok\n"))
+			}
+			c.Close()
+			if cmd == "quit" && !stubborn {
+				time.Sleep(100 * time.Millisecond)
+				ln.Close() // removes the socket file
+				return
+			}
+		}
+	}()
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), got...)
+	}
+}
+
+func shortSockDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "wj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// I4: an orphaned recorder still holding the socket is told to quit before
+// a new one is launched.
+func TestQuitRunningRecorder(t *testing.T) {
+	sock := filepath.Join(shortSockDir(t), "r.sock")
+	cmds := fakeRecorder(t, sock, false)
+	found, err := QuitRunning(sock, time.Second, 5*time.Second)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if got := cmds(); !slices.Equal(got, []string{"status", "quit"}) {
+		t.Fatalf("cmds = %v", got)
+	}
+	if _, err := os.Stat(sock); !os.IsNotExist(err) {
+		t.Fatalf("socket still there: %v", err)
+	}
+}
+
+func TestQuitRunningNothingListening(t *testing.T) {
+	dir := shortSockDir(t)
+	if found, err := QuitRunning(filepath.Join(dir, "none.sock"), time.Second, time.Second); found || err != nil {
+		t.Fatalf("no socket: found=%v err=%v", found, err)
+	}
+	// A stale socket file left by a crashed recorder: nobody answers.
+	stale := filepath.Join(dir, "stale.sock")
+	ln, err := net.Listen("unix", stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	began := time.Now()
+	if found, err := QuitRunning(stale, time.Second, time.Second); found || err != nil {
+		t.Fatalf("stale socket: found=%v err=%v", found, err)
+	}
+	if time.Since(began) > 900*time.Millisecond {
+		t.Fatalf("stale probe took %s", time.Since(began))
+	}
+}
+
+func TestQuitRunningRecorderThatStays(t *testing.T) {
+	sock := filepath.Join(shortSockDir(t), "r.sock")
+	fakeRecorder(t, sock, true)
+	found, err := QuitRunning(sock, time.Second, 200*time.Millisecond)
+	if !found || err == nil {
+		t.Fatalf("found=%v err=%v, want a timeout error", found, err)
+	}
+}

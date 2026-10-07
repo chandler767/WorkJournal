@@ -36,6 +36,10 @@ common flags:
   --repo DIR      repo root holding .claude/skills (default: found from the binary)
 `
 
+// shutdownSignals end serve cleanly; SIGHUP covers a closed terminal, which
+// would otherwise kill journal and orphan the recorder.
+var shutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -73,7 +77,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
 	defer stop()
 
 	switch cmd {

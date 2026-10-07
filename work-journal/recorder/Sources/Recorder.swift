@@ -46,6 +46,14 @@ final class Recorder {
 
     /// `interactive` adds the menu bar and control socket (`run`); the selftest omits them.
     func start(interactive: Bool) throws {
+        if interactive {
+            let s = ControlServer(path: options.socket) { [unowned self] in handle($0) }
+            try s.start()
+            server = s
+            menuBar = MenuBar(dashboardURL: options.dashboardURL,
+                              onTogglePause: { [unowned self] in _ = paused ? resume() : pause() },
+                              onQuit: { [unowned self] in quit() })
+        }
         log.append("start")
         monitor.onExcludedChange = { [unowned self] _ in apply() }
         monitor.onMeetingChange = { [unowned self] _ in apply() }
@@ -55,14 +63,6 @@ final class Recorder {
         capture.onRunning = { [unowned self] in captureError = nil; apply() }
         capture.isExcludedNow = { [unowned self] in monitor.refreshExclusion() }
         mic.onError = { [unowned self] msg in micError = msg; report(msg) }
-        if interactive {
-            menuBar = MenuBar(dashboardURL: options.dashboardURL,
-                              onTogglePause: { [unowned self] in _ = paused ? resume() : pause() },
-                              onQuit: { [unowned self] in quit() })
-            let s = ControlServer(path: options.socket) { [unowned self] in handle($0) }
-            try s.start()
-            server = s
-        }
         monitor.start()
         capture.start()
         apply()
@@ -192,6 +192,9 @@ func runRecorder(args: [String]) -> Int32 {
     let recorder = Recorder(options: options)
     do {
         try recorder.start(interactive: true)
+    } catch is AnotherRecorderRunning {
+        eprint("another recorder is running")
+        return 3
     } catch {
         eprint("run: \(error.localizedDescription)")
         return 1
