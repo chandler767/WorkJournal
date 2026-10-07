@@ -43,6 +43,11 @@ type Jobs struct {
 	// ReprocessHour, CloseDay, Rollup): the scheduler, the dashboard and the
 	// CLI may trigger them concurrently and they share hours and files.
 	heavy sync.Mutex
+
+	// sendErr is the last Control send error DiskCheck reported ("" after a
+	// successful send); a repeat of it is retried quietly.
+	diskMu  sync.Mutex
+	sendErr string
 }
 
 var _ scheduler.Jobs = (*Jobs)(nil)
@@ -157,7 +162,8 @@ func (j *Jobs) Retain(ctx context.Context) error {
 // DiskCheck tells the recorder to shed screenshots or audio when free space
 // falls below min_free_gb, and to return to normal once it recovers. A
 // command is sent only when the state changes, and the state is recorded only
-// once the recorder accepted it, so a failed send is retried next tick. The
+// once the recorder accepted it, so a failed send is retried next tick. A
+// send error is reported once, not on every retry. The
 // recorder (re)starts in normal mode; the launcher resets the state then.
 func (j *Jobs) DiskCheck(ctx context.Context) error {
 	free, err := j.FreeGB(j.Paths.Root)
@@ -175,10 +181,21 @@ func (j *Jobs) DiskCheck(ctx context.Context) error {
 	if !send {
 		return nil
 	}
-	j.Logf("disk: %.1f GB free, recorder %s → %s", free, prev, next)
-	if err := j.Control.Send(next); err != nil {
-		return fmt.Errorf("disk: send %s: %w", next, err)
+	j.diskMu.Lock()
+	defer j.diskMu.Unlock()
+	retrying := j.sendErr != ""
+	if !retrying {
+		j.Logf("disk: %.1f GB free, recorder %s → %s", free, prev, next)
 	}
+	if err := j.Control.Send(next); err != nil {
+		err = fmt.Errorf("disk: send %s: %w", next, err)
+		if err.Error() == j.sendErr {
+			return nil // already reported; retried every tick
+		}
+		j.sendErr = err.Error()
+		return err
+	}
+	j.sendErr = ""
 	return j.Store.SetKV(kvDiskState, next)
 }
 

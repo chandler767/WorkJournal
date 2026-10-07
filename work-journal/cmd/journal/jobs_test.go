@@ -434,3 +434,41 @@ func TestReprocessHourFromDerivedWhenMediaExpired(t *testing.T) {
 		t.Fatalf("hour = %+v", rec)
 	}
 }
+
+// A recorder that stays down must not produce a log line every minute: the
+// send is retried each tick but its error is reported only when it changes.
+func TestDiskCheckReportsSendErrorOnce(t *testing.T) {
+	j, ctl, free := newJobs(t)
+	var logs []string
+	j.Logf = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	ctl.sendErr = errors.New("dial recorder: no such file")
+	*free = 6
+	ctx := context.Background()
+	if err := j.DiskCheck(ctx); err == nil {
+		t.Fatal("first failure not reported")
+	}
+	for range 3 {
+		if err := j.DiskCheck(ctx); err != nil {
+			t.Fatalf("repeated failure reported again: %v", err)
+		}
+	}
+	if n := len(ctl.sentCmds()); n != 4 {
+		t.Fatalf("sends = %d, want a retry every tick", n)
+	}
+	if len(logs) > 1 {
+		t.Fatalf("logged every tick: %q", logs)
+	}
+	ctl.sendErr = errors.New("recorder \"screens_off\": busy")
+	if err := j.DiskCheck(ctx); err == nil {
+		t.Fatal("a different error was not reported")
+	}
+	ctl.sendErr = nil
+	if err := j.DiskCheck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	*free = 50
+	ctl.sendErr = errors.New("dial recorder: no such file")
+	if err := j.DiskCheck(ctx); err == nil {
+		t.Fatal("failure after a success not reported")
+	}
+}
