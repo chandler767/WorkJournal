@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,7 +201,18 @@ func TestSweepSkipsDayWithUnparseableMediaName(t *testing.T) {
 	}
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
 	removed, err := Sweep(p, st, now, 7)
-	if err != nil || len(removed) != 0 {
-		t.Fatalf("removed=%v err=%v", removed, err)
+	if err == nil {
+		t.Fatal("want error for unrecognised media entries")
+	}
+	for _, d := range []string{"2026-10-01", "2026-10-02"} {
+		if !strings.Contains(err.Error(), d) {
+			t.Errorf("error does not mention %s: %v", d, err)
+		}
+	}
+	if len(removed) != 0 {
+		t.Fatalf("removed = %v, want none", removed)
+	}
+	if !exists(p.RawDay("2026-10-01")) || !exists(p.RawDay("2026-10-02")) {
+		t.Fatal("day deleted")
 	}
 }
