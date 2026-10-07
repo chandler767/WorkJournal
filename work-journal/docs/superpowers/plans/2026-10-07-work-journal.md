@@ -70,7 +70,7 @@ work-journal/
 `{"ts":"<RFC3339 local>","type":"<t>","app":"<name>","bundle":"<id>","title":"<window title>"}`
 `type` ∈ `start, stop, sleep, wake, app, idle, active, pause, resume, excluded, included, screens_off, audio_off, normal`. Time between `sleep` and `wake` is a gap. `app`/`bundle`/`title` are present only on `app`; for `excluded`, title is always omitted.
 
-**Raw media names:** `raw/<day>/audio/HHMM-system.m4a`, `raw/<day>/audio/HHMM-mic.m4a` (HHMM = chunk start), `raw/<day>/screens/HHMMSS.jpg`.
+**Raw media names:** `raw/<day>/audio/HHMM-system.m4a`, `raw/<day>/audio/HHMM-mic.m4a` (HHMM = chunk start; if that name already exists for the day, the chunk is named `HHMMSS-<track>.m4a` with the exact start second — Go parsers accept both 4- and 6-digit prefixes), `raw/<day>/screens/HHMMSS.jpg`.
 
 **Recorder CLI:**
 `WorkJournalRecorder.app/Contents/MacOS/recorder run --data-dir D --socket S --interval 10 --meeting-interval 5 --chunk-minutes 5 --width 1440 --idle-minutes 5 --pause-auto-resume 60 --dashboard-url U [--all-displays] [--exclude-app A]… [--exclude-title K]… [--meeting-app A]… [--meeting-title K]… [--degraded]`  (`--degraded` = start with the error icon; the supervisor passes it after 3 failures within 5 min)
