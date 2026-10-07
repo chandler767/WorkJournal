@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,7 +68,7 @@ func (f *fakeEnv) sup() *Supervisor {
 			f.sleeps = append(f.sleeps, d)
 			f.now = f.now.Add(d)
 		},
-		Start: func(ctx context.Context, bin string, args []string) (func() error, error) {
+		Start: func(ctx context.Context, bin string, args []string) (func() error, func(os.Signal) error, error) {
 			n := len(f.starts)
 			f.starts = append(f.starts, args)
 			return func() error {
@@ -76,7 +78,7 @@ func (f *fakeEnv) sup() *Supervisor {
 					f.onDone(n)
 				}
 				return err
-			}, nil
+			}, nil, nil
 		},
 	}
 }
@@ -189,9 +191,9 @@ func TestSupervisorStopsOnContextCancel(t *testing.T) {
 	started := make(chan struct{})
 	s := &Supervisor{
 		Bin: "rec",
-		Start: func(context.Context, string, []string) (func() error, error) {
+		Start: func(context.Context, string, []string) (func() error, func(os.Signal) error, error) {
 			close(started)
-			return func() error { <-release; return nil }, nil
+			return func() error { <-release; return nil }, nil, nil
 		},
 	}
 	done := make(chan error, 1)
@@ -217,8 +219,8 @@ func TestSupervisorStopsOnContextCancel(t *testing.T) {
 func TestSupervisorDefaultSleepReturnsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Supervisor{
-		Start: func(context.Context, string, []string) (func() error, error) {
-			return func() error { return nil }, nil
+		Start: func(context.Context, string, []string) (func() error, func(os.Signal) error, error) {
+			return func() error { return nil }, nil, nil
 		},
 	}
 	done := make(chan error, 1)
@@ -297,5 +299,81 @@ func TestSocketControlRoundTrip(t *testing.T) {
 	}
 	if err := NewSocketControl(filepath.Join(dir, "none.sock")).Pause(); err == nil {
 		t.Error("expected dial error")
+	}
+}
+
+func TestSupervisorEscalatesToTermThenKill(t *testing.T) {
+	defer func(old time.Duration) { termGrace = old }(termGrace)
+	termGrace = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	dead := make(chan struct{})
+	var mu sync.Mutex
+	var sigs []os.Signal
+	s := &Supervisor{
+		Bin:         "rec",
+		StopTimeout: 50 * time.Millisecond,
+		Start: func(context.Context, string, []string) (func() error, func(os.Signal) error, error) {
+			close(started)
+			return func() error { <-dead; return nil },
+				func(sig os.Signal) error {
+					mu.Lock()
+					defer mu.Unlock()
+					sigs = append(sigs, sig)
+					if sig == syscall.SIGKILL {
+						close(dead)
+					}
+					return nil
+				}, nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sigs) != 2 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.SIGKILL {
+		t.Fatalf("signals = %v, want [terminated killed]", sigs)
+	}
+}
+
+func TestSupervisorStopsGracefullyWithinTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	exit := make(chan struct{})
+	signalled := false
+	s := &Supervisor{
+		Bin:         "rec",
+		StopTimeout: 2 * time.Second,
+		Start: func(context.Context, string, []string) (func() error, func(os.Signal) error, error) {
+			close(started)
+			return func() error { <-exit; return nil },
+				func(os.Signal) error { signalled = true; return nil }, nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-started
+	cancel()
+	time.AfterFunc(20*time.Millisecond, func() { close(exit) })
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	if signalled {
+		t.Error("signal sent although process exited within timeout")
 	}
 }

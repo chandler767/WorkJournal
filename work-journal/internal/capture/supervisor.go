@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"syscall"
 	"time"
 
 	"workjournal/internal/config"
@@ -56,8 +57,12 @@ type Supervisor struct {
 	Bin  string
 	Args []string
 	Logf func(string, ...any)
-	// Start launches the process and returns a function that blocks until it exits.
-	Start func(ctx context.Context, bin string, args []string) (wait func() error, err error)
+	// Start launches the process and returns a function that blocks until it
+	// exits and a function that signals it.
+	Start func(ctx context.Context, bin string, args []string) (wait func() error, signal func(os.Signal) error, err error)
+	// StopTimeout is how long to wait for the process to exit after ctx is
+	// cancelled before sending SIGTERM (0 means 10s).
+	StopTimeout time.Duration
 	// OnGap is called for each downtime: from = process exit, to = next successful start.
 	OnGap func(from, to time.Time)
 	// Sleep defaults to a context-aware time.Sleep.
@@ -66,14 +71,55 @@ type Supervisor struct {
 	Now func() time.Time
 }
 
-func execStart(_ context.Context, bin string, args []string) (func() error, error) {
+func execStart(_ context.Context, bin string, args []string) (func() error, func(os.Signal) error, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return cmd.Wait, nil
+	return cmd.Wait, cmd.Process.Signal, nil
+}
+
+// termGrace is a var so tests can shorten it.
+var termGrace = 3 * time.Second
+
+// stop waits for the process to exit after ctx cancellation, escalating to
+// SIGTERM and then SIGKILL if it does not.
+func (s *Supervisor) stop(exited <-chan error, signal func(os.Signal) error, logf func(string, ...any)) {
+	timeout := s.StopTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	wait := func(d time.Duration) bool {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-exited:
+			return true
+		case <-t.C:
+			return false
+		}
+	}
+	if wait(timeout) {
+		return
+	}
+	if signal == nil {
+		<-exited
+		return
+	}
+	logf("recorder did not exit within %s, sending SIGTERM", timeout)
+	if err := signal(syscall.SIGTERM); err != nil {
+		logf("SIGTERM failed: %v", err)
+	}
+	if wait(termGrace) {
+		return
+	}
+	logf("recorder did not exit after SIGTERM, sending SIGKILL")
+	if err := signal(syscall.SIGKILL); err != nil {
+		logf("SIGKILL failed: %v", err)
+	}
+	<-exited
 }
 
 // Run supervises the recorder until ctx is cancelled, then waits for the
@@ -128,7 +174,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		if degraded {
 			args = append(args, degradedFlag)
 		}
-		wait, err := start(ctx, s.Bin, args)
+		wait, signal, err := start(ctx, s.Bin, args)
 		began := now()
 		if err != nil {
 			logf("recorder start failed: %v", err)
@@ -143,12 +189,19 @@ func (s *Supervisor) Run(ctx context.Context) error {
 				}
 				downSince = time.Time{}
 			}
-			werr := wait()
-			exited := now()
-			downSince = exited
-			if ctx.Err() != nil {
+			waitCh := make(chan error, 1)
+			go func() { waitCh <- wait() }()
+			var werr error
+			select {
+			case werr = <-waitCh:
+			case <-ctx.Done():
+				exitedCh := make(chan error, 1)
+				go func() { exitedCh <- <-waitCh }()
+				s.stop(exitedCh, signal, logf)
 				return nil
 			}
+			exited := now()
+			downSince = exited
 			if exited.Sub(began) >= healthyUptime {
 				backoff = minBackoff
 				failures = nil
