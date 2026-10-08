@@ -231,3 +231,42 @@ func TestOCRFilesKeepsEveryText(t *testing.T) {
 		t.Fatalf("OCRFiles = %v, want %v", got, want)
 	}
 }
+
+func TestWhisperDropsNonSpeechTags(t *testing.T) {
+	texts := []string{"[INAUDIBLE]", "[MUSIC]", "(silence)", " [ Silence ] ", "*laughs*", "[MUSIC] (applause)",
+		"Ok.", "(laughs) yes, ship it", "Hi", "[sic] that's right", "5 * 3 is *fifteen*", "*", "()"}
+	type seg struct {
+		Offsets struct {
+			From int64 `json:"from"`
+			To   int64 `json:"to"`
+		} `json:"offsets"`
+		Text string `json:"text"`
+	}
+	var out struct {
+		Transcription []seg `json:"transcription"`
+	}
+	for _, s := range texts {
+		out.Transcription = append(out.Transcription, seg{Text: s})
+	}
+	body, _ := json.Marshal(out)
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		for i, a := range args {
+			if a == "-of" {
+				return nil, os.WriteFile(args[i+1]+".json", body, 0o644)
+			}
+		}
+		return nil, fmt.Errorf("no -of")
+	}
+	us, err := Whisper{Run: run, Bin: "whisper-cli"}.Transcribe(context.Background(), t.TempDir()+"/a.wav", time.Now(), "mic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, u := range us {
+		got = append(got, u.Text)
+	}
+	want := []string{"Ok.", "(laughs) yes, ship it", "Hi", "[sic] that's right", "5 * 3 is *fifteen*"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("kept %q, want %q", got, want)
+	}
+}

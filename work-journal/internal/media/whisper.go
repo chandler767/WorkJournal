@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Utterance is one transcribed span of speech.
@@ -61,7 +62,7 @@ func (w Whisper) Transcribe(ctx context.Context, wav string, chunkStart time.Tim
 	var us []Utterance
 	for _, e := range out.Transcription {
 		text := strings.TrimSpace(e.Text)
-		if text == "" || text == "[BLANK_AUDIO]" {
+		if nonSpeech(text) {
 			continue
 		}
 		us = append(us, Utterance{
@@ -73,4 +74,29 @@ func (w Whisper) Transcribe(ctx context.Context, wav string, chunkStart time.Tim
 		})
 	}
 	return us, nil
+}
+
+// nonSpeech reports whether a whisper segment holds no speech: it is empty,
+// or consists only of bracketed, parenthesized or asterisked tags such as
+// "[BLANK_AUDIO]", "[ Silence ]", "(music)" or "*laughs*" (plus
+// punctuation). A segment with any real words after its tags is kept whole.
+func nonSpeech(text string) bool {
+	s := strings.TrimSpace(text)
+	for s != "" {
+		closer := map[byte]byte{'[': ']', '(': ')', '*': '*'}[s[0]]
+		if closer == 0 {
+			break
+		}
+		j := strings.IndexByte(s[1:], closer)
+		if j < 0 {
+			break
+		}
+		s = strings.TrimSpace(s[j+2:])
+	}
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
