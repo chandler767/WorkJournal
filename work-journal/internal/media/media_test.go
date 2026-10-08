@@ -270,3 +270,76 @@ func TestWhisperDropsNonSpeechTags(t *testing.T) {
 		t.Errorf("kept %q, want %q", got, want)
 	}
 }
+
+func TestDropHallucinations(t *testing.T) {
+	base := time.Date(2026, 10, 8, 14, 0, 0, 0, time.UTC)
+	u := func(from, to float64, text string) Utterance {
+		return Utterance{Start: base.Add(time.Duration(from * float64(time.Second))), End: base.Add(time.Duration(to * float64(time.Second))), Track: "system", Text: text}
+	}
+	in := []Utterance{
+		u(0, 2, "You"),                       // isolated: dropped
+		u(10, 12, " Thank you. "),            // isolated: dropped
+		u(20, 22, "Thanks for watching!"),    // isolated: dropped
+		u(30, 31, "you"),                     // two candidates near each other, no real speech: both dropped
+		u(32, 33, "Bye."),                    //
+		u(40, 45, "So the plan is to ship."), // real speech kept
+		u(47, 48, "You"),                     // within 3 s of real speech: kept
+		u(60, 62, "Thank you very much."),    // not a whole-text match: kept
+		u(70, 71, "Please subscribe"),        // isolated: dropped
+		u(80, 81, "thank you for watching"),  // isolated: dropped
+		u(100, 104, "Okay, next item."),      // real speech
+		u(90, 97, "you"),                     // ends 3 s before real speech (out of order input): kept
+	}
+	got := DropHallucinations(in)
+	var texts []string
+	for _, g := range got {
+		texts = append(texts, g.Text)
+	}
+	want := []string{"So the plan is to ship.", "You", "Thank you very much.", "Okay, next item.", "you"}
+	if !reflect.DeepEqual(texts, want) {
+		t.Fatalf("kept %q, want %q", texts, want)
+	}
+}
+
+func TestWhisperDropsIsolatedSilenceHallucinations(t *testing.T) {
+	type seg struct {
+		Offsets struct {
+			From int64 `json:"from"`
+			To   int64 `json:"to"`
+		} `json:"offsets"`
+		Text string `json:"text"`
+	}
+	var out struct {
+		Transcription []seg `json:"transcription"`
+	}
+	add := func(from, to int64, text string) {
+		var s seg
+		s.Offsets.From, s.Offsets.To, s.Text = from, to, text
+		out.Transcription = append(out.Transcription, s)
+	}
+	add(0, 2000, " You")
+	add(30000, 35000, " Let's review the doc.")
+	add(36000, 37000, " Thank you.")
+	add(120000, 121000, " you")
+	body, _ := json.Marshal(out)
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		for i, a := range args {
+			if a == "-of" {
+				return nil, os.WriteFile(args[i+1]+".json", body, 0o644)
+			}
+		}
+		return nil, fmt.Errorf("no -of")
+	}
+	us, err := Whisper{Run: run, Bin: "whisper-cli"}.Transcribe(context.Background(), t.TempDir()+"/a.wav", time.Now(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, u := range us {
+		got = append(got, u.Text)
+	}
+	want := []string{"Let's review the doc.", "Thank you."}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("kept %q, want %q", got, want)
+	}
+}

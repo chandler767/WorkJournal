@@ -41,7 +41,9 @@ type whisperOutput struct {
 }
 
 // Transcribe implements Transcriber. Mic utterances get Speaker "me"; system
-// utterances are left without a speaker for later diarization.
+// utterances are left without a speaker for later diarization. Non-speech
+// tags and isolated silence hallucinations (see DropHallucinations) are
+// dropped.
 func (w Whisper) Transcribe(ctx context.Context, wav string, chunkStart time.Time, track string) ([]Utterance, error) {
 	prefix := strings.TrimSuffix(wav, ".wav")
 	if _, err := w.Run(ctx, w.Bin, "-m", w.Model, "-f", wav, "-oj", "-of", prefix, "-np"); err != nil {
@@ -73,7 +75,66 @@ func (w Whisper) Transcribe(ctx context.Context, wav string, chunkStart time.Tim
 			Text:    text,
 		})
 	}
-	return us, nil
+	return DropHallucinations(us), nil
+}
+
+// silencePhrases are whole-segment texts whisper is known to hallucinate on
+// silence, normalized by normalizePhrase.
+var silencePhrases = map[string]bool{
+	"you": true, "thank you": true, "thanks for watching": true, "bye": true,
+	"thank you for watching": true, "please subscribe": true,
+}
+
+// hallucinationWindow is how close (either side) other speech must be for a
+// silence phrase to count as real speech.
+const hallucinationWindow = 3 * time.Second
+
+// DropHallucinations removes whisper's silence hallucinations from the
+// utterances of one chunk: a segment whose whole text (case-insensitive,
+// punctuation stripped) is a known silence phrase such as "You" or "Thank
+// you." is dropped when no other kept segment (one that is not such a
+// phrase) lies within 3 s of it. A phrase next to real speech is kept. Order
+// is preserved.
+func DropHallucinations(us []Utterance) []Utterance {
+	cand := make([]bool, len(us))
+	for i, u := range us {
+		cand[i] = silencePhrases[normalizePhrase(u.Text)]
+	}
+	var out []Utterance
+	for i, u := range us {
+		if cand[i] && !nearSpeech(us, cand, i) {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+// nearSpeech reports whether a non-candidate utterance lies within
+// hallucinationWindow of us[i].
+func nearSpeech(us []Utterance, cand []bool, i int) bool {
+	from, to := us[i].Start.Add(-hallucinationWindow), us[i].End.Add(hallucinationWindow)
+	for j, o := range us {
+		if j != i && !cand[j] && !o.Start.After(to) && !o.End.Before(from) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizePhrase lowercases s, drops everything but letters, digits and
+// spaces, and collapses whitespace.
+func normalizePhrase(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case unicode.IsSpace(r):
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // nonSpeech reports whether a whisper segment holds no speech: it is empty,
