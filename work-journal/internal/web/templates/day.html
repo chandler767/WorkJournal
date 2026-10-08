@@ -1,4 +1,5 @@
 {{define "content"}}
+<div id="page-rev" hidden data-rev="{{.Rev}}" data-rev-url="/api/rev/day/{{.Date}}"></div>
 <nav class="daynav">
   <a class="prev" href="/day/{{.Prev}}" aria-label="Previous day, {{.Prev}}"><span class="long">&larr; {{.Prev}}</span><span class="short">&larr; {{.PrevShort}}</span></a>
   <h1>{{.Date}}{{if .IsToday}} <small>today</small>{{end}}</h1>
@@ -57,12 +58,13 @@
   {{range .Hours}}
   {{if .Empty}}<p class="hour-empty muted">{{.Label}} · no activity</p>{{else}}
   <article class="hour">
+    {{$hh := printf "%02d" .Hour}}
     <header>
       <h3><a class="hour-time" href="/hour/{{$.Date}}/{{printf "%02d" .Hour}}">{{.Label}}</a>{{if .Summary.MainFocus}} <span class="hour-title">{{.Summary.MainFocus}}</span>{{end}}</h3>
       {{if or .NeedsReview .Partial .Pending}}<span class="hour-badges">{{if .NeedsReview}}<span class="badge warn">needs review</span>{{else if .Partial}}<span class="badge">in progress</span>{{else}}<span class="badge">processing</span>{{end}}</span>{{end}}
     </header>
     {{if .Summary.Narrative}}<p class="narrative">{{.Summary.Narrative}}</p>{{end}}
-    {{with .Summary.Notes}}<details class="notes"><summary>{{plural (len .) "note"}}</summary><ul class="notes-list">{{range .}}<li>{{range code .}}{{if .Code}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}</li>{{end}}</ul></details>{{end}}
+    {{with .Summary.Notes}}<details class="notes" data-key="{{$hh}}-notes"><summary>{{plural (len .) "note"}}</summary><ul class="notes-list">{{range .}}<li>{{range code .}}{{if .Code}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}</li>{{end}}</ul></details>{{end}}
     {{if .Summary.ActionItems}}<h4 class="actions-h">Action items</h4><ul class="actions">{{range .Summary.ActionItems}}<li>{{range code .Text}}{{if .Code}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
     {{if .Reprocess}}<form class="reprocess" method="post" action="/hour/{{$.Date}}/{{printf "%02d" .Hour}}/reprocess"><button type="submit" class="link">Reprocess</button></form>{{end}}
   </article>

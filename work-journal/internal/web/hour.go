@@ -53,6 +53,7 @@ type hourPage struct {
 	Segments                   []segRow
 	Categories                 []string
 	DocNote                    string
+	Rev                        string
 }
 
 var audioNameRE = regexp.MustCompile(`^(\d{2})(\d{2})(\d{2})?-(mic|system)\.m4a$`)
@@ -68,6 +69,13 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 	colors := colorMap(cfg.Categories)
 	hh := fmt.Sprintf("%02d", hour)
 	p := hourPage{Title: day + " " + hh + ":00", Date: day, Hour: hh, Label: hourLabel(hour), Categories: cfg.Categories}
+
+	rev, err := s.hourRev(day, hour)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	p.Rev = rev
 
 	rec, found, err := s.Store.Hour(day, hour)
 	if err != nil {

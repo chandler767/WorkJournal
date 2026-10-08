@@ -235,3 +235,30 @@ func TestParticipantsUpsert(t *testing.T) {
 		t.Fatalf("ps=%+v", ps)
 	}
 }
+
+func TestDayRevAndHourRev(t *testing.T) {
+	st := openTest(t)
+	day := "2026-10-07"
+	t0 := time.Date(2026, 10, 7, 9, 0, 0, 0, time.Local)
+	r0, err := st.DayRev(day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertHour(HourRecord{Day: day, Hour: 9, Status: StatusDone, UpdatedAt: t0, SummaryJSON: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	r1, _ := st.DayRev(day)
+	if r1 == r0 {
+		t.Error("DayRev unchanged after hour insert")
+	}
+	if r2, _ := st.DayRev(day); r2 != r1 {
+		t.Error("DayRev unstable")
+	}
+	h0, _ := st.HourRev(day, 9)
+	if err := st.UpsertHour(HourRecord{Day: day, Hour: 9, Status: StatusDone, UpdatedAt: t0, SummaryJSON: `{"a":1}`}); err != nil {
+		t.Fatal(err)
+	}
+	if h1, _ := st.HourRev(day, 9); h1 == h0 {
+		t.Error("HourRev unchanged after summary change")
+	}
+}

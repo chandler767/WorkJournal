@@ -1,4 +1,5 @@
 {{define "content"}}
+<div id="page-rev" hidden data-rev="{{.Rev}}" data-rev-url="/api/rev/hour/{{.Date}}/{{.Hour}}"></div>
 <nav class="daynav">
   <a class="prev" href="/day/{{.Date}}">&larr; {{.Date}}</a>
   <h1>{{.Label}}</h1>

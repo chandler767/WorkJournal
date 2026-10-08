@@ -56,6 +56,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleRoot)
 	mux.HandleFunc("GET /day/{date}", s.handleDay)
 	mux.HandleFunc("GET /hour/{date}/{hh}", s.handleHour)
+	mux.HandleFunc("GET /api/rev/day/{date}", s.handleRevDay)
+	mux.HandleFunc("GET /api/rev/hour/{date}/{hh}", s.handleRevHour)
 	mux.HandleFunc("GET /media/{date}/{kind}/{file}", s.handleMedia)
 	mux.HandleFunc("GET /meeting/{id}", s.handleMeeting)
 	mux.HandleFunc("GET /week/{week}", s.handleWeek)

@@ -63,20 +63,25 @@
     node.appendChild(fill);
   }
 
-  window.WJChart = { timeline: timeline, bar: bar };
+  // init draws every timeline and bar under root (the whole document by default).
+  function init(root) {
+    root = root || document;
+    root.querySelectorAll('[data-chart="timeline"]').forEach(function (n) {
+      try { timeline(n, JSON.parse(n.getAttribute("data-spec"))); } catch (e) { console.error("timeline", e); }
+    });
+    root.querySelectorAll('[data-chart="bar"]').forEach(function (n) {
+      if (!n.firstChild) bar(n);
+    });
+  }
+
+  window.WJChart = { timeline: timeline, bar: bar, init: init };
 
   document.addEventListener("DOMContentLoaded", function () {
-    var drawTimelines = function () {
-      document.querySelectorAll('[data-chart="timeline"]').forEach(function (n) {
-        try { timeline(n, JSON.parse(n.getAttribute("data-spec"))); } catch (e) { console.error("timeline", e); }
-      });
-    };
-    drawTimelines();
+    init(document);
     var resizeTimer;
     window.addEventListener("resize", function () {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(drawTimelines, 150);
+      resizeTimer = setTimeout(function () { init(document); }, 150);
     });
-    document.querySelectorAll('[data-chart="bar"]').forEach(bar);
   });
 })();

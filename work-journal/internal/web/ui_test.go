@@ -45,7 +45,7 @@ func TestDayHourHeaderKeepsBadgesSeparate(t *testing.T) {
 func TestDayHourNarrativeOpenNotesCollapsedActionsVisible(t *testing.T) {
 	e := newEnv(t)
 	a := article(e.get("/day/"+seedDay).Body.String(), "09")
-	mustContain(t, a, `<p class="narrative">Rewrote the scheduler retry loop`, `<details class="notes"><summary>2 notes</summary>`,
+	mustContain(t, a, `<p class="narrative">Rewrote the scheduler retry loop`, `<details class="notes" data-key="09-notes"><summary>2 notes</summary>`,
 		`<h4 class="actions-h">Action items</h4>`, "Send release notes")
 	if strings.Contains(a, "<summary>Narrative") || strings.Contains(a, `<details class="notes" open`) {
 		t.Errorf("narrative must be open and notes collapsed on the day page:\n%s", a)

@@ -71,6 +71,7 @@ type dayPage struct {
 	Hours                   []hourRow
 	Meetings                []meetingRow
 	Timeline                string
+	Rev                     string
 }
 
 func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +90,12 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		NextShort: t.AddDate(0, 0, 1).Format("Jan 2"),
 		IsToday:   day == config.DayKey(time.Now()),
 	}
+	rev, err := s.dayRev(day) // before reading anything: a later change then just triggers one more refresh
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	p.Rev = rev
 	p.Notice = dayNotice(r.URL.Query())
 	p.RecorderUp, p.Paused, p.StatusText = s.recorderState()
 	if v, _, err := s.Store.GetKV("disk_state"); err == nil && v != "" && v != "normal" {
@@ -127,6 +134,10 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		row.Empty = !row.NeedsReview && !row.Partial && !row.Pending && summaryEmpty(row.Summary)
 		p.Hours = append(p.Hours, row)
 	}
+	// Newest first: the current hour is on top.
+	for i, j := 0, len(p.Hours)-1; i < j; i, j = i+1, j-1 {
+		p.Hours[i], p.Hours[j] = p.Hours[j], p.Hours[i]
+	}
 
 	totals, err := s.Store.CategoryTotals(day, day)
 	if err != nil {
@@ -143,6 +154,9 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	for _, m := range meets {
 		p.Meetings = append(p.Meetings, meetingRow{ID: m.ID, Title: m.Title, App: m.App,
 			Time: m.Start.Format("15:04") + "–" + m.End.Format("15:04")})
+	}
+	for i, j := 0, len(p.Meetings)-1; i < j; i, j = i+1, j-1 {
+		p.Meetings[i], p.Meetings[j] = p.Meetings[j], p.Meetings[i]
 	}
 
 	segs, err := s.Store.SegmentsOn(day)

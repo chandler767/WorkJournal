@@ -22,6 +22,7 @@ type fakeControl struct {
 	statusErr error
 	sent      []string
 	sendErr   error
+	state     string // recorder state; "recording" when empty
 }
 
 func (f *fakeControl) Pause() error  { f.calls = append(f.calls, "pause"); return nil }
@@ -30,7 +31,11 @@ func (f *fakeControl) Status() (capture.Status, error) {
 	if f.statusErr != nil {
 		return capture.Status{}, f.statusErr
 	}
-	return capture.Status{State: "recording", Screens: true, Audio: true}, nil
+	st := f.state
+	if st == "" {
+		st = "recording"
+	}
+	return capture.Status{State: st, Screens: true, Audio: true}, nil
 }
 func (f *fakeControl) Send(c string) error { f.sent = append(f.sent, c); return f.sendErr }
 func (f *fakeControl) Rotate() error       { return f.Send("rotate") }
