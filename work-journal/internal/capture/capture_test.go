@@ -51,6 +51,33 @@ func TestRecorderArgsIncludesExclusions(t *testing.T) {
 	}
 }
 
+func TestRecorderArgsScreenCapture(t *testing.T) {
+	c := config.Default()
+	p := config.Paths{Root: "/data"}
+	args := RecorderArgs(c, p)
+	for _, kv := range [][2]string{
+		{"--min-gap", "3"}, {"--idle-backstop", "60"}, {"--change-sensitivity", "medium"},
+		{"--capture-on-switch", "true"}, {"--meeting-interval", "5"},
+	} {
+		if !hasPair(args, kv[0], kv[1]) {
+			t.Errorf("missing %s %s in %v", kv[0], kv[1], args)
+		}
+	}
+	if slices.Contains(args, "--interval") {
+		t.Errorf("--interval passed alongside --idle-backstop: %v", args)
+	}
+	c.ScreenshotMinGapSec, c.ScreenshotIdleBackstopSec = 5, 120
+	c.ScreenChangeSensitivity, c.CaptureOnAppSwitch = "high", false
+	args = RecorderArgs(c, p)
+	for _, kv := range [][2]string{
+		{"--min-gap", "5"}, {"--idle-backstop", "120"}, {"--change-sensitivity", "high"}, {"--capture-on-switch", "false"},
+	} {
+		if !hasPair(args, kv[0], kv[1]) {
+			t.Errorf("missing %s %s in %v", kv[0], kv[1], args)
+		}
+	}
+}
+
 type fakeEnv struct {
 	now    time.Time
 	sleeps []time.Duration

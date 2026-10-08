@@ -21,7 +21,11 @@ type Config struct {
 	RollupWeekday                string            `toml:"rollup_weekday"`
 	IdleMinutes                  int               `toml:"idle_minutes"`
 	PauseAutoResumeMinutes       int               `toml:"pause_auto_resume_minutes"`
-	ScreenshotIntervalSec        int               `toml:"screenshot_interval_sec"`
+	ScreenshotIntervalSec        int               `toml:"screenshot_interval_sec"` // unused since change-driven capture; kept so older files load
+	ScreenshotMinGapSec          int               `toml:"screenshot_min_gap_sec"`
+	ScreenshotIdleBackstopSec    int               `toml:"screenshot_idle_backstop_sec"`
+	ScreenChangeSensitivity      string            `toml:"screen_change_sensitivity"`
+	CaptureOnAppSwitch           bool              `toml:"capture_on_app_switch"`
 	MeetingScreenshotIntervalSec int               `toml:"meeting_screenshot_interval_sec"`
 	AudioChunkMinutes            int               `toml:"audio_chunk_minutes"`
 	ScreenshotWidth              int               `toml:"screenshot_width"`
@@ -53,6 +57,10 @@ func Default() Config {
 		IdleMinutes:                  5,
 		PauseAutoResumeMinutes:       60,
 		ScreenshotIntervalSec:        10,
+		ScreenshotMinGapSec:          3,
+		ScreenshotIdleBackstopSec:    60,
+		ScreenChangeSensitivity:      "medium",
+		CaptureOnAppSwitch:           true,
 		MeetingScreenshotIntervalSec: 5,
 		AudioChunkMinutes:            5,
 		ScreenshotWidth:              1440,
@@ -137,6 +145,15 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must be at least 1, got %d", p.key, p.v)
 		}
 	}
+	if c.ScreenshotMinGapSec < 1 || c.ScreenshotMinGapSec > 60 {
+		return fmt.Errorf("screenshot_min_gap_sec must be within 1–60, got %d", c.ScreenshotMinGapSec)
+	}
+	if c.ScreenshotIdleBackstopSec < 10 || c.ScreenshotIdleBackstopSec > 600 {
+		return fmt.Errorf("screenshot_idle_backstop_sec must be within 10–600, got %d", c.ScreenshotIdleBackstopSec)
+	}
+	if !slices.Contains(ChangeSensitivities, c.ScreenChangeSensitivity) {
+		return fmt.Errorf("screen_change_sensitivity must be one of %v, got %q", ChangeSensitivities, c.ScreenChangeSensitivity)
+	}
 	if c.MinFreeGB < 0 {
 		return fmt.Errorf("min_free_gb must not be negative, got %d", c.MinFreeGB)
 	}
@@ -176,6 +193,10 @@ func (c Config) Validate() error {
 // ProcessIntervals are the allowed process_interval_minutes: how often the
 // in-progress hour is summarized. 60 means only finished hours are.
 var ProcessIntervals = []int{5, 10, 15, 20, 30, 60}
+
+// ChangeSensitivities are the allowed screen_change_sensitivity values: how much
+// the screen must change before the recorder takes a screenshot.
+var ChangeSensitivities = []string{"low", "medium", "high"}
 
 var weekdays = map[string]bool{
 	"monday": true, "tuesday": true, "wednesday": true, "thursday": true,

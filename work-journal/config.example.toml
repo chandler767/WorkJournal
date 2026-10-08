@@ -5,8 +5,14 @@ close_time = "18:00"
 rollup_weekday = "Friday"
 idle_minutes = 5
 pause_auto_resume_minutes = 60
-screenshot_interval_sec = 10
-meeting_screenshot_interval_sec = 5
+# Screenshots are change-driven: on an app/window switch, when the screen changes, and at least
+# every screenshot_idle_backstop_sec; never closer than screenshot_min_gap_sec. Restart the recorder to apply.
+screenshot_min_gap_sec = 3            # 1-60; triggers inside the gap are deferred to its end, not dropped
+screenshot_idle_backstop_sec = 60     # 10-600; a screenshot at least this often while nothing changes
+screen_change_sensitivity = "medium"  # "low" (big changes only), "medium" or "high" (small edits too)
+capture_on_app_switch = true          # screenshot right away when the frontmost app or window changes
+meeting_screenshot_interval_sec = 5   # backstop during meetings (the min gap still applies)
+screenshot_interval_sec = 10          # unused: replaced by screenshot_idle_backstop_sec; kept so older files load
 audio_chunk_minutes = 5
 screenshot_width = 1440     # per display: with all_displays the image is this × displays wide
 all_displays = false        # all displays side by side (left to right) instead of the main one

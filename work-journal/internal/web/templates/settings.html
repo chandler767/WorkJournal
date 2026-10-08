@@ -18,6 +18,18 @@
     </label>
   </section>
   <section>
+    <h2>Screen capture</h2>
+    <p class="muted">Screenshots are taken when you switch apps or windows and when the screen changes, at most one per minimum gap, and at least one per idle backstop. Each change applies after Restart recorder (below).</p>
+    <label>Minimum gap between screenshots (seconds, 1–60) <input type="number" name="screenshot_min_gap_sec" min="1" max="60" value="{{.Form.MinGap}}"></label>
+    <label>Idle backstop (seconds, 10–600) <input type="number" name="screenshot_idle_backstop_sec" min="10" max="600" value="{{.Form.IdleBackstop}}"></label>
+    <label>Screen change sensitivity
+      <select name="screen_change_sensitivity">{{range .Sensitivity}}<option value="{{.}}"{{if eq . $.Form.Sensitivity}} selected{{end}}>{{if eq . "low"}}Low (big changes only){{else if eq . "high"}}High (small edits too){{else}}Medium{{end}}</option>{{end}}</select>
+    </label>
+    <label>Screenshot on app or window switch
+      <select name="capture_on_app_switch"><option value="true"{{if eq .Form.CaptureOnSwitch "true"}} selected{{end}}>On</option><option value="false"{{if eq .Form.CaptureOnSwitch "false"}} selected{{end}}>Off</option></select>
+    </label>
+  </section>
+  <section>
     <h2>Exclusions</h2>
     <p class="muted">One per line. Exclusion changes take effect after the recorder restarts.</p>
     <label>Excluded apps <textarea name="excluded_apps" rows="4">{{.Form.ExcludedApps}}</textarea></label>
@@ -33,7 +45,7 @@
 
 <section>
   <h2>Recorder</h2>
-  <p class="muted">Restarting applies the current exclusions; the supervisor starts it again with new arguments.</p>
+  <p class="muted">Restarting applies the current exclusions and screen capture settings; the supervisor starts it again with new arguments.</p>
   <form method="post" action="/settings/restart-recorder"><button type="submit" class="secondary">Restart recorder</button></form>
 </section>
 

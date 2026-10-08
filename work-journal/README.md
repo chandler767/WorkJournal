@@ -65,6 +65,16 @@ are kept in `cache/<day>/` and reused by later runs and the final pass. A cache 
 redone when its file's size or modification time changes, or the whisper model changes. An
 unchanged in-progress hour is not summarized again.
 
+## Screen capture
+
+Screenshots follow what you do rather than a fixed timer: one when you switch apps or windows,
+one when the screen changes (watched cheaply at low resolution), never more than one per
+`screenshot_min_gap_sec` (3 s; a change inside the gap is taken at its end), and at least one per
+`screenshot_idle_backstop_sec` (60 s; 5 s in meetings) even when nothing changes. Set
+`screen_change_sensitivity` to `low` (big changes only), `medium` or `high` (small edits too), and
+`capture_on_app_switch` to skip the switch trigger. All four are on the Settings page under
+Screen capture and apply after Restart recorder. `screenshot_interval_sec` is no longer used.
+
 ## Start at login
 
 ```sh

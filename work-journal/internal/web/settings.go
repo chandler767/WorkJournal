@@ -20,6 +20,7 @@ import (
 type settingsForm struct {
 	RetentionDays, CloseTime, RollupWeekday, IdleMinutes, PauseAutoResume string
 	ProcessInterval                                                       string
+	MinGap, IdleBackstop, Sensitivity, CaptureOnSwitch                    string
 	ExcludedApps, ExcludedTitles, Categories, Rules                       string
 }
 
@@ -30,6 +31,7 @@ type settingsPage struct {
 	Notice      string
 	Weekdays    []string
 	Intervals   []string
+	Sensitivity []string
 	Suggestions []Suggestion
 	Voices      []string
 	ShowVoices  bool
@@ -78,6 +80,10 @@ func formFromConfig(c config.Config) settingsForm {
 		IdleMinutes:     strconv.Itoa(c.IdleMinutes),
 		PauseAutoResume: strconv.Itoa(c.PauseAutoResumeMinutes),
 		ProcessInterval: strconv.Itoa(c.ProcessIntervalMinutes),
+		MinGap:          strconv.Itoa(c.ScreenshotMinGapSec),
+		IdleBackstop:    strconv.Itoa(c.ScreenshotIdleBackstopSec),
+		Sensitivity:     c.ScreenChangeSensitivity,
+		CaptureOnSwitch: strconv.FormatBool(c.CaptureOnAppSwitch),
 		ExcludedApps:    strings.Join(c.ExcludedApps, "\n"),
 		ExcludedTitles:  strings.Join(c.ExcludedTitleKeywords, "\n"),
 		Categories:      strings.Join(c.Categories, "\n"),
@@ -131,6 +137,27 @@ func applyForm(base config.Config, f settingsForm) (config.Config, error) {
 			return c, fmt.Errorf("process_interval_minutes must be a whole number, got %q", f.ProcessInterval)
 		}
 	}
+	// Screen capture fields are absent from older forms: keep the current values.
+	if v := strings.TrimSpace(f.MinGap); v != "" {
+		if c.ScreenshotMinGapSec, err = strconv.Atoi(v); err != nil {
+			return c, fmt.Errorf("screenshot_min_gap_sec must be a whole number, got %q", f.MinGap)
+		}
+	}
+	if v := strings.TrimSpace(f.IdleBackstop); v != "" {
+		if c.ScreenshotIdleBackstopSec, err = strconv.Atoi(v); err != nil {
+			return c, fmt.Errorf("screenshot_idle_backstop_sec must be a whole number, got %q", f.IdleBackstop)
+		}
+	}
+	if v := strings.TrimSpace(f.Sensitivity); v != "" {
+		c.ScreenChangeSensitivity = v
+	}
+	switch v := strings.TrimSpace(f.CaptureOnSwitch); v {
+	case "":
+	case "true", "false":
+		c.CaptureOnAppSwitch = v == "true"
+	default:
+		return c, fmt.Errorf("capture_on_app_switch must be true or false, got %q", f.CaptureOnSwitch)
+	}
 	c.CloseTime = strings.TrimSpace(f.CloseTime)
 	c.RollupWeekday = titleWeekday(f.RollupWeekday)
 	c.ExcludedApps = splitLines(f.ExcludedApps)
@@ -173,7 +200,7 @@ func (s *Server) saveSuggestions(list []Suggestion) error {
 func (s *Server) renderSettings(w http.ResponseWriter, form settingsForm, errMsg, notice string, code int) {
 	cfg := s.Cfg()
 	p := settingsPage{Title: "Settings", Form: form, Error: errMsg, Notice: notice,
-		Weekdays: weekdayNames, Intervals: intervalChoices(), ShowVoices: cfg.Diarization != "off" && s.Voices != nil}
+		Weekdays: weekdayNames, Intervals: intervalChoices(), Sensitivity: config.ChangeSensitivities, ShowVoices: cfg.Diarization != "off" && s.Voices != nil}
 	var err error
 	if p.Suggestions, err = s.loadSuggestions(); err != nil {
 		log.Printf("web: %v", err)
@@ -209,6 +236,8 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		PauseAutoResume: r.PostFormValue("pause_auto_resume"), ExcludedApps: r.PostFormValue("excluded_apps"),
 		ExcludedTitles: r.PostFormValue("excluded_titles"), Categories: r.PostFormValue("categories"),
 		Rules: r.PostFormValue("rules"), ProcessInterval: r.PostFormValue("process_interval_minutes"),
+		MinGap: r.PostFormValue("screenshot_min_gap_sec"), IdleBackstop: r.PostFormValue("screenshot_idle_backstop_sec"),
+		Sensitivity: r.PostFormValue("screen_change_sensitivity"), CaptureOnSwitch: r.PostFormValue("capture_on_app_switch"),
 	}
 	c, err := applyForm(s.Cfg(), f)
 	if err == nil {

@@ -293,3 +293,45 @@ func TestSettingsProcessInterval(t *testing.T) {
 		t.Fatalf("missing field: %d, interval %d", rec.Code, e.cfg.ProcessIntervalMinutes)
 	}
 }
+
+func TestSettingsScreenCapture(t *testing.T) {
+	e := newSettingsEnv(t)
+	body := e.get("/settings").Body.String()
+	mustContain(t, body, "Screen capture", `name="screenshot_min_gap_sec"`, `value="3"`,
+		`name="screenshot_idle_backstop_sec"`, `value="60"`, `name="screen_change_sensitivity"`,
+		`<option value="medium" selected>`, `name="capture_on_app_switch"`, `<option value="true" selected>`,
+		"applies after Restart recorder")
+	f := e.form()
+	f.Set("screenshot_min_gap_sec", "5")
+	f.Set("screenshot_idle_backstop_sec", "120")
+	f.Set("screen_change_sensitivity", "high")
+	f.Set("capture_on_app_switch", "false")
+	if rec := e.post("/settings", f, nil); rec.Code != 303 {
+		t.Fatalf("code %d %s", rec.Code, rec.Body)
+	}
+	if c := e.cfg; c.ScreenshotMinGapSec != 5 || c.ScreenshotIdleBackstopSec != 120 ||
+		c.ScreenChangeSensitivity != "high" || c.CaptureOnAppSwitch {
+		t.Fatalf("saved %+v", c)
+	}
+	mustContain(t, e.get("/settings").Body.String(), `<option value="high" selected>`, `<option value="false" selected>`)
+	for _, bad := range []struct{ key, val string }{
+		{"screenshot_min_gap_sec", "0"}, {"screenshot_min_gap_sec", "61"}, {"screenshot_min_gap_sec", "x"},
+		{"screenshot_idle_backstop_sec", "5"}, {"screenshot_idle_backstop_sec", "601"},
+		{"screen_change_sensitivity", "max"}, {"capture_on_app_switch", "maybe"},
+	} {
+		g := e.form()
+		g.Set(bad.key, bad.val)
+		rec := e.post("/settings", g, nil)
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), bad.key) {
+			t.Errorf("%s=%s: code %d", bad.key, bad.val, rec.Code)
+		}
+	}
+	if e.cfg.ScreenshotMinGapSec != 5 {
+		t.Fatalf("rejected form changed config: %+v", e.cfg)
+	}
+	// An older form without the fields keeps the current values.
+	if rec := e.post("/settings", e.form(), nil); rec.Code != 303 || e.cfg.ScreenshotIdleBackstopSec != 120 ||
+		e.cfg.ScreenChangeSensitivity != "high" || e.cfg.CaptureOnAppSwitch {
+		t.Fatalf("missing fields: %d, %+v", rec.Code, e.cfg)
+	}
+}

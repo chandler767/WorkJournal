@@ -173,3 +173,63 @@ func TestProcessIntervalDefaultAndValidation(t *testing.T) {
 		t.Fatalf("Load = %d, %v", got.ProcessIntervalMinutes, err)
 	}
 }
+
+func TestScreenCaptureDefaultsAndValidation(t *testing.T) {
+	c := Default()
+	if c.ScreenshotMinGapSec != 3 || c.ScreenshotIdleBackstopSec != 60 ||
+		c.ScreenChangeSensitivity != "medium" || !c.CaptureOnAppSwitch {
+		t.Fatalf("defaults: gap %d backstop %d sensitivity %q switch %v", c.ScreenshotMinGapSec,
+			c.ScreenshotIdleBackstopSec, c.ScreenChangeSensitivity, c.CaptureOnAppSwitch)
+	}
+	ok := []func(*Config){
+		func(c *Config) { c.ScreenshotMinGapSec = 1 },
+		func(c *Config) { c.ScreenshotMinGapSec = 60 },
+		func(c *Config) { c.ScreenshotIdleBackstopSec = 10 },
+		func(c *Config) { c.ScreenshotIdleBackstopSec = 600 },
+		func(c *Config) { c.ScreenChangeSensitivity = "low" },
+		func(c *Config) { c.ScreenChangeSensitivity = "high" },
+		func(c *Config) { c.CaptureOnAppSwitch = false },
+	}
+	for i, f := range ok {
+		c := Default()
+		f(&c)
+		if err := c.Validate(); err != nil {
+			t.Errorf("ok[%d] rejected: %v", i, err)
+		}
+	}
+	bad := []struct {
+		key string
+		f   func(*Config)
+	}{
+		{"screenshot_min_gap_sec", func(c *Config) { c.ScreenshotMinGapSec = 0 }},
+		{"screenshot_min_gap_sec", func(c *Config) { c.ScreenshotMinGapSec = 61 }},
+		{"screenshot_idle_backstop_sec", func(c *Config) { c.ScreenshotIdleBackstopSec = 9 }},
+		{"screenshot_idle_backstop_sec", func(c *Config) { c.ScreenshotIdleBackstopSec = 601 }},
+		{"screen_change_sensitivity", func(c *Config) { c.ScreenChangeSensitivity = "max" }},
+		{"screen_change_sensitivity", func(c *Config) { c.ScreenChangeSensitivity = "" }},
+	}
+	for _, b := range bad {
+		c := Default()
+		b.f(&c)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), b.key) {
+			t.Errorf("%s: accepted (err %v)", b.key, err)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "config.toml")
+	body := "screenshot_min_gap_sec = 5\nscreenshot_idle_backstop_sec = 120\nscreen_change_sensitivity = \"low\"\ncapture_on_app_switch = false\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil || got.ScreenshotMinGapSec != 5 || got.ScreenshotIdleBackstopSec != 120 ||
+		got.ScreenChangeSensitivity != "low" || got.CaptureOnAppSwitch {
+		t.Fatalf("Load = %+v, %v", got, err)
+	}
+	// An older config with only screenshot_interval_sec keeps the new defaults.
+	if err := os.WriteFile(p, []byte("screenshot_interval_sec = 10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Load(p); err != nil || got.ScreenshotIdleBackstopSec != 60 || !got.CaptureOnAppSwitch {
+		t.Fatalf("legacy Load = %+v, %v", got, err)
+	}
+}
