@@ -179,14 +179,15 @@ func runApp(ctx context.Context, cmd string, cfg config.Config, cfgPath string, 
 
 func defaultDoctorDeps(cfg config.Config, loc Locations) DoctorDeps {
 	return DoctorDeps{
-		Cfg:            cfg,
-		RecorderApp:    loc.RecorderApp(),
-		SkillsDir:      loc.SkillsDir,
-		LookPath:       exec.LookPath,
-		Stat:           os.Stat,
-		Glob:           filepath.Glob,
-		FreeGB:         func(p string) (float64, error) { return retention.FreeGB(nearestExisting(p)) },
-		SelfTest:       func(app string) error { return recorderSelfTest(app, execOpen) },
-		ClaudeResponds: func() error { return claudeResponds(media.ExecRunner) },
+		Cfg:               cfg,
+		RecorderApp:       loc.RecorderApp(),
+		SkillsDir:         loc.SkillsDir,
+		LookPath:          exec.LookPath,
+		Stat:              os.Stat,
+		Glob:              filepath.Glob,
+		FreeGB:            func(p string) (float64, error) { return retention.FreeGB(nearestExisting(p)) },
+		SelfTest:          func(app string) error { return recorderSelfTest(app, execOpen) },
+		ClaudeResponds:    func() error { return claudeResponds(media.ExecRunner) },
+		SpeakerSeparation: speakerSeparationWorks,
 	}
 }

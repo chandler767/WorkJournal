@@ -125,7 +125,11 @@ anywhere; diarization adds a few seconds per 5-minute chunk.
 
 - Models: `journal setup` downloads `sherpa-onnx-pyannote-segmentation-3-0/model.onnx`
   and `nemo_en_titanet_small.onnx` into `~/WorkJournal/models/`; `journal doctor` checks
-  them. Without them, system speech is labelled "others" (a warning is logged).
+  them, and that speaker separation works on a short synthesized two-voice recording.
+  Without them, system speech is labelled "others" (a warning is logged). When
+  diarization fails on more than half of an hour's chunks, `logs/serve.log` gets one
+  `WARNING: speaker separation failed …` line with the first error; failed chunks are
+  diarized again on the next pass.
 - Naming: on a meeting's page, name a speaker. While the meeting's raw audio still exists
   (`retention_days`), its chunks are diarized again, that speaker's voice embedding is
   saved as a voice profile in `voices/<name>.json`, and their lines in that meeting are

@@ -36,9 +36,10 @@ func okDeps() DoctorDeps {
 		Glob: func(pattern string) ([]string, error) {
 			return []string{strings.Replace(pattern, "*summarize-hour*", "tessl__summarize-hour", 1)}, nil
 		},
-		FreeGB:         func(string) (float64, error) { return 50, nil },
-		SelfTest:       func(string) error { return nil },
-		ClaudeResponds: func() error { return nil },
+		FreeGB:            func(string) (float64, error) { return 50, nil },
+		SelfTest:          func(string) error { return nil },
+		ClaudeResponds:    func() error { return nil },
+		SpeakerSeparation: func(string, string) error { return nil },
 	}
 }
 
@@ -72,7 +73,7 @@ func TestDoctorReportsMissingWhisper(t *testing.T) {
 
 func TestDoctorAllOK(t *testing.T) {
 	cs := RunChecks(okDeps())
-	want := []string{"whisper-cli", "whisper model", "speaker models", "claude", "claude responds", "skills", "recorder app", "recorder selftest", "free disk"}
+	want := []string{"whisper-cli", "whisper model", "speaker models", "speaker separation works", "claude", "claude responds", "skills", "recorder app", "recorder selftest", "free disk"}
 	if len(cs) != len(want) {
 		t.Fatalf("checks = %+v, want names %v", cs, want)
 	}
@@ -320,5 +321,54 @@ func TestClaudeRespondsProbe(t *testing.T) {
 	failing := func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("exit status 1") }
 	if err := claudeResponds(failing); err == nil {
 		t.Fatal("exec error accepted")
+	}
+}
+
+func TestDoctorSpeakerSeparationFailurePointsToLog(t *testing.T) {
+	d := okDeps()
+	var got []string
+	d.SpeakerSeparation = func(seg, emb string) error {
+		got = []string{seg, emb}
+		return errors.New("sherpa: cannot read mix.wav")
+	}
+	c := find(t, RunChecks(d), "speaker separation works")
+	if c.OK {
+		t.Fatal("reported OK")
+	}
+	for _, s := range []string{"sherpa: cannot read mix.wav", filepath.Join("/data", "logs", "serve.log"), "WARNING: speaker separation"} {
+		if !strings.Contains(c.Fix, s) {
+			t.Errorf("fix %q lacks %q", c.Fix, s)
+		}
+	}
+	if seg, emb := filepath.Join("/data", "models"), filepath.Join("/data", "models"); len(got) != 2 ||
+		!strings.HasPrefix(got[0], seg) || !strings.HasPrefix(got[1], emb) {
+		t.Errorf("SpeakerSeparation got models %v", got)
+	}
+}
+
+// Without the models, or with diarization off, there is nothing to try.
+func TestDoctorSpeakerSeparationSkipped(t *testing.T) {
+	for _, tc := range []string{"models missing", "diarization off"} {
+		d := okDeps()
+		called := false
+		d.SpeakerSeparation = func(string, string) error { called = true; return nil }
+		if tc == "models missing" {
+			d.Stat = func(p string) (fs.FileInfo, error) {
+				if strings.HasSuffix(p, ".onnx") {
+					return nil, fs.ErrNotExist
+				}
+				return fakeInfo{size: 1}, nil
+			}
+		} else {
+			d.Cfg.Diarization = "off"
+		}
+		for _, c := range RunChecks(d) {
+			if c.Name == "speaker separation works" {
+				t.Errorf("%s: check present: %+v", tc, c)
+			}
+		}
+		if called {
+			t.Errorf("%s: SpeakerSeparation called", tc)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -36,6 +37,9 @@ type DoctorDeps struct {
 	SelfTest    func(app string) error // runs `recorder selftest`; nil error means "selftest ok"
 	// ClaudeResponds runs a trivial headless prompt; nil means claude answered.
 	ClaudeResponds func() error
+	// SpeakerSeparation diarizes a short synthesized two-voice recording with
+	// the given models; nil means it found speaker turns.
+	SpeakerSeparation func(segModel, embModel string) error
 }
 
 const permissionsFix = "grant WorkJournalRecorder access in System Settings → Privacy & Security → " +
@@ -62,8 +66,19 @@ func RunChecks(d DoctorDeps) []Check {
 	if d.Cfg.Diarization == "sherpa" {
 		models := config.Paths{Root: d.Cfg.DataDir}.Models()
 		seg, emb := diarize.ModelPaths(models)
-		add("speaker models", nonEmpty(d.Stat, seg) && nonEmpty(d.Stat, emb),
+		haveModels := nonEmpty(d.Stat, seg) && nonEmpty(d.Stat, emb)
+		add("speaker models", haveModels,
 			"run `journal setup` to download the speaker diarization models into "+models)
+		if haveModels {
+			if err := d.SpeakerSeparation(seg, emb); err != nil {
+				logPath := filepath.Join(config.Paths{Root: d.Cfg.DataDir}.Logs(), "serve.log")
+				add("speaker separation works", false, fmt.Sprintf(
+					"%v: speakers will be unknown; look in %s for \"WARNING: speaker separation\" and \"diarize\" lines, "+
+						"run `journal setup` again if a model is damaged, or set diarization = \"off\"", err, logPath))
+			} else {
+				add("speaker separation works", true, "")
+			}
+		}
 	}
 
 	_, err = d.LookPath("claude")
@@ -184,6 +199,64 @@ func nearestExisting(path string) string {
 		}
 		path = parent
 	}
+}
+
+// speakerCheckTimeout bounds the "speaker separation works" check.
+const speakerCheckTimeout = 2 * time.Minute
+
+// speakerSeparationWorks runs the recording path end to end on about 6 s of
+// two synthesized voices: `say` → AAC .m4a (as the recorder writes) →
+// media.ToWav16k → the sherpa diarizer, which must find at least one turn.
+func speakerSeparationWorks(segModel, embModel string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), speakerCheckTimeout)
+	defer cancel()
+	dir, err := os.MkdirTemp("", "wj-doctor-speakers-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	run := media.ExecRunner
+	var pcm []byte
+	for i, l := range []struct{ voice, text string }{
+		{"Samantha", "Good morning, shall we start with the release plan?"},
+		{"Daniel", "Yes, the build is ready and the tests are passing."},
+	} {
+		aiff, wav := filepath.Join(dir, fmt.Sprintf("%d.aiff", i)), filepath.Join(dir, fmt.Sprintf("%d.wav", i))
+		if _, err := run(ctx, "say", "-v", l.voice, "-o", aiff, l.text); err != nil {
+			return err
+		}
+		if err := media.ToWav16k(ctx, run, aiff, wav); err != nil {
+			return err
+		}
+		b, err := media.ReadWav16k(wav)
+		if err != nil {
+			return err
+		}
+		pcm = append(append(pcm, b...), make([]byte, 16000)...) // 0.5 s gap
+	}
+	mix, m4a, wav := filepath.Join(dir, "mix.wav"), filepath.Join(dir, "mix.m4a"), filepath.Join(dir, "mix-16k.wav")
+	if err := media.WriteWav16k(mix, pcm); err != nil {
+		return err
+	}
+	if _, err := run(ctx, "afconvert", "-f", "m4af", "-d", "aac", mix, m4a); err != nil {
+		return err
+	}
+	if err := media.ToWav16k(ctx, run, m4a, wav); err != nil {
+		return err
+	}
+	d, err := diarize.NewSherpaDiarizer(segModel, embModel)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	turns, _, err := d.Diarize(ctx, wav)
+	if err != nil {
+		return err
+	}
+	if len(turns) == 0 {
+		return errors.New("diarizer found no speaker turns in a two-voice test recording")
+	}
+	return nil
 }
 
 // claudeProbeTimeout bounds the "claude responds" check.

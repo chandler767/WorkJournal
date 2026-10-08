@@ -183,3 +183,36 @@ func canonicalHeader(n int64) []byte {
 	le.PutUint32(h[40:], uint32(n))
 	return h
 }
+
+// ReadWav16k returns the sample bytes of a 16 kHz mono 16-bit PCM WAV,
+// plain or extensible.
+func ReadWav16k(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	off, n, _, err := parseWav16k(f, fi.Size())
+	if err != nil {
+		return nil, fmt.Errorf("wav %s: %w", path, err)
+	}
+	b := make([]byte, n)
+	if _, err := f.ReadAt(b, off); err != nil {
+		return nil, fmt.Errorf("wav %s: %w", path, err)
+	}
+	return b, nil
+}
+
+// WriteWav16k writes pcm (16 kHz mono 16-bit little-endian samples) as a
+// canonical PCM WAV.
+func WriteWav16k(path string, pcm []byte) error {
+	b := append(canonicalHeader(int64(len(pcm))), pcm...)
+	if len(pcm)%2 == 1 {
+		b = append(b, 0)
+	}
+	return os.WriteFile(path, b, 0o644)
+}

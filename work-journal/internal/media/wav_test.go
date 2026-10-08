@@ -184,3 +184,22 @@ func TestToWav16kRealM4AIsCanonical(t *testing.T) {
 		t.Fatalf("only %d bytes of samples", len(samples))
 	}
 }
+
+func TestWriteAndReadWav16k(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.wav")
+	samples := []byte{1, 0, 2, 0, 3, 0}
+	if err := WriteWav16k(path, samples); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	assertCanonical(t, b)
+	got, err := ReadWav16k(path)
+	if err != nil || !bytes.Equal(got, samples) {
+		t.Fatalf("ReadWav16k = % x, %v", got, err)
+	}
+	ext := filepath.Join(t.TempDir(), "ext.wav")
+	os.WriteFile(ext, riff(riffChunk("fmt ", fmtBody(0xFFFE, 1, 16000, 16, 40, pcmSubformat)), riffChunk("data", samples)), 0o644)
+	if got, err := ReadWav16k(ext); err != nil || !bytes.Equal(got, samples) {
+		t.Fatalf("ReadWav16k(extensible) = % x, %v", got, err)
+	}
+}
