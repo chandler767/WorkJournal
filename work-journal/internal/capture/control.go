@@ -29,9 +29,17 @@ type Control interface {
 	Status() (Status, error)
 	// Send issues a command that is answered with "ok" (e.g. screens_off, quit).
 	Send(cmd string) error
+	// Rotate finishes the current audio chunks (both tracks) and starts new
+	// ones; it returns once the finished files are fully written.
+	Rotate() error
 }
 
-const dialTimeout = 3 * time.Second
+// commandTimeout bounds dialing and answering an ordinary command;
+// rotateTimeout allows for the recorder finishing its audio files.
+var (
+	commandTimeout = 3 * time.Second
+	rotateTimeout  = 10 * time.Second
+)
 
 type socketControl struct{ sock string }
 
@@ -39,7 +47,7 @@ type socketControl struct{ sock string }
 func NewSocketControl(sock string) Control { return socketControl{sock: sock} }
 
 func (c socketControl) roundTrip(cmd string) (string, error) {
-	return roundTrip(c.sock, cmd, dialTimeout)
+	return roundTrip(c.sock, cmd, commandTimeout)
 }
 
 func roundTrip(sock, cmd string, timeout time.Duration) (string, error) {
@@ -61,8 +69,10 @@ func roundTrip(sock, cmd string, timeout time.Duration) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-func (c socketControl) Send(cmd string) error {
-	reply, err := c.roundTrip(cmd)
+func (c socketControl) Send(cmd string) error { return c.sendOK(cmd, commandTimeout) }
+
+func (c socketControl) sendOK(cmd string, timeout time.Duration) error {
+	reply, err := roundTrip(c.sock, cmd, timeout)
 	if err != nil {
 		return err
 	}
@@ -71,6 +81,8 @@ func (c socketControl) Send(cmd string) error {
 	}
 	return nil
 }
+
+func (c socketControl) Rotate() error { return c.sendOK("rotate", rotateTimeout) }
 
 func (c socketControl) Pause() error  { return c.Send("pause") }
 func (c socketControl) Resume() error { return c.Send("resume") }

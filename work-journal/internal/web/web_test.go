@@ -33,6 +33,7 @@ func (f *fakeControl) Status() (capture.Status, error) {
 	return capture.Status{State: "recording", Screens: true, Audio: true}, nil
 }
 func (f *fakeControl) Send(c string) error { f.sent = append(f.sent, c); return f.sendErr }
+func (f *fakeControl) Rotate() error       { return f.Send("rotate") }
 
 type fakeJobs struct {
 	reprocessed, closed, rolled []string

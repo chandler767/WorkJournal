@@ -31,6 +31,7 @@ type fakeControl struct {
 
 func (f *fakeControl) Pause() error  { return f.Send("pause") }
 func (f *fakeControl) Resume() error { return f.Send("resume") }
+func (f *fakeControl) Rotate() error { return f.Send("rotate") }
 func (f *fakeControl) Status() (capture.Status, error) {
 	return capture.Status{}, errors.New("no recorder")
 }

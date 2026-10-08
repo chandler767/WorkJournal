@@ -478,3 +478,69 @@ func TestQuitRunningRecorderThatStays(t *testing.T) {
 		t.Fatalf("found=%v err=%v, want a timeout error", found, err)
 	}
 }
+
+// Rotate waits for the recorder to finish writing the chunks, which can take
+// longer than the normal command timeout.
+func TestSocketControlRotateWaitsForSlowReply(t *testing.T) {
+	defer func(old time.Duration) { commandTimeout = old }(commandTimeout)
+	commandTimeout = 100 * time.Millisecond
+	sock := filepath.Join(shortSockDir(t), "r.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	got := make(chan string, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 64)
+			n, _ := c.Read(buf)
+			cmd := strings.TrimSpace(string(buf[:n]))
+			got <- cmd
+			time.Sleep(300 * time.Millisecond) // finishing the chunks
+			if cmd == "rotate" {
+				c.Write([]byte("ok\n"))
+			} else {
+				c.Write([]byte("error: unknown command\n"))
+			}
+			c.Close()
+		}
+	}()
+	ctl := NewSocketControl(sock)
+	if err := ctl.Rotate(); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if cmd := <-got; cmd != "rotate" {
+		t.Errorf("sent %q, want rotate", cmd)
+	}
+	if err := ctl.Send("pause"); err == nil {
+		t.Error("slow reply to an ordinary command should time out")
+	}
+}
+
+func TestSocketControlRotateReportsError(t *testing.T) {
+	sock := filepath.Join(shortSockDir(t), "r.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 64)
+		c.Read(buf)
+		c.Write([]byte("error: unknown command \"rotate\"\n"))
+		c.Close()
+	}()
+	err = NewSocketControl(sock).Rotate()
+	if err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("Rotate err = %v, want the recorder's error", err)
+	}
+}
