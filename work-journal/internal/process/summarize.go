@@ -253,7 +253,7 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 		if !ok {
 			continue
 		}
-		if err := s.saveMeeting(doc.Day, m, ms); err != nil {
+		if err := s.saveMeeting(doc.Day, m, ms, in.Transcript); err != nil {
 			return err
 		}
 		texts = append(texts, store.TextDoc{Kind: "meeting", Day: doc.Day, Hour: doc.Hour, TS: m.End, Text: meetingText(ms), Ref: "meeting/" + m.ID})
@@ -351,9 +351,11 @@ func segInput(i int, g activity.Segment, category *string) segmentInput {
 	return segmentInput{Index: i, App: g.App, Title: g.Title, Minutes: int(math.Round(g.End.Sub(g.Start).Minutes())), Category: category}
 }
 
-// speaker names the mic track "You", as the skills expect.
+// speaker names the user "You", as the skills expect: mic speech labelled
+// "me" (or not labelled). Mic speech diarized during an in-person meeting
+// keeps its speaker label.
 func speaker(u media.Utterance) string {
-	if u.Track == "mic" {
+	if u.Track == "mic" && (u.Speaker == "me" || u.Speaker == "") {
 		return "You"
 	}
 	return u.Speaker
@@ -428,8 +430,11 @@ func dedupe(texts []string) []string {
 }
 
 // saveMeeting stores the summary and the proposed participants, leaving any
-// participant the user already confirmed untouched.
-func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.MeetingSummary) error {
+// participant the user already confirmed untouched. A speaker label in the
+// transcript the skill left out (other than "others") is listed unnamed, so
+// every voice, such as one diarized in an in-person meeting, can be named on
+// the meeting page.
+func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.MeetingSummary, transcript []lineInput) error {
 	b, err := json.Marshal(ms)
 	if err != nil {
 		return err
@@ -456,6 +461,17 @@ func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.
 		if err := s.Store.SetParticipant(store.ParticipantRecord{MeetingID: m.ID, Speaker: p.Speaker, Name: p.Name, Confidence: p.Confidence}); err != nil {
 			return err
 		}
+	}
+	for _, l := range transcript {
+		if l.Speaker == "" || l.Speaker == "others" ||
+			slices.ContainsFunc(ms.Participants, func(p skills.Participant) bool { return p.Speaker == l.Speaker }) ||
+			slices.ContainsFunc(existing, func(e store.ParticipantRecord) bool { return e.Speaker == l.Speaker }) {
+			continue
+		}
+		if err := s.Store.SetParticipant(store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker}); err != nil {
+			return err
+		}
+		existing = append(existing, store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker})
 	}
 	return nil
 }

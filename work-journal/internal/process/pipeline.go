@@ -171,19 +171,31 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 		chunks, covered = readyChunks(all, chunks, upto, rotatedAt)
 		covered = earlier(covered, cut)
 	}
-	utts, embs, err := p.transcribeAudio(ctx, day, chunks, partial)
+	var wavs wavDir
+	defer wavs.close()
+	audio, err := p.loadAudio(ctx, day, chunks, partial, &wavs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	utts = audibleSpeech(segs, utts)
 	screens, err := p.ocrHour(ctx, day, start, cut, segs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	meetings, err := p.detectMeetings(day, hour, start, cut, events, utts)
+	meetings, err := p.detectMeetings(day, hour, start, cut, events, audibleSpeech(segs, speechOf(audio)))
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	var inPerson []activity.Meeting
+	for _, m := range meetings {
+		if m.App == activity.InPersonApp {
+			inPerson = append(inPerson, m)
+		}
+	}
+	utts, embs, err := p.labelAudio(ctx, day, audio, inPerson, &wavs)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	utts = audibleSpeech(segs, utts)
 	// Only the part of a segment inside a meeting is meeting time.
 	segs = activity.SplitAtMeetings(segs, meetings)
 

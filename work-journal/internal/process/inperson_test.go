@@ -1,0 +1,239 @@
+package process
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"slices"
+	"testing"
+
+	"workjournal/internal/activity"
+	"workjournal/internal/diarize"
+	"workjournal/internal/media"
+	"workjournal/internal/store"
+)
+
+// talk is mic speech: 7 s of every 10 s over [from, to) seconds of a chunk.
+func talk(prefix string, from, to int) []fu {
+	var out []fu
+	for s := from; s < to; s += 10 {
+		out = append(out, fu{float64(s), float64(s + 7), fmt.Sprintf("%s%d", prefix, s)})
+	}
+	return out
+}
+
+// inPersonFixture: hour 14 with the screen locked and ten minutes of dense
+// mic conversation (chunks 1400 and 1405), one system voice inside it, and a
+// lone mic remark at 14:20 after the conversation.
+func inPersonFixture(e *env) {
+	e.activity(old, ev(14, 0, "start"), ev(14, 0, "app", "loginwindow"), ev(14, 2, "idle"))
+	for _, f := range []string{"audio/1400-mic.m4a", "audio/1400-system.m4a", "audio/1405-mic.m4a", "audio/1415-mic.m4a"} {
+		e.file(f, old)
+	}
+	e.tr.utts["1400-mic"] = talk("a", 0, 300)
+	e.tr.utts["1405-mic"] = talk("b", 0, 300)
+	e.tr.utts["1415-mic"] = []fu{{300, 303, "lone remark"}, {400, 401, "You"}}
+	e.tr.utts["1400-system"] = []fu{{200, 203, "system voice"}}
+	e.dz.by["1400-mic"] = diar{
+		turns: []diarize.Turn{tn(0, 149, 0), tn(149, 300, 1)},
+		embs:  map[int][]float32{0: {1, 0, 0}, 1: {0, 1, 0}},
+	}
+	e.dz.by["1405-mic"] = diar{
+		turns: []diarize.Turn{tn(0, 300, 4)},
+		embs:  map[int][]float32{4: {0, 1, 0.05}}, // the same voice as 1400's cluster 1
+	}
+	e.dz.by["1400-system"] = diar{
+		turns: []diarize.Turn{tn(195, 210, 0)},
+		embs:  map[int][]float32{0: {0, 0, 1}},
+	}
+	if err := e.p.Voices.Enroll("me", []float32{1, 0, 0}); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestInPersonMicSpeechIsDiarized(t *testing.T) {
+	e := newEnv(t)
+	inPersonFixture(e)
+	doc, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 1 || doc.Meetings[0].App != activity.InPersonApp || doc.Meetings[0].ID != "2026-10-07-1400-in-person" {
+		t.Fatalf("meetings = %+v", doc.Meetings)
+	}
+	label := map[string]string{}
+	for _, u := range doc.Transcript {
+		label[u.Text] = u.Track + "/" + u.Speaker
+	}
+	want := map[string]string{
+		"a0":           "mic/me", // cluster 0 is the enrolled "me" voice
+		"a140":         "mic/me",
+		"a150":         "mic/Speaker 1",
+		"a290":         "mic/Speaker 1",
+		"b0":           "mic/Speaker 1", // matched across chunks within the hour
+		"b290":         "mic/Speaker 1",
+		"system voice": "system/Speaker 2", // shared numbering with mic speakers
+		"lone remark":  "mic/me",           // outside the meeting: not diarized
+	}
+	for text, w := range want {
+		if label[text] != w {
+			t.Errorf("%q labelled %q, want %q", text, label[text], w)
+		}
+	}
+	if _, ok := label["You"]; ok {
+		t.Errorf("isolated silence hallucination kept")
+	}
+	slices.Sort(e.dz.calls)
+	if !reflect.DeepEqual(e.dz.calls, []string{"1400-mic", "1400-system", "1405-mic"}) {
+		t.Errorf("diarized %v; the mic chunk outside the meeting must not be", e.dz.calls)
+	}
+	// Locked and idle time inside the meeting is split off for categorization.
+	var bounds []string
+	for _, s := range doc.Segments {
+		bounds = append(bounds, s.Start.Format("15:04:05")+"-"+s.End.Format("15:04:05")+" "+s.Kind)
+	}
+	end := doc.Meetings[0].End.Format("15:04:05")
+	if !slices.Contains(bounds, "14:02:00-"+end+" idle") || !slices.Contains(bounds, end+"-15:00:00 idle") {
+		t.Errorf("segments %v not split at the meeting end %s", bounds, end)
+	}
+
+	// The mic diarization is cached like the system chunks'.
+	e.resetCounts()
+	again, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.dz.calls) != 0 || len(e.tr.calls) != 0 {
+		t.Fatalf("cache miss: diarizer %v, whisper %v", e.dz.calls, e.tr.calls)
+	}
+	if !reflect.DeepEqual(speakers(again.Transcript), speakers(doc.Transcript)) {
+		t.Fatalf("cached labels differ")
+	}
+}
+
+func TestInPersonMicWithoutDiarizationStaysMe(t *testing.T) {
+	e := newEnv(t)
+	inPersonFixture(e)
+	e.p.Cfg.Diarization = "off"
+	doc, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range doc.Transcript {
+		if u.Track == "mic" && u.Speaker != "me" {
+			t.Fatalf("mic utterance %q labelled %q", u.Text, u.Speaker)
+		}
+	}
+	if len(doc.Meetings) != 1 {
+		t.Fatalf("meetings = %+v", doc.Meetings)
+	}
+}
+
+func TestSkillSpeakerNames(t *testing.T) {
+	for _, c := range []struct {
+		u    media.Utterance
+		want string
+	}{
+		{media.Utterance{Track: "mic", Speaker: "me"}, "You"},
+		{media.Utterance{Track: "mic", Speaker: ""}, "You"},
+		{media.Utterance{Track: "mic", Speaker: "Speaker 3"}, "Speaker 3"},
+		{media.Utterance{Track: "mic", Speaker: "Priya"}, "Priya"},
+		{media.Utterance{Track: "system", Speaker: "Speaker 1"}, "Speaker 1"},
+	} {
+		if got := speaker(c.u); got != c.want {
+			t.Errorf("speaker(%+v) = %q, want %q", c.u, got, c.want)
+		}
+	}
+}
+
+func mic(from, to int, speaker, text string) media.Utterance {
+	return media.Utterance{Start: at(14, 0, from), End: at(14, 0, to), Track: "mic", Speaker: speaker, Text: text}
+}
+
+func TestEnrollMicSpeakerInPersonMeeting(t *testing.T) {
+	e := newEnv(t)
+	e.file("audio/1400-mic.m4a", old)
+	e.file("audio/1400-system.m4a", old)
+	doc := &HourDoc{
+		Day: day, Hour: 14, Status: store.StatusDone,
+		Transcript: []media.Utterance{
+			mic(1, 5, "Speaker 1", "my point"),
+			mic(10, 20, "Speaker 2", "their point"),
+			mic(30, 35, "Speaker 1", "my second point"),
+			sys(at(14, 0, 40), at(14, 0, 45), "Speaker 1", "unrelated system speech"),
+		},
+	}
+	if err := doc.Save(e.paths.DerivedHour(day, 14)); err != nil {
+		t.Fatal(err)
+	}
+	m := store.MeetingRecord{ID: "2026-10-07-1400-in-person", Day: day, Start: at(14, 0, 0), End: at(14, 20, 0), App: activity.InPersonApp}
+	if err := e.st.UpsertMeeting(m); err != nil {
+		t.Fatal(err)
+	}
+	e.dz.by["1400-mic"] = diar{
+		turns: []diarize.Turn{tn(0, 6, 0), tn(9, 21, 1), tn(29, 36, 0)},
+		embs:  map[int][]float32{0: {3, 0, 0}, 1: {0, 2, 0}},
+	}
+	if err := e.p.EnrollSpeaker(context.Background(), m, "Speaker 1", "me"); err != nil {
+		t.Fatal(err)
+	}
+	if name, _, ok := e.p.Voices.Match([]float32{1, 0, 0}); !ok || name != "me" {
+		t.Fatalf("voice not enrolled from the mic track: %q %v", name, ok)
+	}
+	if !reflect.DeepEqual(e.dz.calls, []string{"1400-mic"}) {
+		t.Fatalf("diarized %v, want only the mic chunk", e.dz.calls)
+	}
+	got, err := Load(e.paths.DerivedHour(day, 14))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"me: my point", "Speaker 2: their point", "me: my second point", "Speaker 1: unrelated system speech"}
+	if s := speakers(got.Transcript); !reflect.DeepEqual(s, want) {
+		t.Fatalf("transcript = %q", s)
+	}
+}
+
+func TestInPersonMeetingSummaryListsMicSpeakers(t *testing.T) {
+	e := newSumEnv(t)
+	m := activity.Meeting{ID: "2026-10-07-1400-in-person", Start: at(14, 0, 0), End: at(14, 20, 0), App: activity.InPersonApp}
+	doc := &HourDoc{Day: day, Hour: 14,
+		Segments: []activity.Segment{sg(activity.KindIdle, "loginwindow", "", 14, 0, 60)},
+		Transcript: []media.Utterance{
+			mic(1, 5, "me", "let's start"),
+			mic(10, 20, "Speaker 1", "the budget is approved"),
+			mic(30, 35, "Speaker 2", "great"),
+		},
+		Meetings:      []activity.Meeting{m},
+		EndedMeetings: []string{m.ID},
+	}
+	e.transcribed(doc)
+	e.fk.out["summarize-hour"] = hourOut
+	// The skill forgets Speaker 2; the meeting page must still list it.
+	e.fk.out["summarize-meeting"] = `{"participants":[{"speaker":"You","name":"","confidence":1},{"speaker":"Speaker 1","name":"","confidence":0}],` +
+		`"summary":"Budget approved.","decisions":[],"action_items":[]}`
+	if err := e.s.SummarizeHour(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	mc := e.fk.calls[1]
+	if mc.skill != "summarize-meeting" || mc.input["meeting"].(map[string]any)["app"] != "In person" {
+		t.Fatalf("meeting call %s input %v", mc.skill, mc.input)
+	}
+	var lines []string
+	for _, l := range mc.input["transcript"].([]any) {
+		lines = append(lines, l.(map[string]any)["speaker"].(string))
+	}
+	if !reflect.DeepEqual(lines, []string{"You", "Speaker 1", "Speaker 2"}) {
+		t.Fatalf("transcript speakers = %v", lines)
+	}
+	ps, err := e.st.Participants(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range ps {
+		got = append(got, p.Speaker)
+	}
+	if !reflect.DeepEqual(got, []string{"Speaker 1", "Speaker 2", "You"}) {
+		t.Fatalf("participants = %v", got)
+	}
+}

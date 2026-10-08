@@ -89,13 +89,30 @@ started in a terminal first. The PATH captured when you run `autostart on` is us
 `whisper-cli` and `claude`, so run it from a normal terminal. Use the menu-bar Pause to stop
 recording temporarily; quitting the recorder from its menu only restarts it.
 
+## Meetings
+
+A meeting is time in a meeting app or window (`meeting_apps`, `meeting_title_keywords`), a
+call where your mic and the system audio both carry speech (`meeting_min_two_way_minutes`),
+or an **in-person** meeting: a conversation only your mic hears, where speech fills at least
+`in_person_speech_ratio` (0.4) of a rolling 5-minute window for at least
+`in_person_min_minutes` (5; pauses under 2 minutes do not split it). A locked or idle screen
+does not stop detection. In-person meetings show as "In person"; an app or call meeting
+covering the same time wins. All active, idle and locked-screen time inside any meeting is
+categorized **Meetings**; paused, excluded and off time stays uncounted.
+
+Isolated "You", "Thank you", "Bye" and similar lines that whisper invents on silence are
+dropped; the same words next to real speech are kept.
+
 ## Speaker identification
 
 With `diarization = "sherpa"` (the default), each system-audio chunk is split into speaker
 turns locally with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): pyannote
 segmentation 3.0 finds the turns and NeMo TitaNet-small gives each speaker a voice
-embedding. Your microphone is always "me". Other voices are labelled `Speaker 1`,
-`Speaker 2`, … within each hour, or by name once you have named them. Nothing is sent
+embedding. Your microphone is "me", except during an in-person meeting: there the mic
+is diarized too, since everyone in the room is on it. Other voices are labelled `Speaker 1`,
+`Speaker 2`, … within each hour (one numbering for both tracks), or by name once you have
+named them. To be "me" in in-person meetings, name your own voice exactly `me` once on an
+in-person meeting's page. Nothing is sent
 anywhere; diarization adds a few seconds per 5-minute chunk.
 
 - Models: `journal setup` downloads `sherpa-onnx-pyannote-segmentation-3-0/model.onnx`

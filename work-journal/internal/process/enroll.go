@@ -18,26 +18,29 @@ import (
 	"workjournal/internal/store"
 )
 
-// ErrNoRawAudio means none of a meeting's system audio chunks is left on
-// disk (retention removed them), so no voice can be learned.
-var ErrNoRawAudio = errors.New("no raw system audio left for the meeting")
+// ErrNoRawAudio means none of the meeting's audio chunks on the speaker's
+// track is left on disk (retention removed them), so no voice can be learned.
+var ErrNoRawAudio = errors.New("no raw audio left for the meeting")
 
 // EnrollSpeaker learns the voice of the meeting participant labelled
-// speaker and names it. Each system chunk overlapping the meeting is
-// diarized again; in each, the cluster whose turns best overlap the
+// speaker and names it. The speaker's track is where the label appears
+// within the meeting: the system track for a call, the mic track for a
+// speaker diarized during an in-person meeting (see speakerTrack). Each chunk
+// of that track overlapping the meeting is diarized again; in each, the cluster whose turns best overlap the
 // utterances labelled speaker contributes its embedding (unit-normalized).
 // "Speaker N" labels are only consistent within one hour (Ruling 17), so the
 // embeddings are grouped by hour (Ruling 37): the hour with the most speech
 // under the label is the anchor, and only hours whose averaged embedding has
 // cosine >= VoiceMatchThreshold with the anchor's are kept. The kept
-// embeddings are averaged and enrolled as name, and the speaker's system
-// utterances within the meeting are relabelled name in the kept hours only,
+// embeddings are averaged and enrolled as name, and the speaker's
+// utterances on that track within the meeting are relabelled name in the kept hours only,
 // whose text is then indexed again.
 func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, speaker, name string) error {
 	if p.Diarizer == nil || p.Voices == nil {
 		return errors.New("enroll: no diarizer or voice store configured")
 	}
-	chunks, err := p.meetingChunks(m)
+	track := p.speakerTrack(m, speaker)
+	chunks, err := p.meetingChunks(m, track)
 	if err != nil {
 		return err
 	}
@@ -66,7 +69,7 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 		}
 		var spans [][2]float64 // the speaker's utterances, seconds from chunk start
 		for _, u := range doc.Transcript {
-			if u.Track == "system" && u.Speaker == speaker && inMeeting(m, u) &&
+			if u.Track == track && u.Speaker == speaker && inMeeting(m, u) &&
 				!u.Start.Before(c.start) && u.Start.Before(c.end) {
 				spans = append(spans, [2]float64{u.Start.Sub(c.start).Seconds(), u.End.Sub(c.start).Seconds()})
 			}
@@ -115,7 +118,7 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 	if len(byHour) == 0 {
 		return fmt.Errorf("enroll: no voice found for %q in the meeting's remaining audio", speaker)
 	}
-	kept := p.matchingHours(m, speaker, docs, byHour)
+	kept := p.matchingHours(m, track, speaker, docs, byHour)
 	var embs [][]float32
 	for _, k := range kept {
 		embs = append(embs, byHour[k]...)
@@ -123,13 +126,36 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 	if err := p.Voices.Enroll(name, mean(embs)); err != nil {
 		return err
 	}
-	return p.relabel(m, speaker, name, kept)
+	return p.relabel(m, track, speaker, name, kept)
+}
+
+// speakerTrack is the track ("system" or "mic") with the most speech
+// labelled speaker within the meeting, in the derived hours the meeting
+// touches; "system" when the label is found on neither.
+func (p *Pipeline) speakerTrack(m store.MeetingRecord, speaker string) string {
+	per := map[string]time.Duration{}
+	s := m.Start.In(time.Local)
+	for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, time.Local); t.Before(m.End) || t.Equal(m.End); t = t.Add(time.Hour) {
+		doc, err := Load(p.Paths.DerivedHour(config.DayKey(t), t.Hour()))
+		if err != nil {
+			continue
+		}
+		for _, u := range doc.Transcript {
+			if u.Speaker == speaker && inMeeting(m, u) {
+				per[u.Track] += u.End.Sub(u.Start)
+			}
+		}
+	}
+	if per["mic"] > per["system"] {
+		return "mic"
+	}
+	return "system"
 }
 
 // matchingHours picks the anchor hour (the most speech under speaker within
 // the meeting; the earliest on a tie) and returns, in time order, the hours
 // whose averaged embedding matches the anchor's at VoiceMatchThreshold.
-func (p *Pipeline) matchingHours(m store.MeetingRecord, speaker string, docs map[HourKey]*HourDoc, byHour map[HourKey][][]float32) []HourKey {
+func (p *Pipeline) matchingHours(m store.MeetingRecord, track, speaker string, docs map[HourKey]*HourDoc, byHour map[HourKey][][]float32) []HourKey {
 	var keys []HourKey
 	for k := range byHour {
 		keys = append(keys, k)
@@ -140,7 +166,7 @@ func (p *Pipeline) matchingHours(m store.MeetingRecord, speaker string, docs map
 	speech := func(k HourKey) time.Duration {
 		var d time.Duration
 		for _, u := range docs[k].Transcript {
-			if u.Track == "system" && u.Speaker == speaker && inMeeting(m, u) {
+			if u.Track == track && u.Speaker == speaker && inMeeting(m, u) {
 				d += u.End.Sub(u.Start)
 			}
 		}
@@ -169,10 +195,10 @@ type timedChunk struct {
 	start, end time.Time
 }
 
-// meetingChunks returns the system chunks still on disk that overlap the
+// meetingChunks returns the chunks of track still on disk that overlap the
 // meeting. A chunk ends chunk_minutes after its start, or at the next
-// system chunk's start if that is earlier.
-func (p *Pipeline) meetingChunks(m store.MeetingRecord) ([]timedChunk, error) {
+// chunk's start on the track if that is earlier.
+func (p *Pipeline) meetingChunks(m store.MeetingRecord, track string) ([]timedChunk, error) {
 	length := time.Duration(p.Cfg.AudioChunkMinutes) * time.Minute
 	var out []timedChunk
 	for _, day := range meetingDays(m) {
@@ -180,16 +206,16 @@ func (p *Pipeline) meetingChunks(m store.MeetingRecord) ([]timedChunk, error) {
 		if err != nil {
 			return nil, err
 		}
-		var sys []chunk
+		var onTrack []chunk
 		for _, c := range all {
-			if c.track == "system" {
-				sys = append(sys, c)
+			if c.track == track {
+				onTrack = append(onTrack, c)
 			}
 		}
-		for i, c := range sys {
+		for i, c := range onTrack {
 			end := c.start.Add(length)
-			if i+1 < len(sys) && sys[i+1].start.Before(end) {
-				end = sys[i+1].start
+			if i+1 < len(onTrack) && onTrack[i+1].start.Before(end) {
+				end = onTrack[i+1].start
 			}
 			if c.start.Before(m.End) && end.After(m.Start) {
 				out = append(out, timedChunk{path: c.path, start: c.start, end: end})
@@ -215,9 +241,9 @@ func inMeeting(m store.MeetingRecord, u media.Utterance) bool {
 	return !u.Start.Before(m.Start) && !u.Start.After(m.End)
 }
 
-// relabel renames speaker to name on the meeting's system utterances in
+// relabel renames speaker to name on the meeting's utterances on track in
 // the given hours, saving each changed doc and indexing its text again.
-func (p *Pipeline) relabel(m store.MeetingRecord, speaker, name string, hours []HourKey) error {
+func (p *Pipeline) relabel(m store.MeetingRecord, track, speaker, name string, hours []HourKey) error {
 	for _, k := range hours {
 		path := p.Paths.DerivedHour(k.Day, k.Hour)
 		doc, err := Load(path)
@@ -226,7 +252,7 @@ func (p *Pipeline) relabel(m store.MeetingRecord, speaker, name string, hours []
 		}
 		changed := false
 		for i, u := range doc.Transcript {
-			if u.Track == "system" && u.Speaker == speaker && inMeeting(m, u) {
+			if u.Track == track && u.Speaker == speaker && inMeeting(m, u) {
 				doc.Transcript[i].Speaker = name
 				changed = true
 			}
