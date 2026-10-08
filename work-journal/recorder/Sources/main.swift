@@ -24,7 +24,7 @@ func runPolicyTests() -> Int32 {
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
-    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + [
+    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + restartChecks() + [
         ("excluded app 1Password", isExcluded(app: "1Password", title: "", c)),
         ("excluded app case-insensitive", isExcluded(app: "1password", title: "", c)),
         ("excluded title Private Browsing", isExcluded(app: "Safari", title: "Private Browsing — x", c)),
@@ -78,6 +78,29 @@ func runPolicyTests() -> Int32 {
     if failed > 0 { return 1 }
     print("run-tests ok (\(checks.count) checks)")
     return 0
+}
+
+/// Capture restart debounce (display changes come in bursts) and stop-error backoff.
+func restartChecks() -> [(String, Bool)] {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    var d = RestartDebounce(delay: 2)
+    let idle = d.wait(from: t0) == nil && !d.fire(at: t0)
+    d.request(at: t0)
+    d.request(at: t0.addingTimeInterval(1.5)) // a second notification in the burst pushes it back
+    let notYet = !d.fire(at: t0.addingTimeInterval(3)) && d.wait(from: t0.addingTimeInterval(3)) == 0.5
+    let fires = d.fire(at: t0.addingTimeInterval(3.5))
+    let once = !d.fire(at: t0.addingTimeInterval(10)) && d.wait(from: t0.addingTimeInterval(10)) == nil
+    return [
+        ("restart debounce idle", idle),
+        ("restart debounce waits for the burst to end", notYet),
+        ("restart debounce fires after the delay", fires),
+        ("restart debounce fires once", once),
+        ("first stop error restarts fast", stopErrorRestartDelay(now: t0, lastFast: nil) == 2),
+        ("stop error long after the last fast restart restarts fast",
+         stopErrorRestartDelay(now: t0, lastFast: t0.addingTimeInterval(-61)) == 2),
+        ("repeated stop errors back off to 30 s",
+         stopErrorRestartDelay(now: t0, lastFast: t0.addingTimeInterval(-10)) == 30),
+    ]
 }
 
 /// Control-socket ownership: a live listener is detected and never unlinked; a stale socket

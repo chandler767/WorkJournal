@@ -85,3 +85,32 @@ func arrangementOrder(_ frames: [CGRect]) -> [Int] {
         return fa.minX != fb.minX ? fa.minX < fb.minX : fa.minY < fb.minY
     }
 }
+
+/// Debounces capture restarts: display changes arrive in bursts, so a restart fires once,
+/// `delay` after the last request.
+struct RestartDebounce {
+    let delay: TimeInterval
+    private(set) var deadline: Date?
+
+    init(delay: TimeInterval) { self.delay = delay }
+
+    mutating func request(at now: Date) { deadline = now.addingTimeInterval(delay) }
+
+    /// Seconds until the pending restart is due (0 when overdue), nil when none is pending.
+    func wait(from now: Date) -> TimeInterval? { deadline.map { max(0, $0.timeIntervalSince(now)) } }
+
+    /// True once `now` reaches the deadline; clears it so each burst fires once.
+    mutating func fire(at now: Date) -> Bool {
+        guard let d = deadline, now >= d else { return false }
+        deadline = nil
+        return true
+    }
+}
+
+/// Delay before restarting after the stream stopped with an error (or every screenshot
+/// failed): a quick 2 s re-query the first time (typically a display was connected or
+/// removed), then the 30 s retry while the fast path keeps failing within a minute.
+func stopErrorRestartDelay(now: Date, lastFast: Date?) -> TimeInterval {
+    if let l = lastFast, now.timeIntervalSince(l) < 60 { return 30 }
+    return 2
+}
