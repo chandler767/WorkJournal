@@ -89,3 +89,19 @@ func (s *Store) Participants(meetingID string) ([]ParticipantRecord, error) {
 	}
 	return out, rows.Err()
 }
+
+// DeleteMeeting removes the meeting and its participants.
+func (s *Store) DeleteMeeting(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM participants WHERE meeting_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM meetings WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

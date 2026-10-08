@@ -96,12 +96,20 @@ call where your mic and the system audio both carry speech (`meeting_min_two_way
 or an **in-person** meeting: a conversation only your mic hears, where speech fills at least
 `in_person_speech_ratio` (0.4) of a rolling 5-minute window for at least
 `in_person_min_minutes` (5; pauses under 2 minutes do not split it). A locked or idle screen
-does not stop detection. In-person meetings show as "In person"; an app or call meeting
-covering the same time wins. All active, idle and locked-screen time inside any meeting is
-categorized **Meetings**; paused, excluded and off time stays uncounted.
+does not stop detection. With speaker identification on, an in-person meeting also needs
+at least two voices on the mic; one voice (dictation, or your side of a call on another
+device) is not a meeting and stays "me". A TV or a speakerphone on another device can still
+look like an in-person meeting. In-person meetings show as "In person". An app or call meeting
+wins over the same time: a short call during a conversation splits it, and each remaining part
+of at least `in_person_min_minutes` is its own in-person meeting. A meeting that is no longer
+detected when its hour is processed again is removed, unless you confirmed a participant's name.
+
+All active, idle and locked-screen time inside any meeting (app, call or in person) is
+categorized **Meetings**, ahead of your own `[rules]`; paused, excluded and off time stays
+uncounted.
 
 Isolated "You", "Thank you", "Bye" and similar lines that whisper invents on silence are
-dropped; the same words next to real speech are kept.
+dropped; the same words within 3 s of real speech on either track are kept.
 
 ## Speaker identification
 
@@ -111,8 +119,8 @@ segmentation 3.0 finds the turns and NeMo TitaNet-small gives each speaker a voi
 embedding. Your microphone is "me", except during an in-person meeting: there the mic
 is diarized too, since everyone in the room is on it. Other voices are labelled `Speaker 1`,
 `Speaker 2`, … within each hour (one numbering for both tracks), or by name once you have
-named them. To be "me" in in-person meetings, name your own voice exactly `me` once on an
-in-person meeting's page. Nothing is sent
+named them; in-meeting mic speech no speaker turn covers is `Speaker ?`. To be "me" in
+in-person meetings, name your own voice exactly `me` once on an in-person meeting's page. Nothing is sent
 anywhere; diarization adds a few seconds per 5-minute chunk.
 
 - Models: `journal setup` downloads `sherpa-onnx-pyannote-segmentation-3-0/model.onnx`

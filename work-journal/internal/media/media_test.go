@@ -301,7 +301,32 @@ func TestDropHallucinations(t *testing.T) {
 	}
 }
 
-func TestWhisperDropsIsolatedSilenceHallucinations(t *testing.T) {
+func TestDropHallucinationsConsidersBothTracks(t *testing.T) {
+	base := time.Date(2026, 10, 8, 14, 0, 0, 0, time.UTC)
+	u := func(from, to float64, track, text string) Utterance {
+		return Utterance{Start: base.Add(time.Duration(from * float64(time.Second))), End: base.Add(time.Duration(to * float64(time.Second))), Track: track, Text: text}
+	}
+	in := []Utterance{
+		u(0, 5, "system", "Here is the final number."),
+		u(6, 7, "mic", "Thank you."), // the other side just spoke: real
+		u(30, 31, "mic", "Bye."),     // nothing on either track: hallucination
+		u(50, 52, "system", "you"),   // isolated on both tracks
+		u(60, 64, "mic", "See you then."),
+		u(65, 66, "system", "Bye."), // reply to the mic: real
+	}
+	var got []string
+	for _, k := range DropHallucinations(in) {
+		got = append(got, k.Track+":"+k.Text)
+	}
+	want := []string{"system:Here is the final number.", "mic:Thank you.", "mic:See you then.", "system:Bye."}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("kept %q, want %q", got, want)
+	}
+}
+
+// Whisper keeps silence phrases: whether one is isolated depends on the other
+// track too, so the pipeline filters the whole hour (DropHallucinations).
+func TestWhisperKeepsSilencePhrasesForHourFilter(t *testing.T) {
 	type seg struct {
 		Offsets struct {
 			From int64 `json:"from"`
@@ -338,7 +363,7 @@ func TestWhisperDropsIsolatedSilenceHallucinations(t *testing.T) {
 	for _, u := range us {
 		got = append(got, u.Text)
 	}
-	want := []string{"Let's review the doc.", "Thank you."}
+	want := []string{"You", "Let's review the doc.", "Thank you.", "you"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("kept %q, want %q", got, want)
 	}

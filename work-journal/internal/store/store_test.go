@@ -262,3 +262,30 @@ func TestDayRevAndHourRev(t *testing.T) {
 		t.Error("HourRev unchanged after summary change")
 	}
 }
+
+func TestDeleteMeetingRemovesParticipants(t *testing.T) {
+	s := openTest(t)
+	for _, id := range []string{"m1", "m2"} {
+		if err := s.UpsertMeeting(MeetingRecord{ID: id, Day: "2026-10-07", Start: at("2026-10-07", 9, 0), End: at("2026-10-07", 9, 30)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetParticipant(ParticipantRecord{MeetingID: id, Speaker: "S1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteMeeting("m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.Meeting("m1"); ok {
+		t.Fatal("m1 still there")
+	}
+	if ps, err := s.Participants("m1"); err != nil || len(ps) != 0 {
+		t.Fatalf("m1 participants = %+v %v", ps, err)
+	}
+	if _, ok, _ := s.Meeting("m2"); !ok {
+		t.Fatal("m2 deleted")
+	}
+	if ps, _ := s.Participants("m2"); len(ps) != 1 {
+		t.Fatalf("m2 participants = %+v", ps)
+	}
+}

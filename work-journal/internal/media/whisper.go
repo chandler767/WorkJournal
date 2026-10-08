@@ -42,8 +42,8 @@ type whisperOutput struct {
 
 // Transcribe implements Transcriber. Mic utterances get Speaker "me"; system
 // utterances are left without a speaker for later diarization. Non-speech
-// tags and isolated silence hallucinations (see DropHallucinations) are
-// dropped.
+// tags are dropped; silence phrases are kept, because whether one is
+// isolated depends on both tracks (see DropHallucinations).
 func (w Whisper) Transcribe(ctx context.Context, wav string, chunkStart time.Time, track string) ([]Utterance, error) {
 	prefix := strings.TrimSuffix(wav, ".wav")
 	if _, err := w.Run(ctx, w.Bin, "-m", w.Model, "-f", wav, "-oj", "-of", prefix, "-np"); err != nil {
@@ -75,7 +75,7 @@ func (w Whisper) Transcribe(ctx context.Context, wav string, chunkStart time.Tim
 			Text:    text,
 		})
 	}
-	return DropHallucinations(us), nil
+	return us, nil
 }
 
 // silencePhrases are whole-segment texts whisper is known to hallucinate on
@@ -89,12 +89,13 @@ var silencePhrases = map[string]bool{
 // silence phrase to count as real speech.
 const hallucinationWindow = 3 * time.Second
 
-// DropHallucinations removes whisper's silence hallucinations from the
-// utterances of one chunk: a segment whose whole text (case-insensitive,
-// punctuation stripped) is a known silence phrase such as "You" or "Thank
-// you." is dropped when no other kept segment (one that is not such a
-// phrase) lies within 3 s of it. A phrase next to real speech is kept. Order
-// is preserved.
+// DropHallucinations removes whisper's silence hallucinations from us, which
+// should hold all speech of both tracks over the span (an hour): a segment
+// whose whole text (case-insensitive, punctuation stripped) is a known
+// silence phrase such as "You" or "Thank you." is dropped when no other
+// segment that is not such a phrase, on either track, lies within 3 s of it.
+// A phrase next to real speech, such as a "Thank you." right after the other
+// side spoke, is kept. Order is preserved.
 func DropHallucinations(us []Utterance) []Utterance {
 	cand := make([]bool, len(us))
 	for i, u := range us {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -191,9 +192,22 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 			inPerson = append(inPerson, m)
 		}
 	}
-	utts, embs, err := p.labelAudio(ctx, day, audio, inPerson, &wavs)
+	lab, err := p.labelAudio(ctx, day, audio, inPerson, &wavs)
 	if err != nil {
 		return nil, time.Time{}, err
+	}
+	utts, embs := lab.utts, lab.embs
+	for _, m := range inPerson {
+		if p.keepInPerson(day, hour, m, lab) {
+			continue
+		}
+		// One voice is dictation or a call on another device, not a meeting.
+		meetings = slices.DeleteFunc(meetings, func(x activity.Meeting) bool { return x.ID == m.ID })
+		for i, u := range utts {
+			if u.Track == "mic" && inMeetingSpan(m, u) {
+				utts[i].Speaker = "me"
+			}
+		}
 	}
 	utts = audibleSpeech(segs, utts)
 	// Only the part of a segment inside a meeting is meeting time.
@@ -222,7 +236,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 // record stores doc: meetings, segments, indexed text, the derived JSON and
 // the hour record with doc.Status and summaryJSON.
 func (p *Pipeline) record(doc *HourDoc, summaryJSON string) error {
-	if err := p.upsertMeetings(doc.Day, doc.Meetings); err != nil {
+	if err := p.upsertMeetings(doc); err != nil {
 		return err
 	}
 	if err := p.Store.ReplaceSegments(doc.Day, doc.Hour, segmentRecords(doc.Day, doc.Hour, doc.Segments)); err != nil {

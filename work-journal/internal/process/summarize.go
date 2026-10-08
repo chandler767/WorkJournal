@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -429,11 +430,15 @@ func dedupe(texts []string) []string {
 	return out
 }
 
+// anonLabel matches the labels of unnamed voices.
+var anonLabel = regexp.MustCompile(`^Speaker \d+$`)
+
 // saveMeeting stores the summary and the proposed participants, leaving any
 // participant the user already confirmed untouched. A speaker label in the
-// transcript the skill left out (other than "others") is listed unnamed, so
-// every voice, such as one diarized in an in-person meeting, can be named on
-// the meeting page.
+// transcript the skill left out is listed too, so every voice, such as one
+// diarized in an in-person meeting, can be named on the meeting page:
+// "Speaker N" unnamed, a label that is already a name (a known voice) with
+// that name. "others" and "Speaker ?" are not voices and are skipped.
 func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.MeetingSummary, transcript []lineInput) error {
 	b, err := json.Marshal(ms)
 	if err != nil {
@@ -463,12 +468,17 @@ func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.
 		}
 	}
 	for _, l := range transcript {
-		if l.Speaker == "" || l.Speaker == "others" ||
+		if l.Speaker == "" || l.Speaker == "others" || l.Speaker == unknownSpeaker ||
 			slices.ContainsFunc(ms.Participants, func(p skills.Participant) bool { return p.Speaker == l.Speaker }) ||
 			slices.ContainsFunc(existing, func(e store.ParticipantRecord) bool { return e.Speaker == l.Speaker }) {
 			continue
 		}
-		if err := s.Store.SetParticipant(store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker}); err != nil {
+		rec := store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker}
+		if !anonLabel.MatchString(l.Speaker) && l.Speaker != "You" && l.Speaker != "me" {
+			// Already a name: a voice matched to a profile.
+			rec.Name, rec.Confidence = l.Speaker, 1
+		}
+		if err := s.Store.SetParticipant(rec); err != nil {
 			return err
 		}
 		existing = append(existing, store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker})

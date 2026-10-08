@@ -35,7 +35,7 @@ func inPersonFixture(e *env) {
 	e.tr.utts["1415-mic"] = []fu{{300, 303, "lone remark"}, {400, 401, "You"}}
 	e.tr.utts["1400-system"] = []fu{{200, 203, "system voice"}}
 	e.dz.by["1400-mic"] = diar{
-		turns: []diarize.Turn{tn(0, 149, 0), tn(149, 300, 1)},
+		turns: []diarize.Turn{tn(0, 140, 0), tn(150, 300, 1)}, // a140 (140-147 s) falls between turns
 		embs:  map[int][]float32{0: {1, 0, 0}, 1: {0, 1, 0}},
 	}
 	e.dz.by["1405-mic"] = diar{
@@ -67,7 +67,8 @@ func TestInPersonMicSpeechIsDiarized(t *testing.T) {
 	}
 	want := map[string]string{
 		"a0":           "mic/me", // cluster 0 is the enrolled "me" voice
-		"a140":         "mic/me",
+		"a130":         "mic/me",
+		"a140":         "mic/Speaker ?", // in the meeting but no diarizer turn
 		"a150":         "mic/Speaker 1",
 		"a290":         "mic/Speaker 1",
 		"b0":           "mic/Speaker 1", // matched across chunks within the hour
@@ -138,6 +139,7 @@ func TestSkillSpeakerNames(t *testing.T) {
 		{media.Utterance{Track: "mic", Speaker: ""}, "You"},
 		{media.Utterance{Track: "mic", Speaker: "Speaker 3"}, "Speaker 3"},
 		{media.Utterance{Track: "mic", Speaker: "Priya"}, "Priya"},
+		{media.Utterance{Track: "mic", Speaker: "Speaker ?"}, "Speaker ?"},
 		{media.Utterance{Track: "system", Speaker: "Speaker 1"}, "Speaker 1"},
 	} {
 		if got := speaker(c.u); got != c.want {
@@ -202,6 +204,8 @@ func TestInPersonMeetingSummaryListsMicSpeakers(t *testing.T) {
 			mic(1, 5, "me", "let's start"),
 			mic(10, 20, "Speaker 1", "the budget is approved"),
 			mic(30, 35, "Speaker 2", "great"),
+			mic(40, 45, "Priya", "I'll send it"),      // a known voice the skill left out
+			mic(50, 52, "Speaker ?", "unclear words"), // no voice: never a participant
 		},
 		Meetings:      []activity.Meeting{m},
 		EndedMeetings: []string{m.ID},
@@ -222,7 +226,7 @@ func TestInPersonMeetingSummaryListsMicSpeakers(t *testing.T) {
 	for _, l := range mc.input["transcript"].([]any) {
 		lines = append(lines, l.(map[string]any)["speaker"].(string))
 	}
-	if !reflect.DeepEqual(lines, []string{"You", "Speaker 1", "Speaker 2"}) {
+	if !reflect.DeepEqual(lines, []string{"You", "Speaker 1", "Speaker 2", "Priya", "Speaker ?"}) {
 		t.Fatalf("transcript speakers = %v", lines)
 	}
 	ps, err := e.st.Participants(m.ID)
@@ -231,9 +235,124 @@ func TestInPersonMeetingSummaryListsMicSpeakers(t *testing.T) {
 	}
 	var got []string
 	for _, p := range ps {
-		got = append(got, p.Speaker)
+		got = append(got, p.Speaker+"="+p.Name)
 	}
-	if !reflect.DeepEqual(got, []string{"Speaker 1", "Speaker 2", "You"}) {
+	if !reflect.DeepEqual(got, []string{"Priya=Priya", "Speaker 1=", "Speaker 2=", "You="}) {
 		t.Fatalf("participants = %v", got)
+	}
+}
+
+func TestInPersonNeedsTwoVoices(t *testing.T) {
+	e := newEnv(t)
+	inPersonFixture(e)
+	// Dictation: every mic turn is the same voice.
+	e.dz.by["1400-mic"] = diar{turns: []diarize.Turn{tn(0, 300, 0)}, embs: map[int][]float32{0: {0, 1, 0}}}
+	e.dz.by["1405-mic"] = diar{turns: []diarize.Turn{tn(0, 300, 2)}, embs: map[int][]float32{2: {0, 1, 0.05}}}
+	doc, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 0 {
+		t.Fatalf("one voice made a meeting: %+v", doc.Meetings)
+	}
+	for _, u := range doc.Transcript {
+		if u.Track == "mic" && u.Speaker != "me" {
+			t.Fatalf("mic utterance %q labelled %q", u.Text, u.Speaker)
+		}
+	}
+	for _, s := range doc.Segments {
+		if s.Start.Equal(at(14, 9, 57)) || s.End.Equal(at(14, 9, 57)) {
+			t.Fatalf("segments split at a dropped meeting: %+v", doc.Segments)
+		}
+	}
+	if ms, _ := e.st.MeetingsOn(day); len(ms) != 0 {
+		t.Fatalf("stored meetings = %+v", ms)
+	}
+	// The next hour, which sees the conversation only through hour 14's doc,
+	// does not bring it back.
+	e.file("audio/1500-mic.m4a", old)
+	e.tr.utts["1500-mic"] = []fu{{10, 12, "later"}}
+	next, err := e.p.Transcribe(context.Background(), day, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Meetings) != 0 {
+		t.Fatalf("hour 15 meetings = %+v", next.Meetings)
+	}
+}
+
+func TestHallucinationFilterSeesBothTracks(t *testing.T) {
+	e := newEnv(t)
+	transcribeFixture(e)
+	// System "second voice" is 12-15 s into 1300-system; the mic replies at 16 s.
+	e.tr.utts["1300-mic"] = []fu{{1, 3, "mic hello"}, {16, 17, "Thank you."}, {200, 201, "You"}}
+	doc, err := e.p.Transcribe(context.Background(), day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, u := range doc.Transcript {
+		texts = append(texts, u.Text)
+	}
+	if !slices.Contains(texts, "Thank you.") || slices.Contains(texts, "You") {
+		t.Fatalf("transcript = %q: want the reply kept and the isolated You dropped", texts)
+	}
+}
+
+func TestStaleMeetingsDeleted(t *testing.T) {
+	e := newEnv(t)
+	transcribeFixture(e) // hour 13: no meetings detected
+	recs := []store.MeetingRecord{
+		{ID: "2026-10-07-1305-in-person", Day: day, Start: at(13, 5, 0), End: at(13, 20, 0), App: activity.InPersonApp},  // stale: deleted
+		{ID: "2026-10-07-1250-in-person", Day: day, Start: at(12, 50, 0), End: at(13, 10, 0), App: activity.InPersonApp}, // stale, overlaps: deleted
+		{ID: "2026-10-07-1330-call", Day: day, Start: at(13, 30, 0), End: at(13, 40, 0), App: "call"},                    // stale but named: kept
+		{ID: "2026-10-07-1100-zoom-us", Day: day, Start: at(11, 0, 0), End: at(11, 30, 0), App: "zoom.us"},               // another hour: kept
+		{ID: "2026-10-07-1200-in-person", Day: day, Start: at(12, 0, 0), End: at(13, 0, 0), App: activity.InPersonApp},   // ends at 13:00: kept
+	}
+	for _, r := range recs {
+		if err := e.st.UpsertMeeting(r); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.st.SetParticipant(store.ParticipantRecord{MeetingID: r.ID, Speaker: "Speaker 1", Name: "Ann", Confidence: 0.9}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.st.SetParticipant(store.ParticipantRecord{MeetingID: "2026-10-07-1330-call", Speaker: "Speaker 2", Name: "Bob", Confidence: 1, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.p.Transcribe(context.Background(), day, 13); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := e.st.MeetingsOn(day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, m := range ms {
+		ids = append(ids, m.ID)
+	}
+	if want := []string{"2026-10-07-1100-zoom-us", "2026-10-07-1200-in-person", "2026-10-07-1330-call"}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("meetings = %v, want %v", ids, want)
+	}
+	if ps, _ := e.st.Participants("2026-10-07-1305-in-person"); len(ps) != 0 {
+		t.Fatalf("participants of a deleted meeting kept: %+v", ps)
+	}
+}
+
+func TestInPersonWithNoopDiarizerKeepsMeetingAndMe(t *testing.T) {
+	e := newEnv(t)
+	inPersonFixture(e)
+	e.p.Diarizer = diarize.NoopDiarizer{} // speaker models missing
+	doc, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 1 || doc.Meetings[0].App != activity.InPersonApp {
+		t.Fatalf("meetings = %+v", doc.Meetings)
+	}
+	for _, u := range doc.Transcript {
+		if (u.Track == "mic" && u.Speaker != "me") || (u.Track == "system" && u.Speaker != "others") {
+			t.Fatalf("%s utterance %q labelled %q", u.Track, u.Text, u.Speaker)
+		}
 	}
 }

@@ -22,8 +22,9 @@ var ErrChunkNotReady = errors.New("audio chunk not finished yet")
 
 // audioChunk is one hour chunk with its (cached or fresh) processing result.
 type audioChunk struct {
-	c chunk
-	e *chunkEntry
+	c  chunk
+	e  *chunkEntry
+	us []media.Utterance // e.Utterances less silence hallucinations (see dropHallucinations)
 }
 
 // wavDir converts chunks to WAV in one temp directory, removed by close.
@@ -56,9 +57,12 @@ func (w *wavDir) close() {
 	}
 }
 
-// diarizer is the configured diarizer, or nil when diarization is off.
+// diarizer is the configured diarizer, or nil when diarization is off or
+// only the NoopDiarizer is available (speaker models missing): then system
+// speech is "others", mic speech "me", and no cache entry is marked
+// diarized, so installing the models later diarizes the cached chunks.
 func (p *Pipeline) diarizer() diarize.Diarizer {
-	if p.Cfg.Diarization == "off" {
+	if _, noop := p.Diarizer.(diarize.NoopDiarizer); noop || p.Cfg.Diarization == "off" {
 		return nil
 	}
 	return p.Diarizer
@@ -67,8 +71,9 @@ func (p *Pipeline) diarizer() diarize.Diarizer {
 // loadAudio returns the processed chunks of day, using the processing
 // cache: a chunk is converted to WAV, transcribed and, on the system track,
 // diarized only when its cache entry is missing or stale. Isolated whisper
-// silence hallucinations are dropped (also from entries cached before that
-// filter existed). Speakers are not labelled yet; see labelAudio.
+// silence hallucinations are dropped across both tracks (dropHallucinations;
+// the cache keeps whisper's output). Speakers are not labelled yet; see
+// labelAudio.
 //
 // A chunk afconvert cannot read fails the call with ErrChunkNotReady while it
 // is younger than chunk_minutes+2m (the recorder finalizes a silent chunk only
@@ -122,10 +127,33 @@ func (p *Pipeline) loadAudio(ctx context.Context, day string, chunks []chunk, sk
 				p.saveChunk(day, c.path, e)
 			}
 		}
-		e.Utterances = media.DropHallucinations(e.Utterances)
 		out = append(out, audioChunk{c: c, e: e})
 	}
+	dropHallucinations(out)
 	return out, nil
+}
+
+// dropHallucinations sets each chunk's us to its utterances less the silence
+// hallucinations found among all the chunks' speech, both tracks together,
+// so a short reply right after the other track spoke is kept.
+func dropHallucinations(cs []audioChunk) {
+	var all []media.Utterance
+	for _, ac := range cs {
+		all = append(all, ac.e.Utterances...)
+	}
+	kept := map[media.Utterance]int{}
+	for _, u := range media.DropHallucinations(all) {
+		kept[u]++
+	}
+	for i := range cs {
+		cs[i].us = nil
+		for _, u := range cs[i].e.Utterances {
+			if kept[u] > 0 {
+				kept[u]--
+				cs[i].us = append(cs[i].us, u)
+			}
+		}
+	}
 }
 
 // diarizeChunk stores wav's turns and embeddings in e; a failure is logged
@@ -143,7 +171,7 @@ func (p *Pipeline) diarizeChunk(ctx context.Context, d diarize.Diarizer, wav, na
 func speechOf(cs []audioChunk) []media.Utterance {
 	var all []media.Utterance
 	for _, ac := range cs {
-		all = append(all, ac.e.Utterances...)
+		all = append(all, ac.us...)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Start.Before(all[j].Start) })
 	return all
@@ -156,9 +184,10 @@ func speechOf(cs []audioChunk) []media.Utterance {
 // during an in-person meeting (one of inPerson; the utterance starts within
 // it): there the mic chunk is diarized too (and cached) and its speakers are
 // labelled like system ones, sharing the hour's "Speaker N" numbering. The
-// user's own voice is "me" there only through an enrolled voice named "me".
-// Returned embeddings are keyed by speaker label.
-func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, inPerson []activity.Meeting, w *wavDir) ([]media.Utterance, map[string][]float32, error) {
+// user's own voice is "me" there only through an enrolled voice named "me";
+// an in-meeting mic utterance no diarizer turn covers is "Speaker ?". If the
+// mic chunk cannot be diarized its speech stays "me".
+func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, inPerson []activity.Meeting, w *wavDir) (*labelled, error) {
 	d := p.diarizer()
 	inside := func(u media.Utterance) bool {
 		return slices.ContainsFunc(inPerson, func(m activity.Meeting) bool {
@@ -166,10 +195,10 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, 
 		})
 	}
 	lb := &labeler{p: p, embs: map[string][]float32{}}
-	var all []media.Utterance
+	res := &labelled{}
 	for _, ac := range cs {
 		c, e := ac.c, ac.e
-		us := append([]media.Utterance(nil), e.Utterances...)
+		us := append([]media.Utterance(nil), ac.us...)
 		switch c.track {
 		case "system":
 			var turns []diarize.Turn
@@ -183,32 +212,54 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, 
 			}
 			if !e.Diarized {
 				if err := w.ensure(); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 				name := filepath.Base(c.path)
 				wav, err := w.convert(ctx, p, c)
 				if err != nil {
 					if ctx.Err() != nil {
-						return nil, nil, ctx.Err()
+						return nil, ctx.Err()
 					}
 					p.logf("process: cannot read %s to diarize: %v; mic speech stays me", c.path, err)
-					break
+				} else {
+					p.diarizeChunk(ctx, d, wav, name, e)
+					if e.Diarized {
+						p.saveChunk(day, c.path, e)
+					}
 				}
-				p.diarizeChunk(ctx, d, wav, name, e)
-				if !e.Diarized {
-					break
-				}
-				p.saveChunk(day, c.path, e)
 			}
-			lb.label(e.Turns, e.Embeddings, c.start, us, inside, "me")
+			if e.Diarized {
+				lb.label(e.Turns, e.Embeddings, c.start, us, inside, unknownSpeaker)
+			}
+			for _, u := range us {
+				if inside(u) {
+					if e.Diarized {
+						res.diarizedMic = append(res.diarizedMic, u)
+					} else {
+						res.undiarizedMic = append(res.undiarizedMic, u)
+					}
+				}
+			}
 		}
-		all = append(all, us...)
+		res.utts = append(res.utts, us...)
 	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Start.Before(all[j].Start) })
-	if len(lb.embs) == 0 {
-		return all, nil, nil
+	sort.SliceStable(res.utts, func(i, j int) bool { return res.utts[i].Start.Before(res.utts[j].Start) })
+	if len(lb.embs) > 0 {
+		res.embs = lb.embs
 	}
-	return all, lb.embs, nil
+	return res, nil
+}
+
+// unknownSpeaker labels in-meeting mic speech no diarizer turn covers.
+const unknownSpeaker = "Speaker ?"
+
+// labelled is labelAudio's result.
+type labelled struct {
+	utts []media.Utterance
+	embs map[string][]float32 // by speaker label; nil when none
+	// In-person meeting mic speech from chunks that were (or could not be)
+	// diarized, for the two-voice check (see keepInPerson).
+	diarizedMic, undiarizedMic []media.Utterance
 }
 
 // labeler assigns speaker labels to diarized utterances across one hour.
