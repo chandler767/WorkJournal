@@ -98,7 +98,7 @@ func sg(kind, app, title string, h, m1, m2 int) activity.Segment {
 	return activity.Segment{Start: at(h, m1, 0), End: at(h, m2, 0), Kind: kind, App: app, Title: title}
 }
 
-const hourOut = `{"notes":["Designed the checkout flow"],"main_focus":"Checkout design","action_items":[{"text":"Send mockups","owner":"You"}]}`
+const hourOut = `{"narrative":"","timeline":[],"notes":["Designed the checkout flow"],"main_focus":"Checkout design","action_items":[{"text":"Send mockups","owner":"You"}]}`
 
 // transcribed stores the hour as the pipeline would before summarizing.
 func (e *sumEnv) transcribed(doc *HourDoc) {
@@ -241,7 +241,7 @@ func TestSummarizerHourInputShape(t *testing.T) {
 	want := `{"day":"2026-10-07","hour":10,` +
 		`"meetings":[{"app":"zoom.us","end":"10:30","id":"2026-10-07-1010-zoom-us","start":"10:10"}],` +
 		`"ocr":["Agenda"],` +
-		`"segments":[{"app":"zoom.us","category":"","index":0,"minutes":20,"title":"Zoom Meeting"},{"app":"Code","category":"Break/Idle","index":2,"minutes":5,"title":"main.go"}],` +
+		`"segments":[{"app":"zoom.us","category":"","index":0,"minutes":20,"start":"10:10","title":"Zoom Meeting"},{"app":"Code","category":"Break/Idle","index":2,"minutes":5,"start":"10:40","title":"main.go"}],` +
 		`"transcript":[{"speaker":"You","text":"hello"},{"speaker":"Speaker 1","text":"hi"}]}`
 	if string(b) != want {
 		t.Fatalf("summarize-hour input\n got %s\nwant %s", b, want)
@@ -252,7 +252,7 @@ func TestSummarizerHourInputShape(t *testing.T) {
 	}
 	b, _ = json.Marshal(e.fk.calls[1].input)
 	want = `{"categories":["Deep work","Meetings","Communication","Admin","Browsing/Research","Break/Idle"],` +
-		`"hour_summary":{"action_items":[{"owner":"You","text":"Send mockups"}],"main_focus":"Checkout design","notes":["Designed the checkout flow"]},` +
+		`"hour_summary":{"action_items":[{"owner":"You","text":"Send mockups"}],"main_focus":"Checkout design","narrative":"","notes":["Designed the checkout flow"],"timeline":[]},` +
 		`"segments":[{"app":"zoom.us","index":0,"minutes":20,"title":"Zoom Meeting"}]}`
 	if string(b) != want {
 		t.Fatalf("categorize-time input\n got %s\nwant %s", b, want)
@@ -497,5 +497,78 @@ func TestSummarizerMeetingInputDropsHiddenSpeech(t *testing.T) {
 	meetTr, _ := json.Marshal(e.fk.calls[1].input["transcript"])
 	if want := `[{"speaker":"You","t":"00:05:00","text":"visible early"},{"speaker":"Speaker 1","t":"00:25:00","text":"visible late"}]`; string(meetTr) != want {
 		t.Fatalf("meeting transcript %s, want %s", meetTr, want)
+	}
+}
+
+const detailedHourOut = `{"narrative":"Spent the hour reworking the checkout flow in Figma, then reviewed PR 42.","timeline":[` +
+	`{"start":"10:00","end":"10:40","app":"Figma","activity":"Reworked the Checkout flow frames"},` +
+	`{"start":"10:40","end":"11:00","app":"Safari","activity":"Reviewed PR 42 on GitHub"}],` +
+	`"notes":["Redrew the payment step"],"main_focus":"Checkout design","action_items":[]}`
+
+func TestSummarizerStoresAndIndexesNarrativeAndTimeline(t *testing.T) {
+	e := newSumEnv(t)
+	e.s.Cfg.Rules = map[string]string{"Figma": "Design"}
+	doc := &HourDoc{Day: day, Hour: 10, Segments: []activity.Segment{sg(activity.KindActive, "Figma", "Checkout flow", 10, 0, 40)}}
+	e.transcribed(doc)
+	e.fk.out["summarize-hour"] = detailedHourOut
+
+	if err := e.s.SummarizeHour(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.hour(10)
+	if rec.Status != store.StatusDone {
+		t.Fatalf("status = %q", rec.Status)
+	}
+	var hs skills.HourSummary
+	if err := json.Unmarshal([]byte(rec.SummaryJSON), &hs); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(hs.Narrative, "Spent the hour") || len(hs.Timeline) != 2 || hs.Timeline[1].App != "Safari" || hs.Timeline[1].End != "11:00" {
+		t.Fatalf("stored summary = %+v", hs)
+	}
+	if hits := e.search("reworking"); len(hits) != 1 || hits[0].Kind != "note" || hits[0].Hour != 10 {
+		t.Fatalf("narrative hits = %+v", hits)
+	}
+	if hits := e.search("Reviewed GitHub"); len(hits) != 1 || hits[0].Kind != "note" {
+		t.Fatalf("timeline activity hits = %+v", hits)
+	}
+}
+
+func TestSummarizerRejectsTimelineOutsideHour(t *testing.T) {
+	for name, tl := range map[string]string{
+		"before hour": `{"start":"09:50","end":"10:10","app":"Code","activity":"x"}`,
+		"after hour":  `{"start":"10:50","end":"11:10","app":"Code","activity":"x"}`,
+		"not HH:MM":   `{"start":"10:5","end":"10:20","app":"Code","activity":"x"}`,
+		"bad minutes": `{"start":"10:60","end":"10:70","app":"Code","activity":"x"}`,
+		"end before":  `{"start":"10:30","end":"10:20","app":"Code","activity":"x"}`,
+		"words":       `{"start":"ten","end":"eleven","app":"Code","activity":"x"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newSumEnv(t)
+			doc := &HourDoc{Day: day, Hour: 10, Segments: []activity.Segment{sg(activity.KindActive, "Code", "x.go", 10, 0, 30)}}
+			e.transcribed(doc)
+			e.fk.out["summarize-hour"] = `{"narrative":"n","timeline":[` + tl + `],"notes":[],"main_focus":"f","action_items":[]}`
+			e.fk.out["categorize-time"] = `{"segments":[{"index":0,"category":"Deep work","confidence":0.9}]}`
+			if err := e.s.SummarizeHour(context.Background(), doc); err != nil {
+				t.Fatal(err)
+			}
+			if rec := e.hour(10); rec.Status != store.StatusNeedsReview || rec.SummaryJSON != "" {
+				t.Fatalf("status %q summary %q, want needs_review with no summary", rec.Status, rec.SummaryJSON)
+			}
+		})
+	}
+}
+
+func TestSummarizerAcceptsTimelineEndingAtNextHour(t *testing.T) {
+	e := newSumEnv(t)
+	doc := &HourDoc{Day: day, Hour: 23, Segments: []activity.Segment{sg(activity.KindActive, "Code", "x.go", 23, 0, 30)}}
+	e.transcribed(doc)
+	e.fk.out["summarize-hour"] = `{"narrative":"n","timeline":[{"start":"23:30","end":"00:00","app":"Code","activity":"x"}],"notes":[],"main_focus":"f","action_items":[]}`
+	e.fk.out["categorize-time"] = `{"segments":[{"index":0,"category":"Deep work","confidence":0.9}]}`
+	if err := e.s.SummarizeHour(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.hour(23); rec.Status != store.StatusDone {
+		t.Fatalf("status = %q", rec.Status)
 	}
 }

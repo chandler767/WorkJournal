@@ -76,3 +76,8 @@ mark { background: var(--warn-bg); color: var(--warn-text); padding: 0 .15rem; b
 .banner.error { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-text); }
 .suggestion { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .3rem 0; }
 .suggestion span { min-width: 12rem; }
+
+.narrative summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+.hour-timeline { width: 100%; border-collapse: collapse; }
+.hour-timeline th, .hour-timeline td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.hour-timeline .nowrap { white-space: nowrap; }

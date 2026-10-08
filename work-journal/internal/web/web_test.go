@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
@@ -132,6 +133,41 @@ func TestDayPageShowsNotesAndTotals(t *testing.T) {
 		"Shipped", "work.", "Standup", "<svg", "recording")
 	if strings.Contains(b, "<b>scheduler</b>") {
 		t.Error("journal text not escaped")
+	}
+}
+
+func TestDayPageShowsHourNarrative(t *testing.T) {
+	e := newEnv(t)
+	b := e.get("/day/2026-10-07").Body.String()
+	mustContain(t, b, "<details", "Rewrote the scheduler retry loop")
+}
+
+func TestDayPageRendersOldHoursWithoutNarrative(t *testing.T) {
+	e := newEnv(t)
+	if err := e.st.UpsertHour(store.HourRecord{Day: "2026-10-07", Hour: 8, Status: store.StatusDone, UpdatedAt: time.Now(),
+		SummaryJSON: `{"notes":["Old style note"],"main_focus":"Legacy","action_items":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	b := e.get("/day/2026-10-07").Body.String()
+	mustContain(t, b, "Old style note", "Legacy")
+	rec := e.get("/hour/2026-10-07/08")
+	if rec.Code != 200 {
+		t.Fatalf("hour code %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, "Old style note")
+	if strings.Contains(body, "Timeline") {
+		t.Error("timeline section shown for an hour without a timeline")
+	}
+}
+
+func TestHourPageShowsNarrativeThenTimelineThenNotes(t *testing.T) {
+	e := newEnv(t)
+	body := e.get("/hour/2026-10-07/09").Body.String()
+	mustContain(t, body, "Rewrote the scheduler retry loop", "09:00", "09:40", "Edited scheduler.go retry loop", "Answered questions in #general", "<table")
+	n, tl, no := strings.Index(body, "Rewrote the scheduler retry loop"), strings.Index(body, "Edited scheduler.go retry loop"), strings.Index(body, "Refactored the scheduler")
+	if !(n >= 0 && n < tl && tl < no) {
+		t.Errorf("order narrative=%d timeline=%d notes=%d", n, tl, no)
 	}
 }
 

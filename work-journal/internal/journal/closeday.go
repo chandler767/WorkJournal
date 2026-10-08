@@ -26,6 +26,7 @@ type (
 	}
 	hourInput struct {
 		Hour        int                 `json:"hour"`
+		Narrative   string              `json:"narrative"`
 		Notes       []string            `json:"notes"`
 		MainFocus   string              `json:"main_focus"`
 		ActionItems []skills.ActionItem `json:"action_items"`
@@ -72,7 +73,7 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 		if err := json.Unmarshal([]byte(h.SummaryJSON), &s); err != nil {
 			return fmt.Errorf("journal: hour %s %02d summary: %w", day, h.Hour, err)
 		}
-		in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Notes: nonNil(s.Notes), MainFocus: s.MainFocus, ActionItems: nonNilItems(s.ActionItems)})
+		in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Narrative: s.Narrative, Notes: nonNil(s.Notes), MainFocus: s.MainFocus, ActionItems: nonNilItems(s.ActionItems)})
 	}
 	meetings, err := st.MeetingsOn(day)
 	if err != nil {

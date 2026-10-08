@@ -42,7 +42,7 @@ func Seed(t *testing.T, st *store.Store, p config.Paths) {
 	}
 	now := seedTime(11, 0)
 	must(st.UpsertHour(store.HourRecord{Day: seedDay, Hour: 9, Status: store.StatusDone, UpdatedAt: now,
-		SummaryJSON: `{"notes":["Refactored the scheduler","Reviewed PR 42"],"main_focus":"Scheduler work","action_items":[{"text":"Send release notes","owner":"Priya"}]}`}))
+		SummaryJSON: `{"narrative":"Rewrote the scheduler retry loop and reviewed PR 42 before standup.","timeline":[{"start":"09:00","end":"09:40","app":"Code","activity":"Edited scheduler.go retry loop"},{"start":"09:40","end":"09:50","app":"Slack","activity":"Answered questions in #general"}],"notes":["Refactored the scheduler","Reviewed PR 42"],"main_focus":"Scheduler work","action_items":[{"text":"Send release notes","owner":"Priya"}]}`}))
 	must(st.UpsertHour(store.HourRecord{Day: seedDay, Hour: 10, Status: store.StatusNeedsReview, UpdatedAt: now}))
 	must(st.ReplaceSegments(seedDay, 9, []store.SegmentRecord{
 		{Day: seedDay, Hour: 9, Start: seedTime(9, 0), End: seedTime(9, 40), App: "Code", Title: "scheduler.go", Kind: "app", Category: "Deep work", Confidence: 0.9, Source: "skill"},

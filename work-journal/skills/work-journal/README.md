@@ -4,7 +4,7 @@ Five skills the work-journal Go app runs headlessly with `claude -p`. The app wr
 
 | Skill | Input | Output |
 |---|---|---|
-| summarize-hour | hour doc (segments, meetings, transcript, OCR) | notes, main_focus, action_items |
+| summarize-hour | hour doc (segments, meetings, transcript, OCR) | narrative, timeline, notes, main_focus, action_items |
 | categorize-time | categories, hour summary, segments | category and confidence per segment |
 | summarize-meeting | meeting, transcript, screens | participants, summary, decisions, action_items |
 | close-day | day's hours, meetings, totals | markdown daily journal |

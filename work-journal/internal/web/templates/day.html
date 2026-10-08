@@ -55,6 +55,7 @@
       <h3><a href="/hour/{{$.Date}}/{{printf "%02d" .Hour}}">{{.Label}}</a>{{if .Summary.MainFocus}} <span class="focus">{{.Summary.MainFocus}}</span>{{end}}</h3>
       {{if .NeedsReview}}<span class="badge warn">needs review</span>{{else if .Pending}}<span class="badge">processing</span>{{end}}
     </header>
+    {{if .Summary.Narrative}}<details class="narrative"><summary>Narrative</summary><p>{{.Summary.Narrative}}</p></details>{{end}}
     {{if .Summary.Notes}}<ul>{{range .Summary.Notes}}<li>{{.}}</li>{{end}}</ul>{{end}}
     {{if .Summary.ActionItems}}<ul class="actions">{{range .Summary.ActionItems}}<li>{{.Text}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
     <form method="post" action="/hour/{{$.Date}}/{{printf "%02d" .Hour}}/reprocess"><button type="submit" class="secondary">Reprocess</button></form>

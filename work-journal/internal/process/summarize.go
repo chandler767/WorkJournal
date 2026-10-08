@@ -56,6 +56,7 @@ type (
 		App      string  `json:"app"`
 		Title    string  `json:"title"`
 		Minutes  int     `json:"minutes"`
+		Start    string  `json:"start,omitempty"` // HH:MM; summarize-hour only
 		Category *string `json:"category,omitempty"`
 	}
 	meetingBrief struct {
@@ -112,6 +113,43 @@ func (c *checkedCategorization) Validate() error {
 	return nil
 }
 
+// checkedHour rejects a timeline whose start/end are not HH:MM inside the
+// hour being summarized (an end of the next hour's :00 is allowed).
+type checkedHour struct {
+	skills.HourSummary
+	hour int
+}
+
+func (c *checkedHour) Validate() error {
+	lo, hi := c.hour*60, (c.hour+1)*60
+	for i, e := range c.Timeline {
+		s, err := clockMinutes(e.Start)
+		if err != nil {
+			return fmt.Errorf("timeline[%d] start: %w", i, err)
+		}
+		en, err := clockMinutes(e.End)
+		if err != nil {
+			return fmt.Errorf("timeline[%d] end: %w", i, err)
+		}
+		if en == 0 && c.hour == 23 {
+			en = 24 * 60
+		}
+		if s < lo || s >= hi || en < s || en > hi {
+			return fmt.Errorf("timeline[%d] %s-%s is outside hour %02d", i, e.Start, e.End, c.hour)
+		}
+	}
+	return nil
+}
+
+// clockMinutes parses a strict HH:MM into minutes since midnight.
+func clockMinutes(s string) (int, error) {
+	t, err := time.Parse("15:04", s)
+	if err != nil || len(s) != 5 {
+		return 0, fmt.Errorf("%q is not HH:MM", s)
+	}
+	return t.Hour()*60 + t.Minute(), nil
+}
+
 // SummarizeHour implements HourSummarizer. Invalid skill output marks the
 // hour needs_review while keeping whatever succeeded; any other error
 // (claude failing to run, store errors) is returned and the hour stays
@@ -148,20 +186,22 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 		}
 	}
 
-	sum := skills.HourSummary{Notes: []string{}, ActionItems: []skills.ActionItem{}}
+	sum := skills.HourSummary{Timeline: []skills.TimelineEntry{}, Notes: []string{}, ActionItems: []skills.ActionItem{}}
 	summaryJSON := ""
-	ok, err := run("summarize-hour", "", s.hourInput(doc, cats), &sum)
+	checked := &checkedHour{hour: doc.Hour}
+	ok, err := run("summarize-hour", "", s.hourInput(doc, cats), checked)
 	if err != nil {
 		return err
 	}
 	if ok {
+		sum = checked.HourSummary
 		b, err := json.Marshal(sum)
 		if err != nil {
 			return err
 		}
 		summaryJSON = string(b)
 	} else {
-		sum = skills.HourSummary{Notes: []string{}, ActionItems: []skills.ActionItem{}}
+		sum = skills.HourSummary{Timeline: []skills.TimelineEntry{}, Notes: []string{}, ActionItems: []skills.ActionItem{}}
 	}
 
 	if len(unmatched) > 0 {
@@ -186,8 +226,14 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 
 	texts := textDocs(doc, start)
 	ref := fmt.Sprintf("hour/%s/%02d", doc.Day, doc.Hour)
-	for _, n := range sum.Notes {
-		texts = append(texts, store.TextDoc{Kind: "note", Day: doc.Day, Hour: doc.Hour, TS: start, Text: n, Ref: ref})
+	indexed := append([]string{sum.Narrative}, sum.Notes...)
+	for _, e := range sum.Timeline {
+		indexed = append(indexed, e.Activity)
+	}
+	for _, n := range indexed {
+		if strings.TrimSpace(n) != "" {
+			texts = append(texts, store.TextDoc{Kind: "note", Day: doc.Day, Hour: doc.Hour, TS: start, Text: n, Ref: ref})
+		}
 	}
 	for _, id := range doc.EndedMeetings {
 		i := slices.IndexFunc(doc.Meetings, func(m activity.Meeting) bool { return m.ID == id })
@@ -246,7 +292,9 @@ func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) hourInput {
 	in := hourInput{Day: doc.Day, Hour: doc.Hour, Segments: []segmentInput{}, Meetings: []meetingBrief{}, OCR: dedupe(screenTexts(doc.Screens))}
 	for i, g := range doc.Segments {
 		if g.Kind == activity.KindActive || g.Kind == activity.KindIdle {
-			in.Segments = append(in.Segments, segInput(i, g, &cats[i]))
+			si := segInput(i, g, &cats[i])
+			si.Start = g.Start.Format("15:04")
+			in.Segments = append(in.Segments, si)
 		}
 	}
 	for _, m := range doc.Meetings {

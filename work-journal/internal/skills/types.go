@@ -6,11 +6,23 @@ type ActionItem struct {
 	Owner string `json:"owner"`
 }
 
-// HourSummary is the summarize-hour output.
+// TimelineEntry is one stretch of an hour: HH:MM start and end, the app and
+// what was done.
+type TimelineEntry struct {
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	App      string `json:"app"`
+	Activity string `json:"activity"`
+}
+
+// HourSummary is the summarize-hour output. Narrative and Timeline are absent
+// (zero) in summaries stored before they were introduced.
 type HourSummary struct {
-	Notes       []string     `json:"notes"`
-	MainFocus   string       `json:"main_focus"`
-	ActionItems []ActionItem `json:"action_items"`
+	Narrative   string          `json:"narrative"`
+	Timeline    []TimelineEntry `json:"timeline"`
+	Notes       []string        `json:"notes"`
+	MainFocus   string          `json:"main_focus"`
+	ActionItems []ActionItem    `json:"action_items"`
 }
 
 // SegmentCategory is one categorize-time entry, keyed by the input index.

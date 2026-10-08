@@ -41,7 +41,7 @@ func newRunner(f *fakeExec) *ClaudeRunner {
 	return &ClaudeRunner{Bin: "claude", WorkDir: "/repo", DataDir: "/data", Exec: f.run}
 }
 
-const goodHour = `{"notes":["a"],"main_focus":"x","action_items":[]}`
+const goodHour = `{"narrative":"n","timeline":[{"start":"10:00","end":"10:30","app":"Code","activity":"a"}],"notes":["a"],"main_focus":"x","action_items":[]}`
 
 func TestRunnerParsesEnvelope(t *testing.T) {
 	f := &fakeExec{outs: []string{envelope(goodHour, false)}}
@@ -49,7 +49,7 @@ func TestRunnerParsesEnvelope(t *testing.T) {
 	if err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got); err != nil {
 		t.Fatal(err)
 	}
-	want := HourSummary{Notes: []string{"a"}, MainFocus: "x", ActionItems: []ActionItem{}}
+	want := HourSummary{Narrative: "n", Timeline: []TimelineEntry{{Start: "10:00", End: "10:30", App: "Code", Activity: "a"}}, Notes: []string{"a"}, MainFocus: "x", ActionItems: []ActionItem{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
 	}
@@ -369,5 +369,33 @@ func TestRunnerErrorClass(t *testing.T) {
 	f = &fakeExec{outs: []string{"not an envelope", "not an envelope"}}
 	if err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unparseable envelope: err = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestHourSchemaRequiresNarrativeAndTimelineAndCapsNotes(t *testing.T) {
+	sch, err := schema("summarize-hour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := func(n int) string {
+		return `[` + strings.TrimSuffix(strings.Repeat(`"n",`, n), ",") + `]`
+	}
+	cases := []struct {
+		name, in string
+		ok       bool
+	}{
+		{"12 notes", `{"narrative":"","timeline":[],"notes":` + notes(12) + `,"main_focus":"","action_items":[]}`, true},
+		{"13 notes", `{"narrative":"","timeline":[],"notes":` + notes(13) + `,"main_focus":"","action_items":[]}`, false},
+		{"no narrative", `{"timeline":[],"notes":[],"main_focus":"","action_items":[]}`, false},
+		{"no timeline", `{"narrative":"","notes":[],"main_focus":"","action_items":[]}`, false},
+		{"entry missing app", `{"narrative":"","timeline":[{"start":"10:00","end":"10:10","activity":"a"}],"notes":[],"main_focus":"","action_items":[]}`, false},
+		{"entry extra field", `{"narrative":"","timeline":[{"start":"10:00","end":"10:10","app":"a","activity":"a","x":1}],"notes":[],"main_focus":"","action_items":[]}`, false},
+	}
+	for _, c := range cases {
+		var out HourSummary
+		err := decode(sch, c.in, &out)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
+		}
 	}
 }

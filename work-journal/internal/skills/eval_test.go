@@ -96,9 +96,13 @@ func check(t *testing.T, name string, out any) {
 	switch name {
 	case "summarize-hour/03": // empty hour
 		h := out.(*HourSummary)
-		if len(h.Notes) != 0 || h.MainFocus != "" || len(h.ActionItems) != 0 {
+		if len(h.Notes) != 0 || h.MainFocus != "" || len(h.ActionItems) != 0 || h.Narrative != "" || len(h.Timeline) != 0 {
 			t.Errorf("empty hour gave %+v", *h)
 		}
+	case "summarize-hour/01": // hour 10 in the fixture
+		checkDetailedHour(t, out.(*HourSummary), 10, []string{"parser.go", "ParseInvoice", "acme-billing", "encoding/json", "pkg.go.dev"})
+	case "summarize-hour/02": // hour 14 in the fixture
+		checkDetailedHour(t, out.(*HourSummary), 14, []string{"Q2 roadmap", "estimate", "Thursday", "Notion"})
 	case "categorize-time/01", "categorize-time/02", "categorize-time/03":
 		c := out.(*evalCategorization)
 		want := map[string]int{"categorize-time/01": 3, "categorize-time/02": 3, "categorize-time/03": 0}[name]
@@ -130,5 +134,41 @@ func check(t *testing.T, name string, out any) {
 				t.Errorf("participant %q named %q without a cue", p.Speaker, p.Name)
 			}
 		}
+	}
+}
+
+// checkDetailedHour verifies the richer hour output: a narrative, at most 12
+// notes, a timeline of valid HH:MM entries inside the hour, and at least one
+// note naming a specific identifier from the fixture.
+func checkDetailedHour(t *testing.T, h *HourSummary, hour int, identifiers []string) {
+	t.Helper()
+	if strings.TrimSpace(h.Narrative) == "" {
+		t.Error("empty narrative")
+	}
+	if len(h.Notes) == 0 || len(h.Notes) > 12 {
+		t.Errorf("%d notes, want 1-12", len(h.Notes))
+	}
+	if len(h.Timeline) == 0 {
+		t.Error("empty timeline")
+	}
+	for _, e := range h.Timeline {
+		s, serr := time.Parse("15:04", e.Start)
+		en, eerr := time.Parse("15:04", e.End)
+		if serr != nil || eerr != nil {
+			t.Errorf("timeline entry %+v: bad HH:MM", e)
+			continue
+		}
+		lo, hi := hour*60, (hour+1)*60
+		sm, em := s.Hour()*60+s.Minute(), en.Hour()*60+en.Minute()
+		if sm < lo || sm >= hi || em < sm || em > hi {
+			t.Errorf("timeline entry %+v outside hour %02d", e, hour)
+		}
+		if e.App == "" || e.Activity == "" {
+			t.Errorf("timeline entry %+v has an empty app or activity", e)
+		}
+	}
+	joined := strings.ToLower(strings.Join(h.Notes, "\n"))
+	if !slices.ContainsFunc(identifiers, func(id string) bool { return strings.Contains(joined, strings.ToLower(id)) }) {
+		t.Errorf("no note mentions any of %v: %q", identifiers, h.Notes)
 	}
 }

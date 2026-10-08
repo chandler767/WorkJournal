@@ -10,6 +10,23 @@
   <form method="post" action="/hour/{{.Date}}/{{.Hour}}/reprocess"><button type="submit" class="secondary">Reprocess</button></form></div>{{end}}
 {{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}
 
+{{if .Summary.Narrative}}
+<section>
+  <h2>Summary</h2>
+  <p class="narrative">{{.Summary.Narrative}}</p>
+</section>
+{{end}}
+
+{{if .Summary.Timeline}}
+<section>
+  <h2>Timeline</h2>
+  <table class="hour-timeline">
+    <thead><tr><th>Time</th><th>App</th><th>Activity</th></tr></thead>
+    <tbody>{{range .Summary.Timeline}}<tr><td class="nowrap">{{.Start}}&ndash;{{.End}}</td><td>{{.App}}</td><td>{{.Activity}}</td></tr>{{end}}</tbody>
+  </table>
+</section>
+{{end}}
+
 <section>
   <h2>Notes</h2>
   {{if .HasSummary}}

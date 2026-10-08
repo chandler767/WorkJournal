@@ -67,7 +67,7 @@ func seedDay(t *testing.T, st *store.Store, day string) {
 		}
 	}
 	must(st.UpsertHour(store.HourRecord{Day: day, Hour: 9, Status: store.StatusDone, UpdatedAt: time.Now(),
-		SummaryJSON: `{"notes":["Refactored"],"main_focus":"Scheduler","action_items":[{"text":"Send notes","owner":"You"}]}`}))
+		SummaryJSON: `{"narrative":"Reworked the scheduler loop.","timeline":[],"notes":["Refactored"],"main_focus":"Scheduler","action_items":[{"text":"Send notes","owner":"You"}]}`}))
 	must(st.ReplaceSegments(day, 9, []store.SegmentRecord{
 		{Day: day, Hour: 9, Start: at(day, 9, 0), End: at(day, 9, 40), App: "Code", Kind: "app", Category: "Deep work"},
 		{Day: day, Hour: 9, Start: at(day, 9, 40), End: at(day, 9, 50), App: "Slack", Kind: "app", Category: "Communication"},
@@ -146,6 +146,7 @@ func TestCloseDayInputHasTotals(t *testing.T) {
 		Day   string `json:"day"`
 		Hours []struct {
 			Hour        int      `json:"hour"`
+			Narrative   string   `json:"narrative"`
 			Notes       []string `json:"notes"`
 			MainFocus   string   `json:"main_focus"`
 			ActionItems []struct {
@@ -169,7 +170,7 @@ func TestCloseDayInputHasTotals(t *testing.T) {
 	if want := map[string]int{"Deep work": 40, "Communication": 10}; !reflect.DeepEqual(in.Totals, want) {
 		t.Errorf("totals = %v, want %v", in.Totals, want)
 	}
-	if in.Day != "2026-10-07" || len(in.Hours) != 1 || in.Hours[0].Hour != 9 || in.Hours[0].MainFocus != "Scheduler" || in.Hours[0].Notes[0] != "Refactored" || in.Hours[0].ActionItems[0].Text != "Send notes" {
+	if in.Day != "2026-10-07" || len(in.Hours) != 1 || in.Hours[0].Hour != 9 || in.Hours[0].MainFocus != "Scheduler" || in.Hours[0].Notes[0] != "Refactored" || in.Hours[0].Narrative != "Reworked the scheduler loop." || in.Hours[0].ActionItems[0].Text != "Send notes" {
 		t.Errorf("hours = %+v", in.Hours)
 	}
 	if len(in.Meetings) != 1 || in.Meetings[0].Title != "Standup" || in.Meetings[0].Start != "09:10" || in.Meetings[0].End != "09:30" ||

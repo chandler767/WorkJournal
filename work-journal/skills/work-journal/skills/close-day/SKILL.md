@@ -16,7 +16,9 @@ Headless skill for the work-journal app. The prompt names one input file.
 
 ## Input
 
-JSON with `day`, `hours` (summaries), `meetings`, and `totals` (category to minutes).
+JSON with `day`, `hours`, `meetings`, and `totals` (category to minutes).
+- Each hour is `{hour, narrative, notes, main_focus, action_items}`. `narrative` is a short account of the hour and may be absent or `""` for older hours; `notes` carry the specifics.
+- Prefer the concrete details in `narrative` and `notes` (files, tickets, people, decisions) over generic phrasing when writing the Summary and Timeline.
 
 ## Rules specific to this skill
 
