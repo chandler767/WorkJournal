@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"workjournal/internal/config"
 )
@@ -29,6 +30,7 @@ type autostartDeps struct {
 	AgentsDir string // ~/Library/LaunchAgents
 	UID       int
 	Launchctl func(args ...string) ([]byte, error)
+	Sleep     func(time.Duration)
 	Spec      agentSpec
 }
 
@@ -54,6 +56,7 @@ func defaultAutostartDeps(cfgPath string, cfg config.Config) (autostartDeps, err
 		Launchctl: func(args ...string) ([]byte, error) {
 			return exec.Command("/bin/launchctl", args...).CombinedOutput()
 		},
+		Sleep: time.Sleep,
 		Spec: agentSpec{
 			Journal: exe,
 			Config:  absCfg,
@@ -81,7 +84,14 @@ func runAutostart(action string, d autostartDeps, out io.Writer) error {
 			return err
 		}
 		_, _ = d.Launchctl("bootout", service) // reload if already loaded; "not loaded" is fine
-		if b, err := d.Launchctl("bootstrap", domain, plist); err != nil {
+		waitUnloaded(d, service)
+		b, err := d.Launchctl("bootstrap", domain, plist)
+		if err != nil && strings.Contains(string(b)+err.Error(), "5:") {
+			// launchd may still be tearing down the old instance ("5: Input/output error").
+			d.Sleep(bootstrapRetryDelay)
+			b, err = d.Launchctl("bootstrap", domain, plist)
+		}
+		if err != nil {
 			return fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(b)))
 		}
 		fmt.Fprintf(out, "autostart on: `journal serve` starts at login and is running now (log: %s)\n", d.Spec.Log)
@@ -106,6 +116,24 @@ func runAutostart(action string, d autostartDeps, out io.Writer) error {
 		return nil
 	}
 	return fmt.Errorf("unknown action %q (want on, off or status)", action)
+}
+
+const (
+	unloadPoll          = 200 * time.Millisecond
+	unloadTimeout       = 10 * time.Second
+	bootstrapRetryDelay = 2 * time.Second
+)
+
+// waitUnloaded polls `launchctl print` after a bootout until the service is
+// gone (print fails), for up to unloadTimeout: bootout returns while launchd
+// is still unloading, and bootstrapping then fails with an I/O error.
+func waitUnloaded(d autostartDeps, service string) {
+	for waited := time.Duration(0); waited < unloadTimeout; waited += unloadPoll {
+		if _, err := d.Launchctl("print", service); err != nil {
+			return
+		}
+		d.Sleep(unloadPoll)
+	}
 }
 
 func launchAgentPlist(s agentSpec) string {
