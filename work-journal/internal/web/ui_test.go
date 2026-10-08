@@ -133,3 +133,18 @@ func cssText(t *testing.T, e *env) string {
 	b, _ := io.ReadAll(rec.Body)
 	return string(b)
 }
+
+func TestTimelineAxisLabelsNeverWrapOrOverflow(t *testing.T) {
+	e := newEnv(t)
+	css := cssText(t, e)
+	for _, re := range []string{`\.timeline-axis span \{[^}]*white-space: nowrap`,
+		`\.timeline-axis span\.first \{ transform: none; \}`, `\.timeline-axis span\.last \{ transform: translateX\(-100%\); \}`} {
+		if !regexp.MustCompile(re).MatchString(css) {
+			t.Errorf("css missing %s", re)
+		}
+	}
+	js, _ := io.ReadAll(e.get("/static/chart.js").Body)
+	if !strings.Contains(string(js), `edgeClass(`) {
+		t.Error("chart.js does not clamp edge labels by position")
+	}
+}

@@ -10,6 +10,10 @@
     return n;
   }
 
+  // edgeClass keeps labels near either end inside the axis: left-aligned at the start,
+  // right-aligned at the end, centred elsewhere (frac is 0..1 along the axis).
+  function edgeClass(frac) { return frac < 0.03 ? "first" : frac > 0.97 ? "last" : ""; }
+
   function pad(n) { return (n < 10 ? "0" : "") + n; }
 
   // timeline draws spec = {from, to, day, segs:[{s,e,c,l,h}]} (minutes since midnight).
@@ -39,8 +43,7 @@
         var t = document.createElement("span");
         t.textContent = pad(h % 24);
         t.style.left = (gx / W * 100) + "%";
-        if (h === spec.from) t.className = "first";
-        else if (h === spec.to) t.className = "last";
+        t.className = edgeClass(gx / W);
         axis.appendChild(t);
       }
     }
