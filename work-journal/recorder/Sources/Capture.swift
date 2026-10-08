@@ -9,8 +9,9 @@ import UniformTypeIdentifiers
 /// periodic `SCScreenshotManager` screenshots (main display, or all displays side by side in
 /// arrangement order, each scaled to `--width`) written as `raw/<day>/screens/HHMMSS.jpg`. Control from the main thread.
 /// When displays change (connected, removed, rearranged) the stream and display list go
-/// stale, so a screen-parameters change, a stream stop error or a round of failed screenshots
-/// restarts capture: debounced, then the shareable content is queried again.
+/// stale. A screen-parameters change or the stream's stop error restarts the stream; a round
+/// of failed screenshots only re-queries the displays used for screenshots, so system audio
+/// keeps flowing. Both are debounced and backed off.
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Gate for screenshots (pause, exclusion, sleep, disk guard).
     var screensEnabled = false {
@@ -37,7 +38,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastThumb: [UInt8]?
     private var debounce = RestartDebounce(delay: 2)
     private var restartTimer: Timer?
-    private var lastFastRestart: Date?
+    private var lastFast: [RecoveryAction: Date] = [:] // backoff per recovery kind
+    private var pendingAction: RecoveryAction?
     private var screenObserver: NSObjectProtocol?
 
     init(options: RunOptions, systemWriter: AudioChunkWriter) {
@@ -48,7 +50,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self = self, self.active else { return }
             eprint("capture: screen parameters changed; restarting capture")
-            self.requestRestart(at: Date())
+            self.requestRecovery(.screenParametersChanged, at: Date())
         }
     }
 
@@ -72,6 +74,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         shotTimer = nil
         retryTimer = nil
         restartTimer = nil
+        pendingAction = nil
+        debounce = RestartDebounce(delay: 2)
         generation += 1
         guard let s = stream else { return done() }
         stream = nil
@@ -80,11 +84,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private func startStream(content: SCShareableContent?, error: Error?) {
         guard active, stream == nil else { return } // a second in-flight query lost the race
-        guard let content = content, let main = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
-                ?? content.displays.first else {
+        guard let content = content, let picked = pickDisplays(content) else {
             return retry("screen capture unavailable: \(error?.localizedDescription ?? "no display") (Screen Recording permission?)")
         }
-        displays = options.allDisplays ? arrangementOrder(content.displays.map(\.frame)).map { content.displays[$0] } : [main]
+        let main = picked.main
+        displays = picked.displays
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.sampleRate = 48_000
@@ -115,12 +119,22 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    /// The main display (audio stream filter) and the displays to screenshot.
+    private func pickDisplays(_ content: SCShareableContent) -> (main: SCDisplay, displays: [SCDisplay])? {
+        guard let main = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
+            return nil
+        }
+        let all = options.allDisplays ? arrangementOrder(content.displays.map(\.frame)).map { content.displays[$0] } : [main]
+        return (main, all)
+    }
+
     // MARK: Restart
 
-    /// Schedules a debounced restart at the request time plus the debounce delay
-    /// (later requests in a burst push it back).
-    private func requestRestart(at now: Date, delay: TimeInterval = 2) {
+    /// Schedules a debounced recovery at the request time plus `delay` (later requests in a
+    /// burst push it back); a stream restart supersedes a pending display refresh.
+    private func requestRecovery(_ failure: CaptureFailure, at now: Date, delay: TimeInterval = 2) {
         guard active else { return }
+        pendingAction = mergeRecovery(pendingAction, recoveryAction(for: failure))
         debounce = RestartDebounce(delay: delay)
         debounce.request(at: now)
         armRestartTimer()
@@ -131,7 +145,14 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let wait = debounce.wait(from: Date()) else { return }
         restartTimer = Timer.scheduledTimer(withTimeInterval: wait, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            if self.debounce.fire(at: Date()) { self.restart() } else { self.armRestartTimer() }
+            guard self.debounce.fire(at: Date()) else { return self.armRestartTimer() }
+            let action = self.pendingAction
+            self.pendingAction = nil
+            switch action {
+            case .restartStream?: self.restart()
+            case .refreshDisplays?: self.refreshDisplays()
+            case nil: break
+            }
         }
     }
 
@@ -157,14 +178,38 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: again) // stopCapture may never call back
     }
 
-    /// Restart after a stop error or failed screenshots: fast the first time, then backed off.
-    private func restartAfterFailure(_ message: String) {
+    /// Re-queries the shareable content and replaces the screenshot display list, leaving the
+    /// audio stream running. With no stream (a restart or retry owns recovery) it does nothing.
+    private func refreshDisplays() {
+        guard active, stream != nil else { return }
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { content, error in
+            DispatchQueue.main.async {
+                guard self.active, self.stream != nil else { return }
+                guard let content = content, let picked = self.pickDisplays(content) else {
+                    return self.recoverAfterFailure(.screenshotsFailed,
+                                                    "screen capture unavailable: \(error?.localizedDescription ?? "no display")")
+                }
+                self.displays = picked.displays
+                self.lastThumb = nil
+                self.generation += 1
+                self.scheduleShot(after: 0)
+            }
+        }
+    }
+
+    /// Recovery after a failure: fast the first time, then backed off. A pending recovery is not
+    /// pushed back, but a stream restart still supersedes a pending refresh.
+    private func recoverAfterFailure(_ failure: CaptureFailure, _ message: String) {
         onError?(message)
-        guard debounce.deadline == nil else { return } // one is already pending; don't push it back
+        guard debounce.deadline == nil else {
+            pendingAction = mergeRecovery(pendingAction, recoveryAction(for: failure))
+            return
+        }
         let now = Date()
-        let delay = stopErrorRestartDelay(now: now, lastFast: lastFastRestart)
-        if delay < 30 { lastFastRestart = now }
-        requestRestart(at: now, delay: delay)
+        let kind = recoveryAction(for: failure)
+        let delay = stopErrorRestartDelay(now: now, lastFast: lastFast[kind])
+        if delay < 30 { lastFast[kind] = now }
+        requestRecovery(failure, at: now, delay: delay)
     }
 
     private func retry(_ message: String) {
@@ -189,7 +234,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             self.stream = nil
             self.shotTimer?.invalidate()
             self.systemWriter.finish()
-            self.restartAfterFailure("capture stopped: \(error.localizedDescription)")
+            self.recoverAfterFailure(.streamStopped, "capture stopped: \(error.localizedDescription)")
         }
     }
 
@@ -235,11 +280,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         group.notify(queue: .main) {
             self.shooting = false
             // Every display failed (e.g. "Failed to find any displays or windows to capture"
-            // after a display was removed): the display list is stale, so restart capture.
+            // after a display was removed, or a locked screen): refresh the display list only.
             if failures == images.count, gen == self.generation, self.active {
                 self.shotTimer?.invalidate() // no more shots on the stale display list
                 self.shotTimer = nil
-                self.restartAfterFailure("screenshots failed on every display; restarting capture")
+                self.recoverAfterFailure(.screenshotsFailed, "screenshots failed on every display; refreshing displays")
                 return
             }
             // Drop the frame if screens were disabled (e.g. an excluded app came up) meanwhile.

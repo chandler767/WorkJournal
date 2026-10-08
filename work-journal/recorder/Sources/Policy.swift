@@ -114,3 +114,21 @@ func stopErrorRestartDelay(now: Date, lastFast: Date?) -> TimeInterval {
     if let l = lastFast, now.timeIntervalSince(l) < 60 { return 30 }
     return 2
 }
+
+/// Why capture needs recovering.
+enum CaptureFailure { case screenshotsFailed, streamStopped, screenParametersChanged }
+
+/// How to recover: refresh only the screenshot display list (keeps the audio stream
+/// running), or stop and restart the whole stream.
+enum RecoveryAction { case refreshDisplays, restartStream }
+
+/// Screenshot-only failures (e.g. a locked screen, a stale display) re-query the displays
+/// without touching audio; the stream's own stop error or a display change restarts it.
+func recoveryAction(for f: CaptureFailure) -> RecoveryAction {
+    f == .screenshotsFailed ? .refreshDisplays : .restartStream
+}
+
+/// Combines a pending recovery with a new request: a stream restart covers a refresh.
+func mergeRecovery(_ pending: RecoveryAction?, _ next: RecoveryAction) -> RecoveryAction {
+    pending == .restartStream || next == .restartStream ? .restartStream : .refreshDisplays
+}

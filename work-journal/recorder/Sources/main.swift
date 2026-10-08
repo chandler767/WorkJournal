@@ -100,6 +100,13 @@ func restartChecks() -> [(String, Bool)] {
          stopErrorRestartDelay(now: t0, lastFast: t0.addingTimeInterval(-61)) == 2),
         ("repeated stop errors back off to 30 s",
          stopErrorRestartDelay(now: t0, lastFast: t0.addingTimeInterval(-10)) == 30),
+        ("screenshot failure refreshes displays only", recoveryAction(for: .screenshotsFailed) == .refreshDisplays),
+        ("stream stop error restarts the stream", recoveryAction(for: .streamStopped) == .restartStream),
+        ("screen change restarts the stream", recoveryAction(for: .screenParametersChanged) == .restartStream),
+        ("stream restart wins over a pending refresh",
+         mergeRecovery(.refreshDisplays, .restartStream) == .restartStream
+            && mergeRecovery(.restartStream, .refreshDisplays) == .restartStream),
+        ("first recovery is the requested one", mergeRecovery(nil, .refreshDisplays) == .refreshDisplays),
     ]
 }
 
