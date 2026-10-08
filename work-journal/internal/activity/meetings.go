@@ -41,19 +41,23 @@ type interval struct {
 // two-way speech (overlapping mic and system speech totaling at least
 // MeetingMinTwoWayMinutes). Candidates less than 2 minutes apart are merged.
 // It then adds in-person meetings (App InPersonApp) from mic-only
-// conversation, see inPersonRegions, except where one overlaps a meeting
-// already found. Meetings are returned in start order.
+// conversation, see inPersonRegions: the time of the app and two-way
+// meetings is cut out of each conversation (they win), and every remaining
+// piece of at least InPersonMinMinutes is its own meeting. Meetings are
+// returned in start order.
 func DetectMeetings(segs []Segment, speech []SpeechSpan, c config.Config) []Meeting {
 	out := appMeetings(segs, speech, c)
-	n := len(out)
+	min := time.Duration(c.InPersonMinMinutes) * time.Minute
 	for _, r := range inPersonRegions(speech, c) {
-		if slices.ContainsFunc(out[:n], func(m Meeting) bool { return m.Start.Before(r.end) && r.start.Before(m.End) }) {
-			continue
+		for _, piece := range subtract(r, out) {
+			if piece.end.Sub(piece.start) < min {
+				continue
+			}
+			out = append(out, Meeting{
+				ID:    fmt.Sprintf("%s-%s-%s", piece.start.Format("2006-01-02"), piece.start.Format("1504"), slug(InPersonApp)),
+				Start: piece.start, End: piece.end, App: InPersonApp,
+			})
 		}
-		out = append(out, Meeting{
-			ID:    fmt.Sprintf("%s-%s-%s", r.start.Format("2006-01-02"), r.start.Format("1504"), slug(InPersonApp)),
-			Start: r.start, End: r.end, App: InPersonApp,
-		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
 	return out
@@ -103,6 +107,27 @@ func inPersonRegions(speech []SpeechSpan, c config.Config) []interval {
 	}
 	min := time.Duration(c.InPersonMinMinutes) * time.Minute
 	return slices.DeleteFunc(out, func(r interval) bool { return r.end.Sub(r.start) < min })
+}
+
+// subtract returns the parts of r outside every meeting in ms, in order.
+func subtract(r interval, ms []Meeting) []interval {
+	cuts := slices.Clone(ms)
+	sort.Slice(cuts, func(i, j int) bool { return cuts[i].Start.Before(cuts[j].Start) })
+	var out []interval
+	cur := r.start
+	for _, m := range cuts {
+		if !m.End.After(cur) || !m.Start.Before(r.end) {
+			continue
+		}
+		if m.Start.After(cur) {
+			out = append(out, interval{start: cur, end: m.Start})
+		}
+		cur = m.End
+	}
+	if r.end.After(cur) {
+		out = append(out, interval{start: cur, end: r.end})
+	}
+	return out
 }
 
 // union sorts ivs and merges overlapping or touching intervals.

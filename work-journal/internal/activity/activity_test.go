@@ -350,3 +350,30 @@ func TestSplitAtMeetings(t *testing.T) {
 	// Splitting again changes nothing.
 	check(t, SplitAtMeetings(got, ms), got)
 }
+
+func TestInPersonSplitAroundShortCall(t *testing.T) {
+	// A 50-minute conversation with a 3-minute call in the middle.
+	sp := micTalk(at(10, 0), at(10, 50), 7, 10)
+	sp = append(sp, SpeechSpan{at(10, 20), at(10, 23), "system"})
+	ms := DetectMeetings(nil, sp, config.Default())
+	if len(ms) != 3 {
+		t.Fatalf("got %+v", ms)
+	}
+	a, call, b := ms[0], ms[1], ms[2]
+	if a.App != InPersonApp || !a.Start.Equal(at(10, 0)) || !a.End.Equal(at(10, 20)) {
+		t.Errorf("first part %+v", a)
+	}
+	if call.App != "call" || !call.Start.Equal(at(10, 20)) {
+		t.Errorf("call %+v", call)
+	}
+	if b.App != InPersonApp || !b.Start.Equal(call.End) || b.End.Before(at(10, 49)) || b.ID == a.ID {
+		t.Errorf("second part %+v (call ends %v)", b, call.End)
+	}
+	// A 6-minute conversation mostly covered by a call leaves no in-person meeting.
+	sp = micTalk(at(11, 0), at(11, 6), 7, 10)
+	sp = append(sp, SpeechSpan{at(11, 1), at(11, 5), "system"})
+	ms = DetectMeetings(nil, sp, config.Default())
+	if len(ms) != 1 || ms[0].App != "call" {
+		t.Fatalf("got %+v", ms)
+	}
+}
