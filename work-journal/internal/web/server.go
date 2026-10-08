@@ -43,6 +43,14 @@ type Server struct {
 	// SkillsMissing is set when no installed Claude Code skills were found:
 	// hours then cannot be summarized and the day page says so.
 	SkillsMissing bool
+	nowFn         func() time.Time // test hook; time.Now when nil
+}
+
+func (s *Server) now() time.Time {
+	if s.nowFn != nil {
+		return s.nowFn()
+	}
+	return time.Now()
 }
 
 // Handler returns the dashboard's routes.

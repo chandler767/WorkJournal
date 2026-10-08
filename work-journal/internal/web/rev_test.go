@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"workjournal/internal/config"
+	"workjournal/internal/scheduler"
 	"workjournal/internal/store"
 )
 
@@ -175,5 +177,26 @@ func TestDayMeetingsNewestFirst(t *testing.T) {
 	b := e.get("/day/" + seedDay).Body.String()
 	if strings.Index(b, "Planning") > strings.Index(b, "Standup") {
 		t.Error("meetings not newest first")
+	}
+}
+
+func TestDayRevCoversCloseFailureAndToday(t *testing.T) {
+	e := newEnv(t)
+	if err := os.Remove(e.p.DailyJournal(seedDay)); err != nil {
+		t.Fatal(err)
+	}
+	day := "/api/rev/day/" + seedDay
+	base := revOf(t, e, day)
+	if err := e.st.SetKV(scheduler.CloseFailuresKey(seedDay), "2"); err != nil {
+		t.Fatal(err)
+	}
+	if revOf(t, e, day) == base {
+		t.Error("rev did not change when close-failures KV was set")
+	}
+	today := config.DayKey(time.Now())
+	r1 := revOf(t, e, "/api/rev/day/"+today)
+	e.srv.nowFn = func() time.Time { return time.Now().AddDate(0, 0, 1) }
+	if revOf(t, e, "/api/rev/day/"+today) == r1 {
+		t.Error("rev did not change when IsToday flipped")
 	}
 }

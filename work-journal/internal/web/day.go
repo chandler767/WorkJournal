@@ -88,7 +88,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		Next:      config.DayKey(t.AddDate(0, 0, 1)),
 		PrevShort: t.AddDate(0, 0, -1).Format("Jan 2"),
 		NextShort: t.AddDate(0, 0, 1).Format("Jan 2"),
-		IsToday:   day == config.DayKey(time.Now()),
+		IsToday:   day == config.DayKey(s.now()),
 	}
 	rev, err := s.dayRev(day) // before reading anything: a later change then just triggers one more refresh
 	if err != nil {

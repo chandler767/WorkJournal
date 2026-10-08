@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+
+	"workjournal/internal/config"
+	"workjournal/internal/scheduler"
 )
 
 // fileStamp is a cheap change marker for a file: mtime and size, or "-".
@@ -36,7 +39,9 @@ func (s *Server) dayRev(day string) (string, error) {
 	}
 	_, _, state := s.recorderState()
 	disk, _, _ := s.Store.GetKV("disk_state")
-	return shortHash(db, fileStamp(s.Paths.DailyJournal(day)), state, disk, boolStr(s.SkillsMissing)), nil
+	closeFail, _, _ := s.Store.GetKV(scheduler.CloseFailuresKey(day))
+	return shortHash(db, fileStamp(s.Paths.DailyJournal(day)), state, disk, boolStr(s.SkillsMissing),
+		closeFail, boolStr(day == config.DayKey(s.now()))), nil
 }
 
 // hourRev fingerprints the hour page: database rows and the derived doc.
