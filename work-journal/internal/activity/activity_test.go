@@ -327,3 +327,26 @@ func TestInPersonYieldsToAppAndTwoWayMeetings(t *testing.T) {
 		t.Fatalf("two-way: got %+v", ms)
 	}
 }
+
+func TestSplitAtMeetings(t *testing.T) {
+	segs := []Segment{
+		{at(14, 0), at(14, 20), "loginwindow", "", KindIdle},
+		{at(14, 20), at(14, 40), "Code", "a.go", KindActive},
+		{at(14, 40), at(14, 50), "", "", KindPaused},
+		{at(14, 50), at(15, 0), "Code", "a.go", KindActive},
+	}
+	ms := []Meeting{{Start: at(14, 10), End: at(14, 30), App: InPersonApp}, {Start: at(14, 45), End: at(14, 55), App: InPersonApp}}
+	got := SplitAtMeetings(segs, ms)
+	check(t, got, []Segment{
+		{at(14, 0), at(14, 10), "loginwindow", "", KindIdle},
+		{at(14, 10), at(14, 20), "loginwindow", "", KindIdle},
+		{at(14, 20), at(14, 30), "Code", "a.go", KindActive},
+		{at(14, 30), at(14, 40), "Code", "a.go", KindActive},
+		{at(14, 40), at(14, 45), "", "", KindPaused},
+		{at(14, 45), at(14, 50), "", "", KindPaused},
+		{at(14, 50), at(14, 55), "Code", "a.go", KindActive},
+		{at(14, 55), at(15, 0), "Code", "a.go", KindActive},
+	})
+	// Splitting again changes nothing.
+	check(t, SplitAtMeetings(got, ms), got)
+}

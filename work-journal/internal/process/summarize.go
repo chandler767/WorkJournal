@@ -175,12 +175,14 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 		return err == nil, err
 	}
 
-	cats, unmatched := categorize.Apply(doc.Segments, s.Cfg.Rules)
+	// Docs transcribed before meeting splitting existed are split here too.
+	doc.Segments = activity.SplitAtMeetings(doc.Segments, doc.Meetings)
+	cats, unmatched := categorize.Apply(doc.Segments, doc.Meetings, s.Cfg.Rules)
 	recs := segmentRecords(doc.Day, doc.Hour, doc.Segments)
 	for i := range recs {
 		if recs[i].Category = cats[i]; cats[i] != "" {
 			recs[i].Confidence = 1
-			if recs[i].Kind == activity.KindActive {
+			if recs[i].Kind == activity.KindActive || categorize.InMeeting(doc.Segments[i], doc.Meetings) {
 				recs[i].Source = "rule"
 			}
 		}
@@ -291,7 +293,10 @@ func (s *SkillSummarizer) previousSummary(doc *HourDoc) (string, error) {
 // summarize-meeting inputs and of the segments categorize-time would be
 // asked about, built exactly as SummarizeHour builds them.
 func (s *SkillSummarizer) InputHash(doc *HourDoc) (string, error) {
-	cats, unmatched := categorize.Apply(doc.Segments, s.Cfg.Rules)
+	split := *doc
+	split.Segments = activity.SplitAtMeetings(doc.Segments, doc.Meetings)
+	doc = &split
+	cats, unmatched := categorize.Apply(doc.Segments, doc.Meetings, s.Cfg.Rules)
 	var segs []segmentInput
 	for _, i := range unmatched {
 		segs = append(segs, segInput(i, doc.Segments[i], nil))

@@ -206,7 +206,9 @@ func TestSummarizerSkipsCategorizeWhenAllMatched(t *testing.T) {
 
 func TestSummarizerHourInputShape(t *testing.T) {
 	e := newSumEnv(t)
-	m := activity.Meeting{ID: "2026-10-07-1010-zoom-us", Start: at(10, 10, 0), End: at(10, 30, 0), App: "zoom.us", Title: "Zoom Meeting"}
+	// The meeting lies in the gap so the zoom.us segment is left to categorize-time
+	// (time inside a meeting is always Meetings).
+	m := activity.Meeting{ID: "2026-10-07-1050-zoom-us", Start: at(10, 50, 0), End: at(10, 55, 0), App: "zoom.us", Title: "Zoom Meeting"}
 	doc := &HourDoc{Day: day, Hour: 10, Segments: []activity.Segment{
 		sg(activity.KindActive, "zoom.us", "Zoom Meeting", 10, 10, 30),
 		sg(activity.KindExcluded, "", "", 10, 30, 40),
@@ -239,7 +241,7 @@ func TestSummarizerHourInputShape(t *testing.T) {
 	}
 	b, _ := json.Marshal(c.input)
 	want := `{"day":"2026-10-07","hour":10,` +
-		`"meetings":[{"app":"zoom.us","end":"10:30","id":"2026-10-07-1010-zoom-us","start":"10:10"}],` +
+		`"meetings":[{"app":"zoom.us","end":"10:55","id":"2026-10-07-1050-zoom-us","start":"10:50"}],` +
 		`"ocr":["Agenda"],` +
 		`"segments":[{"app":"zoom.us","category":"","index":0,"minutes":20,"start":"10:10","title":"Zoom Meeting"},{"app":"Code","category":"Break/Idle","index":2,"minutes":5,"start":"10:40","title":"main.go"}],` +
 		`"transcript":[{"speaker":"You","text":"hello"},{"speaker":"Speaker 1","text":"hi"}]}`
@@ -570,5 +572,49 @@ func TestSummarizerAcceptsTimelineEndingAtNextHour(t *testing.T) {
 	}
 	if rec := e.hour(23); rec.Status != store.StatusDone {
 		t.Fatalf("status = %q", rec.Status)
+	}
+}
+
+func TestSummarizerCategorizesMeetingTimeAsMeetings(t *testing.T) {
+	e := newSumEnv(t)
+	m := activity.Meeting{ID: "2026-10-07-1410-in-person", Start: at(14, 10, 0), End: at(14, 45, 0), App: activity.InPersonApp}
+	doc := &HourDoc{Day: day, Hour: 14, Meetings: []activity.Meeting{m}, Segments: []activity.Segment{
+		sg(activity.KindIdle, "loginwindow", "", 14, 0, 20),
+		sg(activity.KindActive, "loginwindow", "", 14, 20, 40),
+		sg(activity.KindActive, "Code", "a.go", 14, 40, 59),
+	}}
+	e.transcribed(doc)
+	e.fk.out["summarize-hour"] = hourOut
+	e.fk.out["categorize-time"] = `{"segments":[{"index":4,"category":"Deep work","confidence":0.9}]}`
+
+	if err := e.s.SummarizeHour(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	type cs struct {
+		from, to int
+		cat, src string
+	}
+	var got []cs
+	for _, s := range e.segments(14) {
+		got = append(got, cs{s.Start.Minute(), s.End.Minute(), s.Category, s.Source})
+	}
+	want := []cs{
+		{0, 10, "Break/Idle", "auto"},
+		{10, 20, "Meetings", "rule"},
+		{20, 40, "Meetings", "rule"},
+		{40, 45, "Meetings", "rule"},
+		{45, 59, "Deep work", "skill"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("segments = %v\nwant %v", got, want)
+	}
+	for _, c := range e.fk.calls {
+		if c.skill != "categorize-time" {
+			continue
+		}
+		segs := c.input["segments"].([]any)
+		if len(segs) != 1 || segs[0].(map[string]any)["index"].(float64) != 4 {
+			t.Fatalf("categorize-time asked about %v", segs)
+		}
 	}
 }

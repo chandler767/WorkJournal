@@ -184,6 +184,8 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	// Only the part of a segment inside a meeting is meeting time.
+	segs = activity.SplitAtMeetings(segs, meetings)
 
 	doc := &HourDoc{
 		Day: day, Hour: hour, Status: store.StatusTranscribed,

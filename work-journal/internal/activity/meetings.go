@@ -270,3 +270,27 @@ func earlierOf(a, b time.Time) time.Time {
 	}
 	return b
 }
+
+// SplitAtMeetings splits segments at every meeting start or end that falls
+// strictly inside them, so each piece lies wholly inside or outside each
+// meeting. Kinds, apps and titles are kept; splitting again changes nothing.
+func SplitAtMeetings(segs []Segment, ms []Meeting) []Segment {
+	var cuts []time.Time
+	for _, m := range ms {
+		cuts = append(cuts, m.Start, m.End)
+	}
+	sort.Slice(cuts, func(i, j int) bool { return cuts[i].Before(cuts[j]) })
+	out := make([]Segment, 0, len(segs))
+	for _, s := range segs {
+		for _, c := range cuts {
+			if c.After(s.Start) && c.Before(s.End) {
+				head := s
+				head.End = c
+				out = append(out, head)
+				s.Start = c
+			}
+		}
+		out = append(out, s)
+	}
+	return out
+}
