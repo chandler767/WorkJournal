@@ -233,3 +233,46 @@ func TestScreenCaptureDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("legacy Load = %+v, %v", got, err)
 	}
 }
+
+func TestInPersonDefaultsAndValidation(t *testing.T) {
+	c := Default()
+	if c.InPersonMinMinutes != 5 || c.InPersonSpeechRatio != 0.4 {
+		t.Fatalf("defaults: min %d ratio %v", c.InPersonMinMinutes, c.InPersonSpeechRatio)
+	}
+	ok := []func(*Config){
+		func(c *Config) { c.InPersonMinMinutes = 1 },
+		func(c *Config) { c.InPersonMinMinutes = 120 },
+		func(c *Config) { c.InPersonSpeechRatio = 0.05 },
+		func(c *Config) { c.InPersonSpeechRatio = 1 },
+	}
+	for i, f := range ok {
+		c := Default()
+		f(&c)
+		if err := c.Validate(); err != nil {
+			t.Errorf("ok[%d] rejected: %v", i, err)
+		}
+	}
+	bad := []struct {
+		key string
+		f   func(*Config)
+	}{
+		{"in_person_min_minutes", func(c *Config) { c.InPersonMinMinutes = 0 }},
+		{"in_person_min_minutes", func(c *Config) { c.InPersonMinMinutes = 121 }},
+		{"in_person_speech_ratio", func(c *Config) { c.InPersonSpeechRatio = 0.04 }},
+		{"in_person_speech_ratio", func(c *Config) { c.InPersonSpeechRatio = 1.01 }},
+	}
+	for _, b := range bad {
+		c := Default()
+		b.f(&c)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), b.key) {
+			t.Errorf("%s: accepted (err %v)", b.key, err)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte("in_person_min_minutes = 10\nin_person_speech_ratio = 0.5\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(p); err != nil || got.InPersonMinMinutes != 10 || got.InPersonSpeechRatio != 0.5 {
+		t.Fatalf("Load = %+v, %v", got, err)
+	}
+}

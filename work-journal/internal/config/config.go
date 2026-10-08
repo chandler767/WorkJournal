@@ -37,6 +37,8 @@ type Config struct {
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
 	MeetingMinTwoWayMinutes      int               `toml:"meeting_min_two_way_minutes"`
+	InPersonMinMinutes           int               `toml:"in_person_min_minutes"`
+	InPersonSpeechRatio          float64           `toml:"in_person_speech_ratio"`
 	ProcessIntervalMinutes       int               `toml:"process_interval_minutes"`
 	ExcludedApps                 []string          `toml:"excluded_apps"`
 	ExcludedTitleKeywords        []string          `toml:"excluded_title_keywords"`
@@ -71,6 +73,8 @@ func Default() Config {
 		MinFreeGB:                    5,
 		ListenAddr:                   "127.0.0.1:4747",
 		MeetingMinTwoWayMinutes:      2,
+		InPersonMinMinutes:           5,
+		InPersonSpeechRatio:          0.4,
 		ProcessIntervalMinutes:       15,
 		ExcludedApps:                 []string{"1Password", "Keychain Access"},
 		ExcludedTitleKeywords:        []string{"Private", "Incognito"},
@@ -153,6 +157,12 @@ func (c Config) Validate() error {
 	}
 	if !slices.Contains(ChangeSensitivities, c.ScreenChangeSensitivity) {
 		return fmt.Errorf("screen_change_sensitivity must be one of %v, got %q", ChangeSensitivities, c.ScreenChangeSensitivity)
+	}
+	if c.InPersonMinMinutes < 1 || c.InPersonMinMinutes > 120 {
+		return fmt.Errorf("in_person_min_minutes must be within 1–120, got %d", c.InPersonMinMinutes)
+	}
+	if c.InPersonSpeechRatio < 0.05 || c.InPersonSpeechRatio > 1 {
+		return fmt.Errorf("in_person_speech_ratio must be within [0.05,1], got %v", c.InPersonSpeechRatio)
 	}
 	if c.MinFreeGB < 0 {
 		return fmt.Errorf("min_free_gb must not be negative, got %d", c.MinFreeGB)

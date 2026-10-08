@@ -230,3 +230,100 @@ func TestSlackOnlyMeetingWhenHuddle(t *testing.T) {
 		t.Fatalf("got %+v", ms)
 	}
 }
+
+// micTalk returns mic speech spans of on seconds every period seconds over
+// [from, to).
+func micTalk(from, to time.Time, on, period int) []SpeechSpan {
+	var out []SpeechSpan
+	for t := from; t.Before(to); t = t.Add(time.Duration(period) * time.Second) {
+		e := t.Add(time.Duration(on) * time.Second)
+		if e.After(to) {
+			e = to
+		}
+		out = append(out, SpeechSpan{t, e, "mic"})
+	}
+	return out
+}
+
+func TestDetectInPersonMeetingFromDenseMicSpeech(t *testing.T) {
+	// Screen locked, then idle: neither prevents detection.
+	segs := []Segment{
+		{at(14, 0), at(14, 5), "loginwindow", "", KindActive},
+		{at(14, 5), at(14, 30), "loginwindow", "", KindIdle},
+	}
+	sp := micTalk(at(14, 2), at(14, 12), 6, 10)                 // 60% speech for 10 min
+	sp = append(sp, SpeechSpan{at(14, 2), at(14, 3), "system"}) // a stray system blip
+	ms := DetectMeetings(segs, sp, config.Default())
+	if len(ms) != 1 {
+		t.Fatalf("got %+v", ms)
+	}
+	m := ms[0]
+	if InPersonApp != "In person" || m.App != InPersonApp || m.ID != "2026-10-07-1402-in-person" {
+		t.Errorf("bad meeting %+v", m)
+	}
+	if !m.Start.Equal(at(14, 2)) || m.End.Before(at(14, 11)) || m.End.After(at(14, 12)) {
+		t.Errorf("bounds %v-%v", m.Start, m.End)
+	}
+}
+
+func TestNoInPersonMeetingFromSparseOrShortSpeech(t *testing.T) {
+	sparse := micTalk(at(9, 0), at(9, 30), 5, 60) // ~8% speech
+	if ms := DetectMeetings(nil, sparse, config.Default()); len(ms) != 0 {
+		t.Errorf("sparse: got %+v", ms)
+	}
+	short := micTalk(at(9, 0), at(9, 3), 8, 10) // dense but 3 minutes
+	if ms := DetectMeetings(nil, short, config.Default()); len(ms) != 0 {
+		t.Errorf("short: got %+v", ms)
+	}
+	// System speech alone never makes an in-person meeting.
+	sys := []SpeechSpan{{at(9, 0), at(9, 20), "system"}}
+	if ms := DetectMeetings(nil, sys, config.Default()); len(ms) != 0 {
+		t.Errorf("system: got %+v", ms)
+	}
+}
+
+func TestInPersonRegionsMergeAcrossShortGap(t *testing.T) {
+	sp := micTalk(at(15, 0), at(15, 6), 7, 10)
+	sp = append(sp, micTalk(at(15, 7).Add(30*time.Second), at(15, 14), 7, 10)...) // ~90 s gap
+	ms := DetectMeetings(nil, sp, config.Default())
+	if len(ms) != 1 || !ms[0].Start.Equal(at(15, 0)) || ms[0].End.Before(at(15, 13)) || ms[0].App != InPersonApp {
+		t.Fatalf("got %+v", ms)
+	}
+	// A 10-minute gap keeps them apart.
+	sp = micTalk(at(15, 0), at(15, 6), 7, 10)
+	sp = append(sp, micTalk(at(15, 16), at(15, 22), 7, 10)...)
+	if ms := DetectMeetings(nil, sp, config.Default()); len(ms) != 2 {
+		t.Fatalf("got %+v", ms)
+	}
+}
+
+func TestInPersonConfigKnobs(t *testing.T) {
+	sp := micTalk(at(9, 0), at(9, 8), 3, 10) // 30% speech for 8 minutes
+	c := config.Default()
+	if ms := DetectMeetings(nil, sp, c); len(ms) != 0 {
+		t.Errorf("default ratio: got %+v", ms)
+	}
+	c.InPersonSpeechRatio = 0.25
+	if ms := DetectMeetings(nil, sp, c); len(ms) != 1 {
+		t.Errorf("ratio 0.25: got %+v", ms)
+	}
+	c.InPersonMinMinutes = 10
+	if ms := DetectMeetings(nil, sp, c); len(ms) != 0 {
+		t.Errorf("min 10: got %+v", ms)
+	}
+}
+
+func TestInPersonYieldsToAppAndTwoWayMeetings(t *testing.T) {
+	segs := []Segment{{at(10, 0), at(10, 30), "zoom.us", "Zoom Meeting", KindActive}}
+	sp := micTalk(at(10, 0), at(10, 30), 7, 10)
+	ms := DetectMeetings(segs, sp, config.Default())
+	if len(ms) != 1 || ms[0].App != "zoom.us" {
+		t.Fatalf("app: got %+v", ms)
+	}
+	// Two-way speech (mic + system) is a call, not an in-person meeting.
+	sp = append(micTalk(at(11, 0), at(11, 20), 7, 10), SpeechSpan{at(11, 0), at(11, 20), "system"})
+	ms = DetectMeetings(nil, sp, config.Default())
+	if len(ms) != 1 || ms[0].App != "call" {
+		t.Fatalf("two-way: got %+v", ms)
+	}
+}

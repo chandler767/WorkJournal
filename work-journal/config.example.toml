@@ -23,6 +23,10 @@ name_confidence_threshold = 0.7
 min_free_gb = 5
 listen_addr = "127.0.0.1:4747"
 meeting_min_two_way_minutes = 2
+# In-person meetings: mic-only conversation (nobody on a call) where your mic hears speech
+# for at least in_person_speech_ratio of a rolling 5-minute window, lasting in_person_min_minutes.
+in_person_min_minutes = 5      # 1-120
+in_person_speech_ratio = 0.4   # 0.05-1
 process_interval_minutes = 15  # summarize the hour in progress every N minutes: 5, 10, 15, 20, 30 or 60 (60: only finished hours)
 excluded_apps = ["1Password", "Keychain Access"]
 excluded_title_keywords = ["Private", "Incognito"]
