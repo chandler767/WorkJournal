@@ -13,6 +13,9 @@
     </label>
     <label>Idle minutes <input type="number" name="idle_minutes" min="1" value="{{.Form.IdleMinutes}}"></label>
     <label>Pause auto-resume (minutes) <input type="number" name="pause_auto_resume" min="1" value="{{.Form.PauseAutoResume}}"></label>
+    <label>Summarize the current hour every
+      <select name="process_interval_minutes">{{range .Intervals}}<option value="{{.}}"{{if eq . $.Form.ProcessInterval}} selected{{end}}>{{if eq . "60"}}60 min (only when the hour ends){{else}}{{.}} min{{end}}</option>{{end}}</select>
+    </label>
   </section>
   <section>
     <h2>Exclusions</h2>

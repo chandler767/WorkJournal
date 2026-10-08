@@ -18,48 +18,93 @@ import (
 // may still be finishing it; the hour stays pending and is retried.
 var ErrChunkNotReady = errors.New("audio chunk not finished yet")
 
-// transcribeAudio converts each chunk to WAV in a per-hour temp dir,
-// transcribes it and labels system speakers. A chunk afconvert cannot read
-// fails the hour with ErrChunkNotReady while it is younger than
-// chunk_minutes+2m (the recorder finalizes a silent chunk only at its
-// boundary); older unreadable chunks are logged and skipped. A transcription
-// error fails the hour. Returned
+// transcribeAudio returns the speech of the given chunks of day, using the
+// processing cache: a chunk is converted to WAV (in a per-call temp dir),
+// transcribed and, on the system track, diarized only when its cache entry
+// is missing or stale. Speaker labels are assigned afresh on every call from
+// the cached turns and embeddings, so they stay stable as chunks are added.
+//
+// A chunk afconvert cannot read fails the call with ErrChunkNotReady while it
+// is younger than chunk_minutes+2m (the recorder finalizes a silent chunk only
+// at its boundary) unless skipOpen is set, when it is skipped like an older
+// unreadable chunk. A transcription error fails the call. Returned
 // embeddings are keyed by speaker label.
-func (p *Pipeline) transcribeAudio(ctx context.Context, chunks []chunk) ([]media.Utterance, map[string][]float32, error) {
+func (p *Pipeline) transcribeAudio(ctx context.Context, day string, chunks []chunk, skipOpen bool) ([]media.Utterance, map[string][]float32, error) {
 	if len(chunks) == 0 {
 		return nil, nil, nil
 	}
-	tmp, err := os.MkdirTemp("", "workjournal-hour-*")
-	if err != nil {
-		return nil, nil, err
-	}
-	defer os.RemoveAll(tmp)
+	var tmp string
+	defer func() {
+		if tmp != "" {
+			os.RemoveAll(tmp)
+		}
+	}()
 
 	var d diarize.Diarizer
 	if p.Cfg.Diarization != "off" {
 		d = p.Diarizer
 	}
-	lb := &labeler{p: p, d: d, embs: map[string][]float32{}}
+	lb := &labeler{p: p, embs: map[string][]float32{}}
 	var all []media.Utterance
 	for _, c := range chunks {
 		name := filepath.Base(c.path)
-		wav := filepath.Join(tmp, strings.TrimSuffix(name, filepath.Ext(name))+".wav")
-		if err := media.ToWav16k(ctx, p.Run, c.path, wav); err != nil {
-			if ctx.Err() != nil {
-				return nil, nil, ctx.Err()
-			}
-			if p.chunkMayBeOpen(c.path) {
-				return nil, nil, fmt.Errorf("%w: %s: %v", ErrChunkNotReady, name, err)
-			}
-			p.logf("process: skipping unreadable chunk %s: %v", c.path, err)
-			continue
-		}
-		us, err := p.Transcriber.Transcribe(ctx, wav, c.start, c.track)
+		key, err := statKey(c.path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("transcribe %s: %w", name, err)
+			return nil, nil, fmt.Errorf("stat %s: %w", name, err)
 		}
+		e, ok := p.loadChunk(day, c.path, key)
+		needText := !ok
+		needTurns := c.track == "system" && d != nil && (!ok || !e.Diarized)
+		if needText || needTurns {
+			if tmp == "" {
+				if tmp, err = os.MkdirTemp("", "workjournal-hour-*"); err != nil {
+					return nil, nil, err
+				}
+			}
+			wav := filepath.Join(tmp, strings.TrimSuffix(name, filepath.Ext(name))+".wav")
+			if err := media.ToWav16k(ctx, p.Run, c.path, wav); err != nil {
+				switch {
+				case ctx.Err() != nil:
+					return nil, nil, ctx.Err()
+				case !needText:
+					// Cached speech stays usable; only the speakers are unknown.
+					p.logf("process: cannot read %s to diarize: %v; labelling speech as others", c.path, err)
+					needTurns = false
+				case !p.chunkMayBeOpen(c.path):
+					p.logf("process: skipping unreadable chunk %s: %v", c.path, err)
+					continue
+				case skipOpen:
+					p.logf("process: chunk %s not readable yet; leaving it for a later run", c.path)
+					continue
+				default:
+					return nil, nil, fmt.Errorf("%w: %s: %v", ErrChunkNotReady, name, err)
+				}
+			} else if needText {
+				us, err := p.Transcriber.Transcribe(ctx, wav, c.start, c.track)
+				if err != nil {
+					return nil, nil, fmt.Errorf("transcribe %s: %w", name, err)
+				}
+				e = &chunkEntry{Version: cacheVersion, Key: key, Model: p.Cfg.WhisperModel, Utterances: us}
+			}
+			if needTurns {
+				turns, embs, err := d.Diarize(ctx, wav)
+				if err != nil {
+					p.logf("process: diarize %s: %v; labelling speech as others", name, err)
+				} else {
+					e.Diarized, e.Turns, e.Embeddings = true, turns, embs
+				}
+			}
+			if needText || e.Diarized {
+				p.saveChunk(day, c.path, e)
+			}
+		}
+		us := append([]media.Utterance(nil), e.Utterances...)
 		if c.track == "system" {
-			lb.label(ctx, wav, c.start, us)
+			var turns []diarize.Turn
+			if d != nil && e.Diarized {
+				turns = e.Turns
+			}
+			lb.label(turns, e.Embeddings, c.start, us)
 		}
 		all = append(all, us...)
 	}
@@ -73,7 +118,6 @@ func (p *Pipeline) transcribeAudio(ctx context.Context, chunks []chunk) ([]media
 // labeler assigns speaker labels to system utterances across one hour.
 type labeler struct {
 	p      *Pipeline
-	d      diarize.Diarizer // nil: everyone is "others"
 	embs   map[string][]float32
 	labels []string // labels with embeddings, in first-seen order
 	anon   int
@@ -81,17 +125,7 @@ type labeler struct {
 
 // label sets Speaker on each utterance of one system chunk: the label of the
 // turn with the largest time overlap, or "others" without usable turns.
-func (l *labeler) label(ctx context.Context, wav string, chunkStart time.Time, us []media.Utterance) {
-	var turns []diarize.Turn
-	var embs map[int][]float32
-	if l.d != nil {
-		var err error
-		turns, embs, err = l.d.Diarize(ctx, wav)
-		if err != nil {
-			l.p.logf("process: diarize %s: %v; labelling speech as others", filepath.Base(wav), err)
-			turns = nil
-		}
-	}
+func (l *labeler) label(turns []diarize.Turn, embs map[int][]float32, chunkStart time.Time, us []media.Utterance) {
 	ordered := append([]diarize.Turn(nil), turns...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Start < ordered[j].Start })
 	names := map[int]string{}

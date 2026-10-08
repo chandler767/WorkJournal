@@ -43,6 +43,7 @@ type hourPage struct {
 	Title, Date, Label, Status string
 	Hour                       string
 	NeedsReview                bool
+	PartialNote                string
 	Summary                    skills.HourSummary
 	HasSummary                 bool
 	Transcript                 []utterRow
@@ -76,6 +77,9 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 	if found {
 		p.Status = rec.Status
 		p.NeedsReview = rec.Status == store.StatusNeedsReview
+		if rec.Status == store.StatusPartial {
+			p.PartialNote = partialNote(cfg.ProcessIntervalMinutes)
+		}
 		if rec.SummaryJSON != "" {
 			if err := json.Unmarshal([]byte(rec.SummaryJSON), &p.Summary); err == nil {
 				p.HasSummary = true

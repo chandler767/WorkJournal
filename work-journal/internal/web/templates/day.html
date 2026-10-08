@@ -5,6 +5,7 @@
   <a href="/day/{{.Next}}" aria-label="Next day">{{.Next}} &rarr;</a>
 </nav>
 
+{{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
 {{if .DiskWarn}}<div class="banner disk-warning" role="alert">Disk space is low (state: {{.DiskWarn}}). Recording may be paused or raw media cleaned early.</div>{{end}}
 {{if .SkillsMissing}}<div class="banner skills-missing" role="alert">Claude Code skills were not found, so hours are not being summarized. Run <code>journal setup</code> (it installs the skills) and restart <code>journal serve</code>.</div>{{end}}
 
@@ -14,6 +15,7 @@
   {{if .RecorderUp}}
   <form method="post" action="{{if .Paused}}/resume{{else}}/pause{{end}}"><button type="submit">{{if .Paused}}Resume{{else}}Pause{{end}}</button></form>
   {{end}}
+  {{if .IsToday}}<form method="post" action="/process-now"><button type="submit" class="secondary" title="Summarize everything recorded so far">Process now</button></form>{{end}}
 </section>
 
 <section>
@@ -53,7 +55,7 @@
   <article class="hour">
     <header>
       <h3><a href="/hour/{{$.Date}}/{{printf "%02d" .Hour}}">{{.Label}}</a>{{if .Summary.MainFocus}} <span class="focus">{{.Summary.MainFocus}}</span>{{end}}</h3>
-      {{if .NeedsReview}}<span class="badge warn">needs review</span>{{else if .Pending}}<span class="badge">processing</span>{{end}}
+      {{if .NeedsReview}}<span class="badge warn">needs review</span>{{else if .Partial}}<span class="badge">in progress</span>{{else if .Pending}}<span class="badge">processing</span>{{end}}
     </header>
     {{if .Summary.Narrative}}<details class="narrative"><summary>Narrative</summary><p>{{.Summary.Narrative}}</p></details>{{end}}
     {{if .Summary.Notes}}<ul>{{range .Summary.Notes}}<li>{{.}}</li>{{end}}</ul>{{end}}

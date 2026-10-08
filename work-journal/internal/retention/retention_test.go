@@ -216,3 +216,29 @@ func TestSweepSkipsDayWithUnparseableMediaName(t *testing.T) {
 		t.Fatal("day deleted")
 	}
 }
+
+func TestSweepKeepsPartialDayAndRemovesCacheWithRaw(t *testing.T) {
+	p, st := setup(t, "2026-10-01", "2026-10-02")
+	for _, d := range []string{"2026-10-01", "2026-10-02"} {
+		if err := os.MkdirAll(filepath.Join(p.CacheDay(d), "audio"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.UpsertHour(store.HourRecord{Day: "2026-10-01", Hour: 9, Status: store.StatusPartial}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	removed, err := Sweep(p, st, now, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(removed, []string{"2026-10-02"}) {
+		t.Fatalf("removed = %v", removed)
+	}
+	if !exists(p.RawDay("2026-10-01")) || !exists(p.CacheDay("2026-10-01")) {
+		t.Fatal("partial day's raw media or cache deleted")
+	}
+	if exists(p.CacheDay("2026-10-02")) {
+		t.Fatal("cache not removed together with raw")
+	}
+}

@@ -41,9 +41,17 @@ type fakeJobs struct {
 	enrollErr                   error
 	enrollSaw                   *store.Store // checked at call time: participant already saved?
 	sawParticipants             []store.ParticipantRecord
+	processedNow                int
+	upto                        time.Time
+	nowErr                      error
 }
 
 func (f *fakeJobs) ProcessPending(context.Context) error { return nil }
+func (f *fakeJobs) ProcessCurrent(context.Context) error { return nil }
+func (f *fakeJobs) ProcessNow(context.Context) (time.Time, error) {
+	f.processedNow++
+	return f.upto, f.nowErr
+}
 func (f *fakeJobs) ReprocessHour(_ context.Context, d string, h int) error {
 	f.reprocessed = append(f.reprocessed, d+"/"+string(rune('0'+h/10))+string(rune('0'+h%10)))
 	return nil

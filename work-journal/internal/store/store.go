@@ -15,6 +15,9 @@ const (
 	StatusTranscribed = "transcribed"
 	StatusDone        = "done"
 	StatusNeedsReview = "needs_review"
+	// StatusPartial is the in-progress hour, summarized up to the last
+	// partial run; it gets the normal final pass once the hour has ended.
+	StatusPartial = "partial"
 )
 
 //go:embed schema.sql

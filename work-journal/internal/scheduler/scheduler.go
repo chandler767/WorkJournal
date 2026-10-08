@@ -18,6 +18,12 @@ var ErrMediaExpired = errors.New("raw media expired")
 // Jobs is the work the scheduler triggers.
 type Jobs interface {
 	ProcessPending(ctx context.Context) error
+	// ProcessCurrent summarizes the in-progress hour so far.
+	ProcessCurrent(ctx context.Context) error
+	// ProcessNow asks the recorder to finish its current files, then
+	// processes finished hours and the in-progress hour; it returns the
+	// time processed up to.
+	ProcessNow(ctx context.Context) (time.Time, error)
 	ReprocessHour(ctx context.Context, day string, hour int) error
 	CloseDay(ctx context.Context, day string) error
 	Rollup(ctx context.Context, week string) error
@@ -29,6 +35,7 @@ type Jobs interface {
 // KV keys holding the last run of each job.
 const (
 	kvProcessHour         = "last_process_hour"
+	kvPartialRun          = "last_partial_run"
 	kvRetainHour          = "last_retain_hour"
 	kvCloseDay            = "last_close_day"
 	kvCloseAttemptHour    = "last_close_attempt_hour"
@@ -92,7 +99,8 @@ func (s *Scheduler) Run(ctx context.Context, every time.Duration) {
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	cfg := s.Cfg()
 	s.step("disk check", s.Jobs.DiskCheck(ctx))
-	s.process(ctx, now)
+	ranPending := s.process(ctx, now)
+	s.partial(ctx, now, cfg, ranPending)
 	s.closeDays(ctx, now, cfg)
 	s.rollups(ctx, now, cfg)
 }
@@ -129,22 +137,49 @@ func settled(now time.Time) bool {
 // advances once the job was attempted, success or failure, so a persistently
 // failing hour is retried next hour rather than every minute. Only a cancelled
 // context leaves the marker unadvanced. ProcessPending waits until the hour
-// has settled so the previous hour's last files are no longer fresh.
-func (s *Scheduler) process(ctx context.Context, now time.Time) {
+// has settled so the previous hour's last files are no longer fresh. It
+// reports whether ProcessPending ran.
+func (s *Scheduler) process(ctx context.Context, now time.Time) bool {
+	ran := false
 	if settled(now) {
-		s.hourly(ctx, now, kvProcessHour, "process pending", s.Jobs.ProcessPending)
+		ran = s.hourly(ctx, now, kvProcessHour, "process pending", s.Jobs.ProcessPending)
 	}
 	s.hourly(ctx, now, kvRetainHour, "retain", s.Jobs.Retain)
+	return ran
 }
 
-func (s *Scheduler) hourly(ctx context.Context, now time.Time, key, name string, job func(context.Context) error) {
+func (s *Scheduler) hourly(ctx context.Context, now time.Time, key, name string, job func(context.Context) error) bool {
 	hour := hourKey(now)
 	if s.kv(key) == hour {
-		return
+		return false
 	}
 	s.step(name, job(ctx))
 	if ctx.Err() == nil {
 		s.mark(key, hour)
+	}
+	return true
+}
+
+// partial processes up to the current moment once per process_interval_minutes
+// slot of the clock (with 15: at :00, :15, :30, :45): finished hours first
+// (once the hour has settled, and unless the hourly run just did), then the
+// in-progress hour. The attempt is recorded even when it fails, so a failure
+// waits for the next slot. An interval of 60 disables partial runs.
+func (s *Scheduler) partial(ctx context.Context, now time.Time, cfg config.Config, ranPending bool) {
+	every := cfg.ProcessIntervalMinutes
+	if every <= 0 || every >= 60 {
+		return
+	}
+	slot := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()/every*every, 0, 0, now.Location())
+	if last, err := time.Parse(time.RFC3339, s.kv(kvPartialRun)); err == nil && !last.Before(slot) {
+		return
+	}
+	if settled(now) && !ranPending {
+		s.step("process pending", s.Jobs.ProcessPending(ctx))
+	}
+	s.step("process current", s.Jobs.ProcessCurrent(ctx))
+	if ctx.Err() == nil {
+		s.mark(kvPartialRun, now.Format(time.RFC3339))
 	}
 }
 

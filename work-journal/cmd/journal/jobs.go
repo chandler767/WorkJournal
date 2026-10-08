@@ -41,8 +41,9 @@ type Jobs struct {
 	Logf       func(string, ...any)
 
 	// heavy serializes the pipeline and journal jobs (ProcessPending,
-	// ReprocessHour, CloseDay, Rollup): the scheduler, the dashboard and the
-	// CLI may trigger them concurrently and they share hours and files.
+	// ProcessCurrent, ProcessNow, ReprocessHour, CloseDay, Rollup): the
+	// scheduler, the dashboard and the CLI may trigger them concurrently and
+	// they share hours and files.
 	heavy sync.Mutex
 
 	// sendErr is the last Control send error DiskCheck reported ("" after a
@@ -84,6 +85,28 @@ func (j *Jobs) ProcessPending(ctx context.Context) error {
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
 	return j.pipeline().ProcessPending(ctx)
+}
+
+// ProcessCurrent summarizes the in-progress hour up to now.
+func (j *Jobs) ProcessCurrent(ctx context.Context) error {
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
+	return j.pipeline().ProcessCurrent(ctx, j.now())
+}
+
+// ProcessNow is the dashboard's "Process now": the recorder finishes its
+// current audio chunks (a recorder that is not running is logged and
+// skipped), then finished hours and the in-progress hour are processed. It
+// returns the time processed up to.
+func (j *Jobs) ProcessNow(ctx context.Context) (time.Time, error) {
+	if err := j.Control.Rotate(); err != nil {
+		j.Logf("process now: rotate: %v; processing what is on disk", err)
+	}
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
+	now := j.now()
+	p := j.pipeline()
+	return now, errors.Join(p.ProcessPending(ctx), p.ProcessCurrent(ctx, now))
 }
 
 // ReprocessHour resets the hour to pending and runs it through the pipeline

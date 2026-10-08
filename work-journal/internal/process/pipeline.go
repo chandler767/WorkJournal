@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"workjournal/internal/activity"
@@ -119,29 +121,57 @@ func (p *Pipeline) processHour(ctx context.Context, h HourKey) error {
 // hour has no speech, no screen text, no active time and ends no meeting. On error nothing
 // about the hour's status changes.
 func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourDoc, error) {
+	doc, err := p.build(ctx, day, hour, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	summary := ""
+	if isEmpty(doc) {
+		doc.Status, summary = store.StatusDone, "{}"
+	}
+	if err := p.record(doc, summary); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// build assembles the HourDoc of a finished hour from raw data (upto zero),
+// or of the in-progress hour from the inputs ready at upto (see
+// ProcessCurrent). It writes nothing but the processing cache.
+func (p *Pipeline) build(ctx context.Context, day string, hour int, upto time.Time) (*HourDoc, error) {
 	start, end, err := hourBounds(day, hour)
 	if err != nil {
 		return nil, err
+	}
+	partial := !upto.IsZero()
+	cut := end
+	if partial {
+		cut = earlier(upto, end)
 	}
 	events, err := p.stateEvents(day)
 	if err != nil {
 		return nil, err
 	}
-	segs := activity.Segments(events, start, end)
+	segs := activity.Segments(events, start, cut)
 
-	chunks, err := p.chunks(day)
+	all, err := p.chunks(day)
 	if err != nil {
 		return nil, err
 	}
-	utts, embs, err := p.transcribeAudio(ctx, inHour(chunks, start, end))
+	chunks, covered := inHour(all, start, end), cut
+	if partial {
+		chunks, covered = readyChunks(all, chunks, upto)
+		covered = earlier(covered, cut)
+	}
+	utts, embs, err := p.transcribeAudio(ctx, day, chunks, partial)
 	if err != nil {
 		return nil, err
 	}
-	screens, err := p.ocrHour(ctx, day, start, end, segs)
+	screens, err := p.ocrHour(ctx, day, start, cut, segs)
 	if err != nil {
 		return nil, err
 	}
-	meetings, err := p.detectMeetings(day, hour, start, end, events, utts)
+	meetings, err := p.detectMeetings(day, hour, start, cut, events, utts)
 	if err != nil {
 		return nil, err
 	}
@@ -151,32 +181,37 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 		Segments: segs, Transcript: utts, Screens: screens, Meetings: meetings,
 		Embeddings: embs,
 	}
+	if partial {
+		doc.Status = store.StatusPartial
+		if doc.EndedMeetings, err = p.endedSoFar(meetings, covered); err != nil {
+			return nil, err
+		}
+		return doc, nil
+	}
 	for _, m := range meetings {
 		if m.End.Before(end) {
 			doc.EndedMeetings = append(doc.EndedMeetings, m.ID)
 		}
 	}
-	summary := ""
-	if isEmpty(doc) {
-		doc.Status, summary = store.StatusDone, "{}"
-	}
+	return doc, nil
+}
 
-	if err := p.upsertMeetings(day, meetings); err != nil {
-		return nil, err
+// record stores doc: meetings, segments, indexed text, the derived JSON and
+// the hour record with doc.Status and summaryJSON.
+func (p *Pipeline) record(doc *HourDoc, summaryJSON string) error {
+	if err := p.upsertMeetings(doc.Day, doc.Meetings); err != nil {
+		return err
 	}
-	if err := p.Store.ReplaceSegments(day, hour, segmentRecords(day, hour, segs)); err != nil {
-		return nil, fmt.Errorf("store segments: %w", err)
+	if err := p.Store.ReplaceSegments(doc.Day, doc.Hour, segmentRecords(doc.Day, doc.Hour, doc.Segments)); err != nil {
+		return fmt.Errorf("store segments: %w", err)
 	}
 	if err := p.IndexText(doc); err != nil {
-		return nil, err
+		return err
 	}
-	if err := doc.Save(p.Paths.DerivedHour(day, hour)); err != nil {
-		return nil, fmt.Errorf("save derived doc: %w", err)
+	if err := doc.Save(p.Paths.DerivedHour(doc.Day, doc.Hour)); err != nil {
+		return fmt.Errorf("save derived doc: %w", err)
 	}
-	if err := p.Store.UpsertHour(store.HourRecord{Day: day, Hour: hour, Status: doc.Status, SummaryJSON: summary, UpdatedAt: p.now()}); err != nil {
-		return nil, err
-	}
-	return doc, nil
+	return p.Store.UpsertHour(store.HourRecord{Day: doc.Day, Hour: doc.Hour, Status: doc.Status, SummaryJSON: summaryJSON, UpdatedAt: p.now()})
 }
 
 func isEmpty(d *HourDoc) bool {
@@ -216,28 +251,76 @@ func textDocs(d *HourDoc, start time.Time) []store.TextDoc {
 	return out
 }
 
-// ocrHour OCRs the hour's screenshots, dropping any taken during an
-// excluded, paused or gap segment before OCR sees it.
+// ocrHour returns the screen text of the screenshots taken in [start, end),
+// dropping any taken during an excluded, paused or gap segment before OCR
+// sees it. Results come from the processing cache where the file is
+// unchanged; the rest are OCRed in one batch and cached. Empty texts are
+// dropped and consecutive identical texts collapse to the first.
 func (p *Pipeline) ocrHour(ctx context.Context, day string, start, end time.Time, segs []activity.Segment) ([]media.ScreenText, error) {
 	shots, err := p.shots(day)
 	if err != nil {
 		return nil, err
 	}
-	var files []string
+	var hour []shot
 	for _, s := range shots {
 		if s.t.Before(start) || !s.t.Before(end) || !visible(segs, s.t) {
 			continue
 		}
-		files = append(files, s.path)
+		hour = append(hour, s)
 	}
-	if len(files) == 0 {
+	if len(hour) == 0 {
 		return nil, nil
+	}
+	cache := p.loadOCRCache(day)
+	var missing []string
+	stale := map[string]fileKey{}
+	for _, s := range hour {
+		key, err := statKey(s.path)
+		if err != nil {
+			return nil, fmt.Errorf("stat %s: %w", s.path, err)
+		}
+		if e, ok := cache.Files[filepath.Base(s.path)]; !ok || e.Key != key {
+			missing = append(missing, s.path)
+			stale[s.path] = key
+		}
+	}
+	if len(missing) > 0 {
+		texts, err := p.ocrFiles(ctx, missing)
+		if err != nil {
+			return nil, fmt.Errorf("ocr: %w", err)
+		}
+		for _, path := range missing {
+			cache.Files[filepath.Base(path)] = ocrEntry{Key: stale[path], Text: texts[path]}
+		}
+		p.saveOCRCache(day, cache)
+	}
+	var out []media.ScreenText
+	last := ""
+	for _, s := range hour {
+		text := cache.Files[filepath.Base(s.path)].Text
+		if text == "" || (len(out) > 0 && text == last) {
+			continue
+		}
+		out = append(out, media.ScreenText{Time: s.t, File: s.path, Text: text})
+		last = text
+	}
+	return out, nil
+}
+
+// ocrFiles returns each file's OCR text ("" for none), keyed by path.
+func (p *Pipeline) ocrFiles(ctx context.Context, files []string) (map[string]string, error) {
+	if fo, ok := p.OCR.(media.FileOCR); ok {
+		return fo.OCRFiles(ctx, files)
 	}
 	st, err := p.OCR.OCR(ctx, files)
 	if err != nil {
-		return nil, fmt.Errorf("ocr: %w", err)
+		return nil, err
 	}
-	return st, nil
+	out := make(map[string]string, len(files))
+	for _, s := range st {
+		out[s.File] = strings.TrimSpace(s.Text)
+	}
+	return out, nil
 }
 
 // visible reports whether t falls in an active or idle segment.

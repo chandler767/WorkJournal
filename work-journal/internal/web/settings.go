@@ -19,6 +19,7 @@ import (
 // is shown back exactly as typed.
 type settingsForm struct {
 	RetentionDays, CloseTime, RollupWeekday, IdleMinutes, PauseAutoResume string
+	ProcessInterval                                                       string
 	ExcludedApps, ExcludedTitles, Categories, Rules                       string
 }
 
@@ -28,6 +29,7 @@ type settingsPage struct {
 	Error       string
 	Notice      string
 	Weekdays    []string
+	Intervals   []string
 	Suggestions []Suggestion
 	Voices      []string
 	ShowVoices  bool
@@ -40,6 +42,15 @@ var settingsNotices = map[string]string{
 	"restart":   "Recorder restarting. It picks up the new exclusions when it comes back.",
 	"norecord":  "The recorder isn't running, so there was nothing to restart.",
 	"voicegone": "Voice profile deleted.",
+}
+
+// intervalChoices are the process_interval_minutes options, as text.
+func intervalChoices() []string {
+	out := make([]string, 0, len(config.ProcessIntervals))
+	for _, v := range config.ProcessIntervals {
+		out = append(out, strconv.Itoa(v))
+	}
+	return out
 }
 
 // titleWeekday canonicalises a weekday name ("friday" -> "Friday"), the
@@ -66,6 +77,7 @@ func formFromConfig(c config.Config) settingsForm {
 		RollupWeekday:   titleWeekday(c.RollupWeekday),
 		IdleMinutes:     strconv.Itoa(c.IdleMinutes),
 		PauseAutoResume: strconv.Itoa(c.PauseAutoResumeMinutes),
+		ProcessInterval: strconv.Itoa(c.ProcessIntervalMinutes),
 		ExcludedApps:    strings.Join(c.ExcludedApps, "\n"),
 		ExcludedTitles:  strings.Join(c.ExcludedTitleKeywords, "\n"),
 		Categories:      strings.Join(c.Categories, "\n"),
@@ -114,6 +126,11 @@ func applyForm(base config.Config, f settingsForm) (config.Config, error) {
 	if c.PauseAutoResumeMinutes, err = strconv.Atoi(strings.TrimSpace(f.PauseAutoResume)); err != nil {
 		return c, fmt.Errorf("pause_auto_resume_minutes must be a whole number, got %q", f.PauseAutoResume)
 	}
+	if v := strings.TrimSpace(f.ProcessInterval); v != "" { // absent from older forms: keep
+		if c.ProcessIntervalMinutes, err = strconv.Atoi(v); err != nil {
+			return c, fmt.Errorf("process_interval_minutes must be a whole number, got %q", f.ProcessInterval)
+		}
+	}
 	c.CloseTime = strings.TrimSpace(f.CloseTime)
 	c.RollupWeekday = titleWeekday(f.RollupWeekday)
 	c.ExcludedApps = splitLines(f.ExcludedApps)
@@ -156,7 +173,7 @@ func (s *Server) saveSuggestions(list []Suggestion) error {
 func (s *Server) renderSettings(w http.ResponseWriter, form settingsForm, errMsg, notice string, code int) {
 	cfg := s.Cfg()
 	p := settingsPage{Title: "Settings", Form: form, Error: errMsg, Notice: notice,
-		Weekdays: weekdayNames, ShowVoices: cfg.Diarization != "off" && s.Voices != nil}
+		Weekdays: weekdayNames, Intervals: intervalChoices(), ShowVoices: cfg.Diarization != "off" && s.Voices != nil}
 	var err error
 	if p.Suggestions, err = s.loadSuggestions(); err != nil {
 		log.Printf("web: %v", err)
@@ -191,7 +208,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		RollupWeekday: r.PostFormValue("rollup_weekday"), IdleMinutes: r.PostFormValue("idle_minutes"),
 		PauseAutoResume: r.PostFormValue("pause_auto_resume"), ExcludedApps: r.PostFormValue("excluded_apps"),
 		ExcludedTitles: r.PostFormValue("excluded_titles"), Categories: r.PostFormValue("categories"),
-		Rules: r.PostFormValue("rules"),
+		Rules: r.PostFormValue("rules"), ProcessInterval: r.PostFormValue("process_interval_minutes"),
 	}
 	c, err := applyForm(s.Cfg(), f)
 	if err == nil {

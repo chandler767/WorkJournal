@@ -49,6 +49,21 @@ keeps working after `go clean -modcache`. Keep the three files together if you m
 plain `go build ./cmd/journal` also works, but that binary loads the dylibs from the module
 cache.
 
+## The current hour
+
+Finished hours are processed a couple of minutes after they end. The hour in progress is
+summarized too, every `process_interval_minutes` (default 15; 5, 10, 15, 20, 30 or 60, also
+on the Settings page; 60 turns this off). Its notes are marked **in progress** on the
+dashboard and replaced by the full summary once the hour ends. The **Process now** button on
+today's page asks the recorder to close its current audio chunks and processes everything
+recorded up to that moment. Only finished audio chunks are used: the newest chunk of each
+track waits until the recorder has rotated it or not written it for 30 s.
+
+Each audio chunk is transcribed (and diarized) and each screenshot OCRed once; the results
+are kept in `cache/<day>/` and reused by later runs and the final pass. A cache entry is
+redone when its file's size or modification time changes, or the whisper model changes. An
+unchanged in-progress hour is not summarized again.
+
 ## Start at login
 
 ```sh
@@ -117,7 +132,10 @@ already-built recorder.
   audio and activity; `derived/` and `journal.db` hold transcripts, screen text and
   summaries; `journal/` holds the daily and weekly Markdown.
 - After `retention_days` (default 7), each day's whole `raw/<day>/` directory is deleted
-  (screenshots, audio and `activity.jsonl`), once all of that day's hours are processed.
+  (screenshots, audio and `activity.jsonl`), together with its processing cache
+  `cache/<day>/`, once all of that day's hours are processed.
+- `cache/` holds per-chunk transcripts, speaker turns and voice embeddings and per-screenshot
+  text. It is owner-only and kept outside `derived/`, so it is never passed to Claude.
   Transcripts, screen text, time segments, summaries and journals are kept.
 - Exclusions: while an excluded app (default: 1Password, Keychain Access) or a window
   title containing an excluded keyword (default: Private, Incognito) is in front, no

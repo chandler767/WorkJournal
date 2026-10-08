@@ -14,13 +14,21 @@ import (
 )
 
 type fakeJobs struct {
-	calls     []string
-	failClose map[string]bool // days whose close fails
-	failRoll  bool
+	calls       []string
+	failClose   map[string]bool // days whose close fails
+	failRoll    bool
+	failCurrent bool
 }
 
 func (f *fakeJobs) rec(s string) error                   { f.calls = append(f.calls, s); return nil }
 func (f *fakeJobs) ProcessPending(context.Context) error { return f.rec("process") }
+func (f *fakeJobs) ProcessCurrent(context.Context) error {
+	if err := f.rec("current"); err != nil || f.failCurrent {
+		return fmt.Errorf("boom")
+	}
+	return nil
+}
+func (f *fakeJobs) ProcessNow(context.Context) (time.Time, error) { return time.Time{}, f.rec("now") }
 func (f *fakeJobs) ReprocessHour(_ context.Context, d string, h int) error {
 	return f.rec(fmt.Sprintf("reprocess %s %d", d, h))
 }
@@ -61,8 +69,10 @@ func newSchedJ(t *testing.T) (*Scheduler, *fakeJobs, *store.Store, journals) {
 	t.Cleanup(func() { st.Close() })
 	j := &fakeJobs{failClose: map[string]bool{}}
 	js := journals{}
+	cfg := config.Default()
+	cfg.ProcessIntervalMinutes = 60 // hourly processing only; partial runs have their own tests
 	return &Scheduler{
-		Cfg:             func() config.Config { return config.Default() },
+		Cfg:             func() config.Config { return cfg },
 		Jobs:            j,
 		Store:           st,
 		Logf:            func(string, ...any) {},
@@ -552,5 +562,64 @@ func TestProcessOnceSharesTheHourlyMarker(t *testing.T) {
 	ProcessOnce(ctx, st, atS("2026-10-07", 19, 0, 30), job)
 	if runs != 2 || kv(t, st, "last_process_hour") != "2026-10-07T18" {
 		t.Fatalf("runs=%d marker=%q", runs, kv(t, st, "last_process_hour"))
+	}
+}
+
+func TestTickRunsPartialProcessingOnIntervalSlots(t *testing.T) {
+	s, j, _ := newSched(t)
+	cfg := config.Default()
+	cfg.ProcessIntervalMinutes = 15
+	s.Cfg = func() config.Config { return cfg }
+	ctx := context.Background()
+	at := func(m int) time.Time { return time.Date(2026, 10, 7, 10, m, 0, 0, time.Local) }
+	for _, c := range []struct {
+		min  int
+		want []string
+	}{
+		{0, []string{"retain", "current"}}, // previous hour not settled: no ProcessPending yet
+		{1, nil},
+		{7, []string{"process"}}, // the hourly run; no partial run at :07
+		{14, nil},
+		{15, []string{"process", "current"}},
+		{16, nil},
+		{30, []string{"process", "current"}},
+		{44, nil},
+		{45, []string{"process", "current"}},
+	} {
+		j.calls = nil
+		s.Tick(ctx, at(c.min))
+		if got := j.without(); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("10:%02d: calls = %v, want %v", c.min, got, c.want)
+		}
+	}
+}
+
+func TestTickInterval60HasNoPartialRuns(t *testing.T) {
+	s, j, _ := newSched(t) // interval 60
+	for m := 0; m < 60; m++ {
+		s.Tick(context.Background(), time.Date(2026, 10, 7, 10, m, 0, 0, time.Local))
+	}
+	for _, c := range j.calls {
+		if c == "current" {
+			t.Fatalf("partial run with interval 60: %v", j.calls)
+		}
+	}
+}
+
+func TestTickPartialFailureWaitsForNextSlot(t *testing.T) {
+	s, j, st := newSched(t)
+	cfg := config.Default()
+	cfg.ProcessIntervalMinutes = 15
+	s.Cfg = func() config.Config { return cfg }
+	j.failCurrent = true
+	ctx := context.Background()
+	s.Tick(ctx, time.Date(2026, 10, 7, 10, 15, 0, 0, time.Local))
+	j.calls = nil
+	s.Tick(ctx, time.Date(2026, 10, 7, 10, 16, 0, 0, time.Local))
+	if got := j.without(); len(got) != 0 {
+		t.Fatalf("failed partial run retried at once: %v", got)
+	}
+	if v, _, _ := st.GetKV("last_partial_run"); !strings.HasPrefix(v, "2026-10-07T10:15") {
+		t.Fatalf("last_partial_run = %q", v)
 	}
 }

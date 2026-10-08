@@ -31,6 +31,13 @@ func (p Paths) WeeklyJournal(week string) string {
 	return filepath.Join(p.Root, "journal", week+".md")
 }
 
+// Cache holds per-chunk transcription, diarization (with voice embeddings)
+// and OCR results. It is deliberately outside derived/, which Claude may read.
+func (p Paths) Cache() string { return filepath.Join(p.Root, "cache") }
+
+// CacheDay is the cache of one day; retention removes it with raw/<day>.
+func (p Paths) CacheDay(day string) string { return filepath.Join(p.Cache(), day) }
+
 func (p Paths) Voices() string { return filepath.Join(p.Root, "voices") }
 func (p Paths) Models() string { return filepath.Join(p.Root, "models") }
 func (p Paths) Logs() string   { return filepath.Join(p.Root, "logs") }

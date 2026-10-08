@@ -17,8 +17,9 @@ import (
 	"workjournal/internal/store"
 )
 
-// Sweep deletes raw/<day>/ directories older than days before now. A day that
-// still has an hour in pending or transcribed is kept, since its raw media is
+// Sweep deletes raw/<day>/ directories older than days before now, together
+// with the day's processing cache (cache/<day>/). A day that still has an
+// hour in pending, transcribed or partial is kept, since its raw media is
 // still needed; directories whose names are not dates are ignored. It returns
 // the removed day keys, oldest first.
 func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, error) {
@@ -61,6 +62,9 @@ func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, 
 			errs = append(errs, rerr)
 			continue
 		}
+		if rerr := os.RemoveAll(p.CacheDay(name)); rerr != nil {
+			errs = append(errs, rerr)
+		}
 		removed = append(removed, name)
 	}
 	sort.Strings(removed)
@@ -69,7 +73,8 @@ func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, 
 
 func unprocessed(hours []store.HourRecord) bool {
 	for _, h := range hours {
-		if h.Status == store.StatusPending || h.Status == store.StatusTranscribed {
+		switch h.Status {
+		case store.StatusPending, store.StatusTranscribed, store.StatusPartial:
 			return true
 		}
 	}

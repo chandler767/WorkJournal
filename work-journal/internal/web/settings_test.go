@@ -272,3 +272,24 @@ func TestSettingsEscapesMarkup(t *testing.T) {
 	}
 	mustContain(t, body, "&lt;script&gt;x&lt;/script&gt;")
 }
+
+func TestSettingsProcessInterval(t *testing.T) {
+	e := newSettingsEnv(t)
+	mustContain(t, e.get("/settings").Body.String(), `name="process_interval_minutes"`, `<option value="15" selected>`)
+	f := e.form()
+	f.Set("process_interval_minutes", "30")
+	if rec := e.post("/settings", f, nil); rec.Code != 303 {
+		t.Fatalf("code %d %s", rec.Code, rec.Body)
+	}
+	if e.cfg.ProcessIntervalMinutes != 30 {
+		t.Fatalf("interval = %d", e.cfg.ProcessIntervalMinutes)
+	}
+	f.Set("process_interval_minutes", "7")
+	if rec := e.post("/settings", f, nil); rec.Code != 400 || !strings.Contains(rec.Body.String(), "process_interval_minutes") {
+		t.Fatalf("7 accepted: %d", rec.Code)
+	}
+	f.Del("process_interval_minutes") // an older form keeps the current value
+	if rec := e.post("/settings", f, nil); rec.Code != 303 || e.cfg.ProcessIntervalMinutes != 30 {
+		t.Fatalf("missing field: %d, interval %d", rec.Code, e.cfg.ProcessIntervalMinutes)
+	}
+}

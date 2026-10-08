@@ -64,10 +64,15 @@ type diar struct {
 	embs  map[int][]float32
 }
 
-type fakeDiarizer struct{ by map[string]diar }
+type fakeDiarizer struct {
+	by    map[string]diar
+	calls []string
+}
 
 func (f *fakeDiarizer) Diarize(ctx context.Context, wav string) ([]diarize.Turn, map[int][]float32, error) {
-	d := f.by[strings.TrimSuffix(filepath.Base(wav), ".wav")]
+	base := strings.TrimSuffix(filepath.Base(wav), ".wav")
+	f.calls = append(f.calls, base)
+	d := f.by[base]
 	return d.turns, d.embs, nil
 }
 

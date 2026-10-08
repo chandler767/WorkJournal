@@ -27,6 +27,7 @@ type hourRow struct {
 	Status      string
 	NeedsReview bool
 	Pending     bool
+	Partial     bool
 	Summary     skills.HourSummary
 }
 
@@ -58,6 +59,7 @@ type dayPage struct {
 	DiskWarn                string
 	SkillsMissing           bool
 	CloseFailed             bool
+	Notice                  string
 	Journal                 template.HTML
 	Totals                  []totalRow
 	Hours                   []hourRow
@@ -79,6 +81,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		Next:    config.DayKey(t.AddDate(0, 0, 1)),
 		IsToday: day == config.DayKey(time.Now()),
 	}
+	p.Notice = dayNotice(r.URL.Query())
 	p.RecorderUp, p.Paused, p.StatusText = s.recorderState()
 	if v, _, err := s.Store.GetKV("disk_state"); err == nil && v != "" && v != "normal" {
 		p.DiskWarn = v
@@ -105,7 +108,8 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hours {
 		row := hourRow{Hour: h.Hour, Label: hourLabel(h.Hour), Status: h.Status,
 			NeedsReview: h.Status == store.StatusNeedsReview,
-			Pending:     h.Status == store.StatusPending || h.Status == store.StatusTranscribed}
+			Pending:     h.Status == store.StatusPending || h.Status == store.StatusTranscribed,
+			Partial:     h.Status == store.StatusPartial}
 		if h.SummaryJSON != "" {
 			if err := json.Unmarshal([]byte(h.SummaryJSON), &row.Summary); err != nil {
 				row.Summary.Notes = []string{"(summary unreadable: " + err.Error() + ")"}

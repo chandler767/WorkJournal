@@ -8,6 +8,7 @@
 {{if .NeedsReview}}<div class="banner"><span class="badge warn">needs review</span>
   This hour could not be summarized cleanly.
   <form method="post" action="/hour/{{.Date}}/{{.Hour}}/reprocess"><button type="submit" class="secondary">Reprocess</button></form></div>{{end}}
+{{if .PartialNote}}<div class="banner" role="status"><span class="badge">in progress</span> {{.PartialNote}}</div>{{end}}
 {{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}
 
 {{if .Summary.Narrative}}

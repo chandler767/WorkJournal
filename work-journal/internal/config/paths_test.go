@@ -57,3 +57,10 @@ func TestEnsure(t *testing.T) {
 		}
 	}
 }
+
+func TestCachePathsOutsideDerived(t *testing.T) {
+	p := Paths{Root: "/data"}
+	if p.Cache() != "/data/cache" || p.CacheDay("2026-10-07") != "/data/cache/2026-10-07" {
+		t.Fatalf("cache = %s, %s", p.Cache(), p.CacheDay("2026-10-07"))
+	}
+}

@@ -17,6 +17,7 @@ name_confidence_threshold = 0.7
 min_free_gb = 5
 listen_addr = "127.0.0.1:4747"
 meeting_min_two_way_minutes = 2
+process_interval_minutes = 15  # summarize the hour in progress every N minutes: 5, 10, 15, 20, 30 or 60 (60: only finished hours)
 excluded_apps = ["1Password", "Keychain Access"]
 excluded_title_keywords = ["Private", "Incognito"]
 meeting_apps = ["zoom.us", "Microsoft Teams", "FaceTime"]

@@ -206,3 +206,28 @@ func TestExecRunnerIncludesStderr(t *testing.T) {
 		t.Fatalf("%q %v", out, err)
 	}
 }
+
+func TestOCRFilesKeepsEveryText(t *testing.T) {
+	files := []string{"/d/raw/2026-10-07/screens/100000.jpg", "/d/raw/2026-10-07/screens/100010.jpg", "/d/raw/2026-10-07/screens/100020.jpg"}
+	texts := map[string]string{files[0]: " same ", files[1]: "same", files[2]: ""}
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		type e struct {
+			File string `json:"file"`
+			Text string `json:"text"`
+		}
+		var out []e
+		for _, f := range args[1:] {
+			out = append(out, e{f, texts[f]})
+		}
+		return json.Marshal(out)
+	}
+	var o FileOCR = RecorderOCR{Run: run, Bin: "recorder", Batch: 2}
+	got, err := o.OCRFiles(context.Background(), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{files[0]: "same", files[1]: "same", files[2]: ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OCRFiles = %v, want %v", got, want)
+	}
+}

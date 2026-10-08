@@ -260,14 +260,49 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 		return fmt.Errorf("index text: %w", err)
 	}
 
-	doc.Status = store.StatusDone
-	if invalid {
+	switch {
+	case doc.Status == store.StatusPartial:
+		// The in-progress hour stays partial; its final pass decides.
+		if summaryJSON == "" {
+			summaryJSON, err = s.previousSummary(doc)
+			if err != nil {
+				return err
+			}
+		}
+	case invalid:
 		doc.Status = store.StatusNeedsReview
+	default:
+		doc.Status = store.StatusDone
 	}
 	if err := doc.Save(s.Paths.DerivedHour(doc.Day, doc.Hour)); err != nil {
 		return fmt.Errorf("save derived doc: %w", err)
 	}
 	return s.Store.UpsertHour(store.HourRecord{Day: doc.Day, Hour: doc.Hour, Status: doc.Status, SummaryJSON: summaryJSON, UpdatedAt: time.Now()})
+}
+
+// previousSummary is the summary already stored for doc's hour, kept when a
+// partial run's summarize-hour output was invalid.
+func (s *SkillSummarizer) previousSummary(doc *HourDoc) (string, error) {
+	rec, _, err := s.Store.Hour(doc.Day, doc.Hour)
+	return rec.SummaryJSON, err
+}
+
+// InputHash implements InputHasher: a fingerprint of the summarize-hour and
+// summarize-meeting inputs and of the segments categorize-time would be
+// asked about, built exactly as SummarizeHour builds them.
+func (s *SkillSummarizer) InputHash(doc *HourDoc) (string, error) {
+	cats, unmatched := categorize.Apply(doc.Segments, s.Cfg.Rules)
+	var segs []segmentInput
+	for _, i := range unmatched {
+		segs = append(segs, segInput(i, doc.Segments[i], nil))
+	}
+	var meetings []meetingInput
+	for _, id := range doc.EndedMeetings {
+		if i := slices.IndexFunc(doc.Meetings, func(m activity.Meeting) bool { return m.ID == id }); i >= 0 {
+			meetings = append(meetings, s.meetingInput(doc, doc.Meetings[i]))
+		}
+	}
+	return hashJSON(s.hourInput(doc, cats), s.Cfg.Categories, segs, meetings)
 }
 
 // writeInput writes a skill input to derived/<day>/.inputs/HH-<skill><suffix>.json.

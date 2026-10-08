@@ -549,3 +549,32 @@ func TestDiskCheckReportsSendErrorOnce(t *testing.T) {
 		t.Fatal("failure after a success not reported")
 	}
 }
+
+func TestProcessNowRotatesThenProcessesUpToNow(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		j, ctl, _ := newJobs(t)
+		if down {
+			ctl.sendErr = errors.New("dial recorder: no such file")
+		}
+		fk := &closeSkills{}
+		now := time.Date(2026, 10, 7, 10, 20, 0, 0, time.Local)
+		withActivity(t, j, fk, "2026-10-07", 10, now)
+		upto, err := j.ProcessNow(context.Background())
+		if err != nil {
+			t.Fatalf("down=%v: %v", down, err)
+		}
+		if !upto.Equal(now) {
+			t.Errorf("processed up to %v, want %v", upto, now)
+		}
+		if got := ctl.sentCmds(); !equal(got, []string{"rotate"}) {
+			t.Errorf("down=%v: sent %v, want a rotate first", down, got)
+		}
+		if !equal(fk.called, []string{"summarize-hour"}) {
+			t.Errorf("down=%v: skills %v", down, fk.called)
+		}
+		h, ok, err := j.Store.Hour("2026-10-07", 10)
+		if err != nil || !ok || h.Status != store.StatusPartial {
+			t.Errorf("down=%v: hour 10 = %+v %v %v", down, h, ok, err)
+		}
+	}
+}

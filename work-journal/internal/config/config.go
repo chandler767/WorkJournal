@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type Config struct {
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
 	MeetingMinTwoWayMinutes      int               `toml:"meeting_min_two_way_minutes"`
+	ProcessIntervalMinutes       int               `toml:"process_interval_minutes"`
 	ExcludedApps                 []string          `toml:"excluded_apps"`
 	ExcludedTitleKeywords        []string          `toml:"excluded_title_keywords"`
 	MeetingApps                  []string          `toml:"meeting_apps"`
@@ -61,6 +63,7 @@ func Default() Config {
 		MinFreeGB:                    5,
 		ListenAddr:                   "127.0.0.1:4747",
 		MeetingMinTwoWayMinutes:      2,
+		ProcessIntervalMinutes:       15,
 		ExcludedApps:                 []string{"1Password", "Keychain Access"},
 		ExcludedTitleKeywords:        []string{"Private", "Incognito"},
 		MeetingApps:                  []string{"zoom.us", "Microsoft Teams", "FaceTime"},
@@ -155,6 +158,9 @@ func (c Config) Validate() error {
 	if c.Diarization != "sherpa" && c.Diarization != "off" {
 		return fmt.Errorf(`diarization must be "sherpa" or "off", got %q`, c.Diarization)
 	}
+	if !slices.Contains(ProcessIntervals, c.ProcessIntervalMinutes) {
+		return fmt.Errorf("process_interval_minutes must be one of %v, got %d", ProcessIntervals, c.ProcessIntervalMinutes)
+	}
 	if c.ListenAddr == "" {
 		return errors.New("listen_addr must not be empty")
 	}
@@ -166,6 +172,10 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
+// ProcessIntervals are the allowed process_interval_minutes: how often the
+// in-progress hour is summarized. 60 means only finished hours are.
+var ProcessIntervals = []int{5, 10, 15, 20, 30, 60}
 
 var weekdays = map[string]bool{
 	"monday": true, "tuesday": true, "wednesday": true, "thursday": true,

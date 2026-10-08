@@ -146,3 +146,30 @@ func TestLoadExpandsTildeInDataDir(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProcessIntervalDefaultAndValidation(t *testing.T) {
+	c := Default()
+	if c.ProcessIntervalMinutes != 15 {
+		t.Fatalf("process_interval_minutes default = %d, want 15", c.ProcessIntervalMinutes)
+	}
+	for _, v := range []int{5, 10, 15, 20, 30, 60} {
+		c.ProcessIntervalMinutes = v
+		if err := c.Validate(); err != nil {
+			t.Errorf("%d rejected: %v", v, err)
+		}
+	}
+	for _, v := range []int{0, 1, 7, 45, 90, -5} {
+		c.ProcessIntervalMinutes = v
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "process_interval_minutes") {
+			t.Errorf("%d accepted (err %v)", v, err)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte("process_interval_minutes = 30\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil || got.ProcessIntervalMinutes != 30 {
+		t.Fatalf("Load = %d, %v", got.ProcessIntervalMinutes, err)
+	}
+}
