@@ -8,10 +8,14 @@ import (
 	"time"
 )
 
-// ToWav16k converts in to a 16 kHz mono 16-bit WAV at out using afconvert.
+// ToWav16k converts in to a 16 kHz mono 16-bit WAV at out using afconvert,
+// then rewrites its header as canonical PCM (see NormalizeWav16k): afconvert
+// writes an extensible header for AAC input that sherpa-onnx cannot read.
 func ToWav16k(ctx context.Context, run Runner, in, out string) error {
-	_, err := run(ctx, "afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", in, out)
-	return err
+	if _, err := run(ctx, "afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", in, out); err != nil {
+		return err
+	}
+	return NormalizeWav16k(out)
 }
 
 // ParseChunkName parses HHMM-<track>.m4a or HHMMSS-<track>.m4a where track is

@@ -169,8 +169,12 @@ func (e *env) run(ctx context.Context, name string, args ...string) ([]byte, err
 	if e.bad[filepath.Base(in)] {
 		return nil, fmt.Errorf("afconvert: cannot read %s", in)
 	}
-	return nil, os.WriteFile(out, []byte("RIFF"), 0o644)
+	return nil, os.WriteFile(out, emptyWav, 0o644)
 }
+
+// emptyWav is a canonical 16 kHz mono 16-bit PCM WAV with no samples, as
+// media.ToWav16k leaves it.
+var emptyWav = []byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00")
 
 // file creates an empty raw file under raw/<day>/ with the given mtime.
 func (e *env) file(rel string, mtime time.Time) {

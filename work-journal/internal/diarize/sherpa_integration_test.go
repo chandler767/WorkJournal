@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"workjournal/internal/media"
 )
 
 // modelsDir is where the integration test looks for the sherpa models:
@@ -72,6 +74,11 @@ func writeWav(t *testing.T, path string, pcm []byte) {
 	}
 }
 
+// TestSherpaDiarizerTwoVoices diarizes a scripted two-voice conversation
+// written straight to a canonical WAV ("wav"), and the same conversation the
+// way the recorder stores it: AAC .m4a converted by media.ToWav16k ("m4a").
+// afconvert writes an extensible WAV header for AAC input, which sherpa's
+// reader rejects unless ToWav16k normalizes it.
 func TestSherpaDiarizerTwoVoices(t *testing.T) {
 	seg, emb := ModelPaths(modelsDir(t))
 	for _, m := range []string{seg, emb} {
@@ -102,16 +109,32 @@ func TestSherpaDiarizerTwoVoices(t *testing.T) {
 	wav := filepath.Join(dir, "two.wav")
 	writeWav(t, wav, pcm)
 
+	m4a, fromM4A := filepath.Join(dir, "two.m4a"), filepath.Join(dir, "two-m4a.wav")
+	if out, err := exec.Command("afconvert", "-f", "m4af", "-d", "aac", wav, m4a).CombinedOutput(); err != nil {
+		t.Fatalf("afconvert to m4a: %v: %s", err, out)
+	}
+	if err := media.ToWav16k(context.Background(), media.ExecRunner, m4a, fromM4A); err != nil {
+		t.Fatal(err)
+	}
+
 	d, err := NewSherpaDiarizer(seg, emb)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
+	for _, tc := range []struct{ name, wav string }{{"wav", wav}, {"m4a", fromM4A}} {
+		t.Run(tc.name, func(t *testing.T) { checkTwoVoices(t, d, tc.wav, truth, bounds) })
+	}
+}
+
+// checkTwoVoices diarizes wav and checks it finds two speakers whose turns
+// follow the ground-truth voice of each line (bounds in seconds).
+func checkTwoVoices(t *testing.T, d *SherpaDiarizer, wav string, truth []string, bounds [][2]float64) {
 	turns, embs, err := d.Diarize(context.Background(), wav)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("audio %.1f s, %d turns", float64(len(pcm))/32000, len(turns))
+	t.Logf("%d turns", len(turns))
 	for _, tr := range turns {
 		t.Logf("  %6.2f–%6.2f speaker %d", tr.Start, tr.End, tr.Speaker)
 	}

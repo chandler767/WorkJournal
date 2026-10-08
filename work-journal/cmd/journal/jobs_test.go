@@ -185,7 +185,7 @@ func enrollJobs(t *testing.T, d diarize.Diarizer) (*Jobs, string) {
 		Cfg: cfg, Paths: j.Paths, Store: j.Store, Diarizer: d,
 		Voices: &diarize.Voices{Dir: j.Paths.Voices(), Threshold: cfg.VoiceMatchThreshold},
 		Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
-			return nil, os.WriteFile(args[len(args)-1], []byte("RIFF"), 0o644)
+			return nil, os.WriteFile(args[len(args)-1], emptyWav, 0o644)
 		},
 		Logf: t.Logf,
 	}
@@ -601,7 +601,7 @@ func TestProcessNowIncludesRotatedChunk(t *testing.T) {
 		tr := &oneLineTranscriber{}
 		j.Pipeline.Transcriber = tr
 		j.Pipeline.Run = func(_ context.Context, name string, args ...string) ([]byte, error) {
-			return nil, os.WriteFile(args[len(args)-1], []byte("RIFF"), 0o644)
+			return nil, os.WriteFile(args[len(args)-1], emptyWav, 0o644)
 		}
 		chunk := filepath.Join(j.Paths.Audio("2026-10-07"), "1015-mic.m4a")
 		if err := os.MkdirAll(filepath.Dir(chunk), 0o755); err != nil {
@@ -629,3 +629,7 @@ func TestProcessNowIncludesRotatedChunk(t *testing.T) {
 		}
 	}
 }
+
+// emptyWav is a canonical 16 kHz mono 16-bit PCM WAV with no samples, as
+// media.ToWav16k leaves it.
+var emptyWav = []byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00")

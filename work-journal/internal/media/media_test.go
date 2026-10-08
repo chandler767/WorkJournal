@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -20,12 +21,13 @@ func TestToWav16kArgs(t *testing.T) {
 	var got call
 	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		got = call{name, args}
-		return nil, nil
+		return nil, os.WriteFile(args[len(args)-1], canonicalHeader(0), 0o644)
 	}
-	if err := ToWav16k(context.Background(), run, "in.m4a", "out.wav"); err != nil {
+	out := filepath.Join(t.TempDir(), "out.wav")
+	if err := ToWav16k(context.Background(), run, "in.m4a", out); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-f", "WAVE", "-d", "LEI16@16000", "-c", "1", "in.m4a", "out.wav"}
+	want := []string{"-f", "WAVE", "-d", "LEI16@16000", "-c", "1", "in.m4a", out}
 	if got.name != "afconvert" || !reflect.DeepEqual(got.args, want) {
 		t.Fatalf("got %s %v", got.name, got.args)
 	}
