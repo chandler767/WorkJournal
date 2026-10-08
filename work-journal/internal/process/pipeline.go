@@ -175,6 +175,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	utts = audibleSpeech(segs, utts)
 	screens, err := p.ocrHour(ctx, day, start, cut, segs)
 	if err != nil {
 		return nil, time.Time{}, err
@@ -331,6 +332,13 @@ func (p *Pipeline) ocrFiles(ctx context.Context, files []string) (map[string]str
 		out[s.File] = strings.TrimSpace(s.Text)
 	}
 	return out, nil
+}
+
+// audibleSpeech drops utterances overlapping an excluded or paused segment,
+// so they never reach the derived doc (readable by Claude), the index or a
+// skill. The cache keeps the raw whisper output; it is outside derived/.
+func audibleSpeech(segs []activity.Segment, us []media.Utterance) []media.Utterance {
+	return visibleSpeech(&HourDoc{Segments: segs, Transcript: us})
 }
 
 // visible reports whether t falls in an active or idle segment.

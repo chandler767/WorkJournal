@@ -464,7 +464,8 @@ func meetingText(ms skills.MeetingSummary) string {
 }
 
 // visibleSpeech returns d's utterances that do not overlap an excluded or
-// paused segment; nothing said during those spans may reach a skill.
+// paused segment; nothing said during those spans may reach a skill. The
+// pipeline already drops them when building the doc; this is defence in depth.
 func visibleSpeech(d *HourDoc) []media.Utterance {
 	var out []media.Utterance
 	for _, u := range d.Transcript {

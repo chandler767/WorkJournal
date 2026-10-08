@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -244,6 +245,42 @@ func TestPartialPathFiltersExcludedAndPaused(t *testing.T) {
 	for _, secret := range []string{"secretexcluded", "secretpaused", "whisperexcluded", "whisperpaused"} {
 		if strings.Contains(hourIn, secret) {
 			t.Errorf("summarize-hour input contains %s", secret)
+		}
+	}
+	assertDerivedLacks(t, e, 15, "spoken visible", "whisperexcluded", "whisperpaused", "secretexcluded", "secretpaused")
+}
+
+// The final pass drops hidden speech from the derived doc too: derived/ is
+// readable by Claude.
+func TestFinalPathDropsExcludedAndPausedSpeech(t *testing.T) {
+	e := newEnv(t)
+	e.activity(old, ev(13, 0, "start"), ev(13, 0, "app", "Code", "main.go"),
+		ev(13, 2, "excluded"), ev(13, 4, "included"), ev(13, 5, "pause"), ev(13, 7, "resume"))
+	e.file("audio/1300-mic.m4a", old)
+	e.tr.utts["1300-mic"] = []fu{{150, 170, "whisperexcluded"}, {330, 350, "whisperpaused"}, {500, 510, "spoken visible"}}
+	doc, err := e.p.Transcribe(context.Background(), day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := speakers(doc.Transcript); !reflect.DeepEqual(got, []string{"me: spoken visible"}) {
+		t.Fatalf("transcript = %q", got)
+	}
+	assertDerivedLacks(t, e, 13, "spoken visible", "whisperexcluded", "whisperpaused")
+}
+
+// assertDerivedLacks checks derived/<day>/HH.json holds want but none of hidden.
+func assertDerivedLacks(t *testing.T, e *env, hour int, want string, hidden ...string) {
+	t.Helper()
+	b, err := os.ReadFile(e.paths.DerivedHour(day, hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), want) {
+		t.Fatalf("derived doc lacks %q", want)
+	}
+	for _, h := range hidden {
+		if strings.Contains(string(b), h) {
+			t.Errorf("derived/%s/%02d.json contains %q", day, hour, h)
 		}
 	}
 }
