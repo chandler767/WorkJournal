@@ -576,15 +576,15 @@ func TestTickRunsPartialProcessingOnIntervalSlots(t *testing.T) {
 		min  int
 		want []string
 	}{
-		{0, []string{"retain", "current"}}, // previous hour not settled: no ProcessPending yet
+		{0, []string{"retain"}}, // nothing of the new hour to summarize yet
 		{1, nil},
 		{7, []string{"process"}}, // the hourly run; no partial run at :07
 		{14, nil},
-		{15, []string{"process", "current"}},
+		{15, []string{"current"}},
 		{16, nil},
-		{30, []string{"process", "current"}},
+		{30, []string{"current"}},
 		{44, nil},
-		{45, []string{"process", "current"}},
+		{45, []string{"current"}},
 	} {
 		j.calls = nil
 		s.Tick(ctx, at(c.min))
@@ -621,5 +621,49 @@ func TestTickPartialFailureWaitsForNextSlot(t *testing.T) {
 	}
 	if v, _, _ := st.GetKV("last_partial_run"); !strings.HasPrefix(v, "2026-10-07T10:15") {
 		t.Fatalf("last_partial_run = %q", v)
+	}
+}
+
+func TestPartialSlotDoesNotRetryFinishedHours(t *testing.T) {
+	s, _, _ := newSched(t)
+	cfg := config.Default()
+	cfg.ProcessIntervalMinutes = 5
+	s.Cfg = func() config.Config { return cfg }
+	f := &failingProcess{failProcess: true}
+	s.Jobs = f
+	for m := 0; m < 60; m++ {
+		s.Tick(context.Background(), time.Date(2026, 10, 7, 10, m, 0, 0, time.Local))
+	}
+	if f.process != 1 {
+		t.Fatalf("ProcessPending ran %d times in an hour of partial slots, want 1 (the hourly run)", f.process)
+	}
+	n := 0
+	for _, c := range f.calls {
+		if c == "current" {
+			n++
+		}
+	}
+	if n != 11 { // :05 … :55
+		t.Fatalf("partial runs = %d, want 11", n)
+	}
+}
+
+func TestPartialSkipsFirstIntervalOfHour(t *testing.T) {
+	s, j, _ := newSched(t)
+	cfg := config.Default()
+	cfg.ProcessIntervalMinutes = 30
+	s.Cfg = func() config.Config { return cfg }
+	var got []int
+	for m := 0; m < 60; m++ {
+		j.calls = nil
+		s.Tick(context.Background(), time.Date(2026, 10, 7, 10, m, 0, 0, time.Local))
+		for _, c := range j.calls {
+			if c == "current" {
+				got = append(got, m)
+			}
+		}
+	}
+	if !reflect.DeepEqual(got, []int{30}) {
+		t.Fatalf("partial runs at minutes %v, want [30]", got)
 	}
 }

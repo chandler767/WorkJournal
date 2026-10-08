@@ -91,22 +91,28 @@ func (j *Jobs) ProcessPending(ctx context.Context) error {
 func (j *Jobs) ProcessCurrent(ctx context.Context) error {
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
-	return j.pipeline().ProcessCurrent(ctx, j.now())
+	_, err := j.pipeline().ProcessCurrent(ctx, j.now(), time.Time{})
+	return err
 }
 
 // ProcessNow is the dashboard's "Process now": the recorder finishes its
 // current audio chunks (a recorder that is not running is logged and
-// skipped), then finished hours and the in-progress hour are processed. It
-// returns the time processed up to.
+// skipped), then finished hours and the in-progress hour are processed. Once
+// the rotate succeeded, every chunk started before it counts as finished. It
+// returns the time processed up to: now, or the start of an audio chunk that
+// was still being written.
 func (j *Jobs) ProcessNow(ctx context.Context) (time.Time, error) {
+	rotatedAt := j.now()
 	if err := j.Control.Rotate(); err != nil {
 		j.Logf("process now: rotate: %v; processing what is on disk", err)
+		rotatedAt = time.Time{}
 	}
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
-	now := j.now()
 	p := j.pipeline()
-	return now, errors.Join(p.ProcessPending(ctx), p.ProcessCurrent(ctx, now))
+	perr := p.ProcessPending(ctx)
+	upto, cerr := p.ProcessCurrent(ctx, j.now(), rotatedAt)
+	return upto, errors.Join(perr, cerr)
 }
 
 // ReprocessHour resets the hour to pending and runs it through the pipeline

@@ -33,49 +33,53 @@ func PartialInputHashKey(day string, hour int) string {
 
 // ProcessCurrent summarizes the in-progress hour (the local hour of now) from
 // the inputs ready at now and marks it `partial`; the hour gets the normal
-// final pass once it has ended. Audio and OCR come from the processing cache
-// where possible. Nothing is written when the hour has no content yet, and
-// when the skill inputs equal those of the previous partial run the
-// summarizer is not run again (the existing summary stays).
-func (p *Pipeline) ProcessCurrent(ctx context.Context, now time.Time) error {
+// final pass once it has ended. rotatedAt, when not zero, is when the
+// recorder was asked to finish its chunks: every chunk started before it is
+// finished. Audio and OCR come from the processing cache where possible.
+// Nothing is written when the hour has no content yet, and when the skill
+// inputs equal those of the previous partial run the summarizer is not run
+// again (the existing summary stays). It returns the time up to which the
+// hour was processed: now, or the start of the earliest audio chunk that was
+// still being written.
+func (p *Pipeline) ProcessCurrent(ctx context.Context, now, rotatedAt time.Time) (time.Time, error) {
 	now = now.In(time.Local)
 	day, hour := config.DayKey(now), now.Hour()
 	rec, found, err := p.Store.Hour(day, hour)
 	if err != nil {
-		return err
+		return now, err
 	}
 	if found && rec.Status != store.StatusPartial && rec.Status != store.StatusPending {
-		return nil // already processed in full (or being processed)
+		return now, nil // already processed in full (or being processed)
 	}
-	doc, err := p.build(ctx, day, hour, now)
+	doc, covered, err := p.build(ctx, day, hour, now, rotatedAt)
 	if err != nil {
-		return err
+		return now, err
 	}
 	if isEmpty(doc) {
-		return nil
+		return covered, nil
 	}
 	hash, err := p.inputHash(doc)
 	if err != nil {
-		return err
+		return covered, err
 	}
 	key := PartialInputHashKey(day, hour)
 	if found && rec.Status == store.StatusPartial {
 		if prev, _, err := p.Store.GetKV(key); err != nil {
-			return err
+			return covered, err
 		} else if prev == hash {
-			return nil
+			return covered, nil
 		}
 	}
 	if err := p.record(doc, rec.SummaryJSON); err != nil {
-		return err
+		return covered, err
 	}
 	if p.Summarize == nil {
-		return nil
+		return covered, nil
 	}
 	if err := p.Summarize.SummarizeHour(ctx, doc); err != nil {
-		return err
+		return covered, err
 	}
-	return p.Store.SetKV(key, hash)
+	return covered, p.Store.SetKV(key, hash)
 }
 
 // inputHash fingerprints what the summarizer would see: its own hash when it
@@ -101,10 +105,11 @@ func hashJSON(vs ...any) (string, error) {
 }
 
 // readyChunks returns the chunks of the in-progress hour that are finished at
-// now: every chunk but the newest of its track, and the newest once its mtime
-// is at least freshAge old. covered is the start of the earliest chunk held
-// back (or now): speech after it is not known yet.
-func readyChunks(day, hour []chunk, now time.Time) (ready []chunk, covered time.Time) {
+// now: every chunk started before rotatedAt (when not zero), every chunk but
+// the newest of its track, and the newest once its mtime is at least
+// freshAge old. covered is the start of the earliest chunk held back (or
+// now): speech after it is not known yet.
+func readyChunks(day, hour []chunk, now, rotatedAt time.Time) (ready []chunk, covered time.Time) {
 	newest := map[string]chunk{}
 	for _, c := range day {
 		if n, ok := newest[c.track]; !ok || !c.start.Before(n.start) {
@@ -116,7 +121,8 @@ func readyChunks(day, hour []chunk, now time.Time) (ready []chunk, covered time.
 		if !c.start.Before(now) {
 			continue
 		}
-		if newest[c.track].path == c.path {
+		rotated := !rotatedAt.IsZero() && c.start.Before(rotatedAt)
+		if newest[c.track].path == c.path && !rotated {
 			fi, err := os.Stat(c.path)
 			if err != nil || now.Sub(fi.ModTime()) < freshAge {
 				covered = earlier(covered, c.start)

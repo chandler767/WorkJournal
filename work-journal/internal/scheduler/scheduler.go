@@ -99,8 +99,8 @@ func (s *Scheduler) Run(ctx context.Context, every time.Duration) {
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	cfg := s.Cfg()
 	s.step("disk check", s.Jobs.DiskCheck(ctx))
-	ranPending := s.process(ctx, now)
-	s.partial(ctx, now, cfg, ranPending)
+	s.process(ctx, now)
+	s.partial(ctx, now, cfg)
 	s.closeDays(ctx, now, cfg)
 	s.rollups(ctx, now, cfg)
 }
@@ -137,45 +137,39 @@ func settled(now time.Time) bool {
 // advances once the job was attempted, success or failure, so a persistently
 // failing hour is retried next hour rather than every minute. Only a cancelled
 // context leaves the marker unadvanced. ProcessPending waits until the hour
-// has settled so the previous hour's last files are no longer fresh. It
-// reports whether ProcessPending ran.
-func (s *Scheduler) process(ctx context.Context, now time.Time) bool {
-	ran := false
+// has settled so the previous hour's last files are no longer fresh.
+func (s *Scheduler) process(ctx context.Context, now time.Time) {
 	if settled(now) {
-		ran = s.hourly(ctx, now, kvProcessHour, "process pending", s.Jobs.ProcessPending)
+		s.hourly(ctx, now, kvProcessHour, "process pending", s.Jobs.ProcessPending)
 	}
 	s.hourly(ctx, now, kvRetainHour, "retain", s.Jobs.Retain)
-	return ran
 }
 
-func (s *Scheduler) hourly(ctx context.Context, now time.Time, key, name string, job func(context.Context) error) bool {
+func (s *Scheduler) hourly(ctx context.Context, now time.Time, key, name string, job func(context.Context) error) {
 	hour := hourKey(now)
 	if s.kv(key) == hour {
-		return false
+		return
 	}
 	s.step(name, job(ctx))
 	if ctx.Err() == nil {
 		s.mark(key, hour)
 	}
-	return true
 }
 
-// partial processes up to the current moment once per process_interval_minutes
-// slot of the clock (with 15: at :00, :15, :30, :45): finished hours first
-// (once the hour has settled, and unless the hourly run just did), then the
-// in-progress hour. The attempt is recorded even when it fails, so a failure
-// waits for the next slot. An interval of 60 disables partial runs.
-func (s *Scheduler) partial(ctx context.Context, now time.Time, cfg config.Config, ranPending bool) {
+// partial summarizes the in-progress hour once per process_interval_minutes
+// slot of the clock after the first (with 15: at :15, :30 and :45; the :00
+// slot would find almost nothing of the new hour). Finished hours are left to
+// the hourly run, which bounds their retries to one an hour. The attempt is
+// recorded even when it fails, so a failure waits for the next slot. An
+// interval of 60 disables partial runs.
+func (s *Scheduler) partial(ctx context.Context, now time.Time, cfg config.Config) {
 	every := cfg.ProcessIntervalMinutes
-	if every <= 0 || every >= 60 {
+	if every <= 0 || every >= 60 || now.Minute() < every {
 		return
 	}
 	slot := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()/every*every, 0, 0, now.Location())
 	if last, err := time.Parse(time.RFC3339, s.kv(kvPartialRun)); err == nil && !last.Before(slot) {
 		return
-	}
-	if settled(now) && !ranPending {
-		s.step("process pending", s.Jobs.ProcessPending(ctx))
 	}
 	s.step("process current", s.Jobs.ProcessCurrent(ctx))
 	if ctx.Err() == nil {

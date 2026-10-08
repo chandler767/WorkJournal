@@ -2,6 +2,8 @@ package process
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,7 +35,7 @@ func currentFixture(e *env) time.Time {
 func TestProcessCurrentUsesOnlyReadyInputs(t *testing.T) {
 	e := newEnv(t)
 	now := currentFixture(e)
-	if err := e.p.ProcessCurrent(context.Background(), now); err != nil {
+	if _, err := e.p.ProcessCurrent(context.Background(), now, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"1500-mic", "1500-system"}; !reflect.DeepEqual(e.tr.calls, want) {
@@ -60,7 +62,7 @@ func TestProcessCurrentUsesOnlyReadyInputs(t *testing.T) {
 	e.file("audio/1510-mic.m4a", now.Add(-time.Second))
 	e.file("audio/1505-mic.m4a", now.Add(-2*time.Second))
 	e.resetCounts()
-	if err := e.p.ProcessCurrent(context.Background(), now); err != nil {
+	if _, err := e.p.ProcessCurrent(context.Background(), now, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"1505-mic"}; !reflect.DeepEqual(e.tr.calls, want) {
@@ -72,17 +74,17 @@ func TestProcessCurrentSkipsSummarizerOnIdenticalInputs(t *testing.T) {
 	e := newEnv(t)
 	now := currentFixture(e)
 	ctx := context.Background()
-	if err := e.p.ProcessCurrent(ctx, now); err != nil {
+	if _, err := e.p.ProcessCurrent(ctx, now, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.p.ProcessCurrent(ctx, now); err != nil {
+	if _, err := e.p.ProcessCurrent(ctx, now, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.sum.calls) != 1 {
 		t.Fatalf("summarizer ran %d times on identical inputs", len(e.sum.calls))
 	}
 	later := now.Add(time.Minute) // the fresh mic chunk is ready now
-	if err := e.p.ProcessCurrent(ctx, later); err != nil {
+	if _, err := e.p.ProcessCurrent(ctx, later, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.sum.calls) != 2 {
@@ -92,7 +94,7 @@ func TestProcessCurrentSkipsSummarizerOnIdenticalInputs(t *testing.T) {
 
 func TestProcessCurrentEmptyHourDoesNothing(t *testing.T) {
 	e := newEnv(t)
-	if err := e.p.ProcessCurrent(context.Background(), e.p.Now()); err != nil {
+	if _, err := e.p.ProcessCurrent(context.Background(), e.p.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := e.hourStatus(15); ok || len(e.sum.calls) != 0 {
@@ -106,7 +108,7 @@ func TestPartialHourGetsFinalPassOnceEnded(t *testing.T) {
 	fk := &fakeSkills{out: map[string]string{"summarize-hour": hourOut, "categorize-time": `{"segments":[{"index":0,"category":"Deep work","confidence":0.9}]}`}, errs: map[string]error{}}
 	e.p.Summarize = &SkillSummarizer{Runner: fk, Store: e.st, Paths: e.paths, Cfg: e.p.Cfg, Logf: t.Logf}
 	ctx := context.Background()
-	if err := e.p.ProcessCurrent(ctx, now); err != nil {
+	if _, err := e.p.ProcessCurrent(ctx, now, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := e.hourStatus(15)
@@ -150,5 +152,98 @@ func TestSkillSummarizerInputHash(t *testing.T) {
 	}
 	if len(e.fk.calls) != 0 {
 		t.Fatal("hashing ran a skill")
+	}
+}
+
+// Readiness after a rotate: every chunk that started before the rotate is
+// finished, even the newest one with a fresh mtime (the recorder opens the
+// next chunk only on its next sample).
+func TestProcessCurrentRotatedChunkIsReady(t *testing.T) {
+	e := newEnv(t)
+	now := currentFixture(e)
+	covered, err := e.p.ProcessCurrent(context.Background(), now, now.Add(-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"1500-mic", "1500-system", "1505-mic"}; !reflect.DeepEqual(e.tr.calls, want) {
+		t.Fatalf("transcribed %v, want %v", e.tr.calls, want)
+	}
+	if !covered.Equal(now) {
+		t.Fatalf("covered = %v, want %v", covered, now)
+	}
+	// Without a rotate the fresh newest chunk is held back: covered stops at its start.
+	e2 := newEnv(t)
+	currentFixture(e2)
+	covered, err = e2.p.ProcessCurrent(context.Background(), now, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !covered.Equal(at(15, 5, 0)) {
+		t.Fatalf("covered without rotate = %v, want 15:05", covered)
+	}
+}
+
+func TestFinalPassKeepsPartialSummaryUntilSummarized(t *testing.T) {
+	e := newEnv(t)
+	now := currentFixture(e)
+	fk := &fakeSkills{out: map[string]string{"summarize-hour": hourOut, "categorize-time": `{"segments":[{"index":0,"category":"Deep work","confidence":0.9}]}`}, errs: map[string]error{}}
+	e.p.Summarize = &SkillSummarizer{Runner: fk, Store: e.st, Paths: e.paths, Cfg: e.p.Cfg, Logf: t.Logf}
+	ctx := context.Background()
+	if _, err := e.p.ProcessCurrent(ctx, now, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	e.p.Now = func() time.Time { return at(16, 10, 0) }
+	fk.errs["summarize-hour"] = errors.New("claude is down")
+	if err := e.p.ProcessPending(ctx); err == nil {
+		t.Fatal("summarizer failure not reported")
+	}
+	h, _ := e.hourStatus(15)
+	if h.Status != store.StatusTranscribed || !strings.Contains(h.SummaryJSON, "Checkout design") {
+		t.Fatalf("after failed final pass: %+v; the partial summary must stay", h)
+	}
+}
+
+func TestPartialPathFiltersExcludedAndPaused(t *testing.T) {
+	e := newEnv(t)
+	now := e.p.Now()
+	e.activity(now.Add(-time.Minute), ev(15, 0, "start"), ev(15, 0, "app", "Code", "main.go"),
+		ev(15, 2, "excluded"), ev(15, 4, "included"), ev(15, 5, "pause"), ev(15, 7, "resume"))
+	e.file("audio/1500-mic.m4a", at(15, 9, 0))
+	e.tr.utts["1500-mic"] = []fu{{150, 170, "whisperexcluded"}, {330, 350, "whisperpaused"}, {500, 510, "spoken visible"}}
+	for name, text := range map[string]string{"150300.jpg": "secretexcluded", "150600.jpg": "secretpaused", "150800.jpg": "visible screen"} {
+		e.file("screens/"+name, at(15, 9, 0))
+		e.ocr.texts[name] = text
+	}
+	e.p.Cfg.Rules = map[string]string{"Code": "Deep work"}
+	fk := &fakeSkills{out: map[string]string{"summarize-hour": hourOut}, errs: map[string]error{}}
+	e.p.Summarize = &SkillSummarizer{Runner: fk, Store: e.st, Paths: e.paths, Cfg: e.p.Cfg, Logf: t.Logf}
+	if _, err := e.p.ProcessCurrent(context.Background(), now, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"150800.jpg"}; !reflect.DeepEqual(e.ocr.files, want) {
+		t.Fatalf("OCR saw %v, want %v", e.ocr.files, want)
+	}
+	for _, secret := range []string{"secretexcluded", "secretpaused", "whisperexcluded", "whisperpaused"} {
+		if hits, err := e.st.Search(secret, 10); err != nil || len(hits) != 0 {
+			t.Errorf("%s indexed: %+v %v", secret, hits, err)
+		}
+	}
+	if hits, err := e.st.Search("visible", 10); err != nil || len(hits) == 0 {
+		t.Errorf("visible text not indexed: %v", err)
+	}
+	var hourIn string
+	for _, c := range fk.calls {
+		if c.skill == "summarize-hour" {
+			b, _ := json.Marshal(c.input)
+			hourIn = string(b)
+		}
+	}
+	if !strings.Contains(hourIn, "spoken visible") || !strings.Contains(hourIn, "visible screen") {
+		t.Fatalf("summarize-hour input lacks the visible content: %s", hourIn)
+	}
+	for _, secret := range []string{"secretexcluded", "secretpaused", "whisperexcluded", "whisperpaused"} {
+		if strings.Contains(hourIn, secret) {
+			t.Errorf("summarize-hour input contains %s", secret)
+		}
 	}
 }

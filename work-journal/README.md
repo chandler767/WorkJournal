@@ -52,11 +52,12 @@ cache.
 ## The current hour
 
 Finished hours are processed a couple of minutes after they end. The hour in progress is
-summarized too, every `process_interval_minutes` (default 15; 5, 10, 15, 20, 30 or 60, also
-on the Settings page; 60 turns this off). Its notes are marked **in progress** on the
+summarized too, every `process_interval_minutes` (default 15, so at :15, :30 and :45; 5, 10,
+15, 20, 30 or 60, also on the Settings page; 60 turns this off). Its notes are marked **in progress** on the
 dashboard and replaced by the full summary once the hour ends. The **Process now** button on
 today's page asks the recorder to close its current audio chunks and processes everything
-recorded up to that moment. Only finished audio chunks are used: the newest chunk of each
+recorded up to that moment (or up to the start of a chunk the recorder could not close).
+Otherwise only finished audio chunks are used: the newest chunk of each
 track waits until the recorder has rotated it or not written it for 30 s.
 
 Each audio chunk is transcribed (and diarized) and each screenshot OCRed once; the results

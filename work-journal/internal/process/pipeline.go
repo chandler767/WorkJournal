@@ -117,17 +117,23 @@ func (p *Pipeline) processHour(ctx context.Context, h HourKey) error {
 
 // Transcribe builds the hour's HourDoc from raw data, writes the derived
 // JSON, indexes transcript and OCR text, upserts meetings and segments, and
-// sets the hour's status: `transcribed`, or `done` with summary "{}" when the
+// sets the hour's status: `transcribed` (keeping a partial hour's summary so
+// far), or `done` with summary "{}" when the
 // hour has no speech, no screen text, no active time and ends no meeting. On error nothing
 // about the hour's status changes.
 func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourDoc, error) {
-	doc, err := p.build(ctx, day, hour, time.Time{})
+	doc, _, err := p.build(ctx, day, hour, time.Time{}, time.Time{})
 	if err != nil {
 		return nil, err
 	}
 	summary := ""
 	if isEmpty(doc) {
 		doc.Status, summary = store.StatusDone, "{}"
+	} else if rec, ok, err := p.Store.Hour(day, hour); err != nil {
+		return nil, err
+	} else if ok && rec.Status == store.StatusPartial {
+		// Keep showing the summary so far until the final one succeeds.
+		summary = rec.SummaryJSON
 	}
 	if err := p.record(doc, summary); err != nil {
 		return nil, err
@@ -137,11 +143,13 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 
 // build assembles the HourDoc of a finished hour from raw data (upto zero),
 // or of the in-progress hour from the inputs ready at upto (see
-// ProcessCurrent). It writes nothing but the processing cache.
-func (p *Pipeline) build(ctx context.Context, day string, hour int, upto time.Time) (*HourDoc, error) {
+// ProcessCurrent; chunks started before a non-zero rotatedAt count as
+// finished). It also returns the time up to which the doc's audio is
+// complete. It writes nothing but the processing cache.
+func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotatedAt time.Time) (*HourDoc, time.Time, error) {
 	start, end, err := hourBounds(day, hour)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	partial := !upto.IsZero()
 	cut := end
@@ -150,30 +158,30 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto time.Ti
 	}
 	events, err := p.stateEvents(day)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	segs := activity.Segments(events, start, cut)
 
 	all, err := p.chunks(day)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	chunks, covered := inHour(all, start, end), cut
 	if partial {
-		chunks, covered = readyChunks(all, chunks, upto)
+		chunks, covered = readyChunks(all, chunks, upto, rotatedAt)
 		covered = earlier(covered, cut)
 	}
 	utts, embs, err := p.transcribeAudio(ctx, day, chunks, partial)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	screens, err := p.ocrHour(ctx, day, start, cut, segs)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	meetings, err := p.detectMeetings(day, hour, start, cut, events, utts)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 
 	doc := &HourDoc{
@@ -184,16 +192,16 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto time.Ti
 	if partial {
 		doc.Status = store.StatusPartial
 		if doc.EndedMeetings, err = p.endedSoFar(meetings, covered); err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
-		return doc, nil
+		return doc, covered, nil
 	}
 	for _, m := range meetings {
 		if m.End.Before(end) {
 			doc.EndedMeetings = append(doc.EndedMeetings, m.ID)
 		}
 	}
-	return doc, nil
+	return doc, covered, nil
 }
 
 // record stores doc: meetings, segments, indexed text, the derived JSON and
@@ -237,12 +245,14 @@ func segmentRecords(day string, hour int, segs []activity.Segment) []store.Segme
 	return out
 }
 
+// textDocs is the hour's searchable transcript and screen text. Speech during
+// an excluded or paused span is never indexed.
 func textDocs(d *HourDoc, start time.Time) []store.TextDoc {
 	ref := func(t time.Time) string {
 		return fmt.Sprintf("hour/%s/%02d#%d", d.Day, d.Hour, int(t.Sub(start).Seconds()))
 	}
 	var out []store.TextDoc
-	for _, u := range d.Transcript {
+	for _, u := range visibleSpeech(d) {
 		out = append(out, store.TextDoc{Kind: "transcript", Day: d.Day, Hour: d.Hour, TS: u.Start, Text: u.Speaker + ": " + u.Text, Ref: ref(u.Start)})
 	}
 	for _, s := range d.Screens {

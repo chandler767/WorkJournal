@@ -578,3 +578,54 @@ func TestProcessNowRotatesThenProcessesUpToNow(t *testing.T) {
 		}
 	}
 }
+
+type oneLineTranscriber struct{ calls []string }
+
+func (f *oneLineTranscriber) Transcribe(_ context.Context, wav string, start time.Time, track string) ([]media.Utterance, error) {
+	f.calls = append(f.calls, filepath.Base(wav))
+	return []media.Utterance{{Start: start.Add(time.Second), End: start.Add(3 * time.Second), Track: track, Text: "said just before the click"}}, nil
+}
+
+// The recorder opens the next chunk only on its next sample, so right after a
+// rotate the chunk it just finished is still the newest, with a fresh mtime.
+// ProcessNow must use it anyway, and report the time it processed up to.
+func TestProcessNowIncludesRotatedChunk(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		j, ctl, _ := newJobs(t)
+		if down {
+			ctl.sendErr = errors.New("dial recorder: no such file")
+		}
+		fk := &closeSkills{}
+		now := time.Date(2026, 10, 7, 10, 20, 0, 0, time.Local)
+		withActivity(t, j, fk, "2026-10-07", 10, now)
+		tr := &oneLineTranscriber{}
+		j.Pipeline.Transcriber = tr
+		j.Pipeline.Run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			return nil, os.WriteFile(args[len(args)-1], []byte("RIFF"), 0o644)
+		}
+		chunk := filepath.Join(j.Paths.Audio("2026-10-07"), "1015-mic.m4a")
+		if err := os.MkdirAll(filepath.Dir(chunk), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(chunk, []byte("m4a"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fresh := now.Add(-2 * time.Second)
+		os.Chtimes(chunk, fresh, fresh)
+
+		upto, err := j.ProcessNow(context.Background())
+		if err != nil {
+			t.Fatalf("down=%v: %v", down, err)
+		}
+		if down {
+			// No rotate happened: the open chunk waits, and the notice says so.
+			if len(tr.calls) != 0 || !upto.Equal(time.Date(2026, 10, 7, 10, 15, 0, 0, time.Local)) {
+				t.Errorf("recorder down: transcribed %v, upto %v; want nothing, 10:15", tr.calls, upto)
+			}
+			continue
+		}
+		if !equal(tr.calls, []string{"1015-mic.wav"}) || !upto.Equal(now) {
+			t.Errorf("transcribed %v, upto %v; want the rotated chunk, %v", tr.calls, upto, now)
+		}
+	}
+}
