@@ -66,3 +66,22 @@ func chunkFileName(start: Date, track: String, exists: (String) -> Bool) -> Stri
 func shouldPromptForAccessibility(trusted: Bool, interactive: Bool, alreadyPrompted: Bool) -> Bool {
     interactive && !trusted && !alreadyPrompted
 }
+
+/// Screenshot size per display: each display is scaled to `width` (keeping its aspect), so
+/// with `--all-displays` the composite is `width` × displays wide.
+func screenshotSizes(displays: [(width: Int, height: Int)], width: Int) -> [(width: Int, height: Int)] {
+    displays.map { d in (max(1, width), max(1, width * d.height / max(1, d.width))) }
+}
+
+/// Size of the side-by-side composite: summed widths, tallest height.
+func compositeSize(_ sizes: [(width: Int, height: Int)]) -> (width: Int, height: Int) {
+    (sizes.reduce(0) { $0 + $1.width }, sizes.map(\.height).max() ?? 0)
+}
+
+/// Indices of display `frames` in arrangement order: left to right, then top to bottom.
+func arrangementOrder(_ frames: [CGRect]) -> [Int] {
+    frames.indices.sorted { a, b in
+        let fa = frames[a], fb = frames[b]
+        return fa.minX != fb.minX ? fa.minX < fb.minX : fa.minY < fb.minY
+    }
+}

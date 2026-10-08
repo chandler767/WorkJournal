@@ -89,7 +89,7 @@ models/                            whisper + sherpa-onnx models
 ## 4. Capture (Swift recorder)
 
 - **Screen:** ScreenCaptureKit; main display by default (`all_displays` option);
-  JPEG at 1440px width; perceptual-diff skip when unchanged.
+  JPEG at 1440px width per display (side by side with `all_displays`); perceptual-diff skip when unchanged.
 - **Audio:** two tracks — system (ScreenCaptureKit) and mic (AVAudioEngine) —
   written as 5-minute AAC `.m4a` chunks.
 - **Activity:** frontmost app + window title on change; idle after
@@ -103,7 +103,8 @@ models/                            whisper + sherpa-onnx models
 - **Menu bar:** status icon (recording / paused / error), Pause/Resume,
   Open Dashboard, Quit.
 - **Control interface:** Go launches the recorder with `--data-dir`; control
-  via a Unix socket (`pause`, `resume`, `status`). `recorder ocr <files…>`
+  via a Unix socket (`pause`, `resume`, `status`, `rotate` — finish the
+  current audio chunks now and start new ones). `recorder ocr <files…>`
   prints JSON OCR results using Vision. `recorder --selftest` verifies capture.
 - **Permissions:** Screen & System Audio Recording, Microphone, Accessibility
   — attached to the ad-hoc-signed `WorkJournalRecorder.app`.

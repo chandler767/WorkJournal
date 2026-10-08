@@ -6,8 +6,8 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// One `SCStream` on the main display carrying system audio to the "system" writer, plus
-/// periodic `SCScreenshotManager` screenshots (main display, or all displays side by side)
-/// written as `raw/<day>/screens/HHMMSS.jpg`. Control from the main thread.
+/// periodic `SCScreenshotManager` screenshots (main display, or all displays side by side in
+/// arrangement order, each scaled to `--width`) written as `raw/<day>/screens/HHMMSS.jpg`. Control from the main thread.
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Gate for screenshots (pause, exclusion, sleep, disk guard).
     var screensEnabled = false {
@@ -64,7 +64,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                 ?? content.displays.first else {
             return retry("screen capture unavailable: \(error?.localizedDescription ?? "no display") (Screen Recording permission?)")
         }
-        displays = options.allDisplays ? content.displays : [main]
+        displays = options.allDisplays ? arrangementOrder(content.displays.map(\.frame)).map { content.displays[$0] } : [main]
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.sampleRate = 48_000
@@ -139,13 +139,13 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         shooting = true
         let taken = Date()
         let gen = generation
-        let totalWidth = displays.reduce(0) { $0 + $1.width }
+        let sizes = screenshotSizes(displays: displays.map { ($0.width, $0.height) }, width: options.width)
         var images = [CGImage?](repeating: nil, count: displays.count)
         let group = DispatchGroup()
         for (i, d) in displays.enumerated() {
             let config = SCStreamConfiguration()
-            config.width = max(1, options.width * d.width / max(1, totalWidth))
-            config.height = max(1, config.width * d.height / max(1, d.width))
+            config.width = sizes[i].width
+            config.height = sizes[i].height
             config.showsCursor = false
             group.enter()
             SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: d, excludingWindows: []),

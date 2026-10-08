@@ -70,6 +70,7 @@ open -n recorder/build/WorkJournalRecorder.app --args run \
   `{"audio":true,"meeting":false,"screens":true,"since":"2026-10-07T14:05:00+01:00","state":"recording"}`.
 - [ ] `echo pause | nc -U …` prints `ok` and status shows `"state":"paused"`; `echo resume | nc -U …` prints `ok`.
 - [ ] `echo screens_off | nc -U …`: `"screens":false`, `"audio":true`. `audio_off`: both false. `normal`: both true. Each one logs its event.
+- [ ] `echo rotate | nc -U …` prints `ok` only once the current `audio/HHMM-system.m4a` and `HHMM-mic.m4a` are finished: both play right away, and a new `HHMMSS-mic.m4a` appears within a second (`HHMMSS-system.m4a` once system audio plays: silence delivers no samples). While paused, `rotate` still prints `ok` and writes nothing.
 - [ ] `echo quit | nc -U …` prints `ok`, the recorder exits, `activity.jsonl` ends with `stop`, the last `.m4a` files play, and the socket file is gone.
 
 ## 8. Degraded start

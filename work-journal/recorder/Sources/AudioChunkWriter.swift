@@ -61,6 +61,13 @@ final class AudioChunkWriter {
         queue.sync { muted = on }
     }
 
+    /// Finishes the current chunk (playable `.m4a`, blocks until written) and leaves the writer
+    /// enabled, so the next sample opens a new chunk named for that time (`HHMMSS` when `HHMM`
+    /// is taken). A no-op when no chunk is open (disabled, or no sample yet).
+    func rotate() {
+        queue.sync { finishOnQueue() }
+    }
+
     /// Finishes the current chunk so the `.m4a` is playable. Blocks until written.
     func finish() {
         queue.sync { finishOnQueue() }

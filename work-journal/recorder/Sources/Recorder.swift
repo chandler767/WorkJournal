@@ -108,6 +108,7 @@ final class Recorder {
         case "screens_off": setDisk(.screens_off)
         case "audio_off": setDisk(.audio_off)
         case "normal": setDisk(.normal)
+        case "rotate": rotate()
         case "status": return (statusJSON(), nil)
         case "quit": return ("ok", { [unowned self] in quit() })
         default: return ("error: unknown command \"\(command)\"", nil)
@@ -131,6 +132,13 @@ final class Recorder {
         paused = false
         log.append("resume")
         apply()
+    }
+
+    /// Finishes the open chunk of both tracks (blocks until written, so `ok` means the files
+    /// are playable); the next samples open new chunks. Nothing to do while audio is off.
+    private func rotate() {
+        systemWriter.rotate()
+        micWriter.rotate()
     }
 
     /// `screens_off` stops screenshots; `audio_off` stops screenshots and audio; `normal` restores both.

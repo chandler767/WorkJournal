@@ -78,7 +78,7 @@ work-journal/
 `recorder selftest --data-dir D` → exit 0 and `selftest ok`, or exit 1 and the failed check
 `recorder run-tests` → exit 0 when Policy assertions pass
 
-**Control socket** (`<data-dir>/recorder.sock`, newline-terminated text): `pause`, `resume`, `screens_off`, `audio_off`, `normal`, `quit` → `ok` (`quit` finishes writers, emits `stop`, exits 0); `status` → `{"state":"recording|paused|excluded","since":"<RFC3339>","meeting":bool,"screens":bool,"audio":bool}`.
+**Control socket** (`<data-dir>/recorder.sock`, newline-terminated text): `pause`, `resume`, `screens_off`, `audio_off`, `normal`, `rotate`, `quit` → `ok` (`rotate` finishes the open chunk of both audio tracks and replies once the `.m4a` files are fully written; the next samples open new chunks, `HHMMSS-…` when `HHMM-…` is taken; with audio off there is nothing to finish and it still replies `ok`. `quit` finishes writers, emits `stop`, exits 0); `status` → `{"state":"recording|paused|excluded","since":"<RFC3339>","meeting":bool,"screens":bool,"audio":bool}`.
 
 **Hour status:** `pending → transcribed → done | needs_review`.
 
@@ -189,7 +189,7 @@ Go, Homebrew and whisper.cpp are not installed. Homebrew needs your password, so
 - Produces: `recorder run …` per the contract; the activity events, file names and socket protocol listed under Cross-component contracts.
 
 Behavior requirements (spec §4):
-- `Capture`: one `SCStream` on the main display (or all displays when `--all-displays`) with `capturesAudio = true`. System audio goes to `AudioChunkWriter(track:"system")`. Screens are pulled with `SCScreenshotManager` on a timer at `screenshotInterval(meeting:)`, scaled to `--width`, JPEG quality 0.6, and skipped per `shouldSkipScreenshot`.
+- `Capture`: one `SCStream` on the main display (or all displays when `--all-displays`) with `capturesAudio = true`. System audio goes to `AudioChunkWriter(track:"system")`. Screens are pulled with `SCScreenshotManager` on a timer at `screenshotInterval(meeting:)`, scaled to `--width` (per display: with `--all-displays` each display is scaled to `--width` and placed side by side left to right, so the image is `--width` × displays wide), JPEG quality 0.6, and skipped per `shouldSkipScreenshot`.
 - `AudioChunkWriter`: `AVAssetWriter` AAC mono 32 kbps, rotated on wall-clock boundaries that are multiples of `--chunk-minutes`; finishes the file on rotate, pause and stop.
 - `MicRecorder`: `AVAudioEngine` input tap → `AudioChunkWriter(track:"mic")`.
 - `ActivityMonitor`: `NSWorkspace.willSleepNotification`/`didWakeNotification` → `sleep`/`wake` events (writers finish on sleep); `NSWorkspace.didActivateApplicationNotification`, plus the window title via `AXUIElementCopyAttributeValue(kAXFocusedWindowAttribute → kAXTitleAttribute)`, polled every 2 s. Idle uses `CGEventSource.secondsSinceLastEventType(.combinedSessionState, .null)` ≥ `--idle-minutes`. Emits the events from the contract. While `isExcluded` is true it stops screenshots and **both** audio writers and emits `excluded` with no title; when it ends, `included`.
