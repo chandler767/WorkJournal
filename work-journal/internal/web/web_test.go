@@ -49,6 +49,7 @@ type fakeJobs struct {
 	processedNow                int
 	upto                        time.Time
 	nowErr                      error
+	reprocessErr                error
 }
 
 func (f *fakeJobs) ProcessPending(context.Context) error { return nil }
@@ -59,7 +60,7 @@ func (f *fakeJobs) ProcessNow(context.Context) (time.Time, error) {
 }
 func (f *fakeJobs) ReprocessHour(_ context.Context, d string, h int) error {
 	f.reprocessed = append(f.reprocessed, d+"/"+string(rune('0'+h/10))+string(rune('0'+h%10)))
-	return nil
+	return f.reprocessErr
 }
 func (f *fakeJobs) CloseDay(_ context.Context, d string) error {
 	f.closed = append(f.closed, d)

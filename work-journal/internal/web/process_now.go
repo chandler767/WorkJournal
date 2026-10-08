@@ -41,6 +41,12 @@ func dayNotice(q url.Values) string {
 		return "Processed."
 	case "process-failed":
 		return "Processing failed — see the log. Anything that finished was kept."
+	case "reprocess-not-ready":
+		return "That hour's audio is still being recorded — try again in a few minutes."
+	case "reprocess-expired":
+		return "Cannot reprocess: the hour's raw recordings were already removed."
+	case "reprocess-failed":
+		return "Reprocessing failed — see the log."
 	}
 	return ""
 }

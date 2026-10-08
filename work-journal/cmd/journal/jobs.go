@@ -116,9 +116,11 @@ func (j *Jobs) ProcessNow(ctx context.Context) (time.Time, error) {
 }
 
 // ReprocessHour resets the hour to pending and runs it through the pipeline
-// again. Once retention removed the day's raw media it summarizes the hour
-// again from its derived doc, and returns scheduler.ErrMediaExpired only when
-// that is gone too.
+// again. The in-progress hour gets a fresh summary so far (ProcessCurrent):
+// its newest audio chunk is still being written and would fail a full pass
+// with process.ErrChunkNotReady. Once retention removed the day's raw media
+// it summarizes the hour again from its derived doc, and returns
+// scheduler.ErrMediaExpired only when that is gone too.
 func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
@@ -136,6 +138,10 @@ func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 		return err
 	}
 	p := j.pipeline()
+	if now := j.now().In(time.Local); day == config.DayKey(now) && hour == now.Hour() {
+		_, err := p.ProcessCurrent(ctx, now, time.Time{})
+		return err
+	}
 	doc, err := p.Transcribe(ctx, day, hour)
 	if err != nil {
 		return err

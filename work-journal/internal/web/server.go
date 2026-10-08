@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -21,6 +22,7 @@ import (
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
 	"workjournal/internal/diarize"
+	"workjournal/internal/process"
 	"workjournal/internal/scheduler"
 	"workjournal/internal/store"
 )
@@ -206,7 +208,15 @@ func (s *Server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Jobs.ReprocessHour(r.Context(), day, hour); err != nil {
-		http.Error(w, "reprocess: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("web: reprocess %s %02d: %v", day, hour, err)
+		notice := "reprocess-failed"
+		switch {
+		case errors.Is(err, process.ErrChunkNotReady):
+			notice = "reprocess-not-ready"
+		case errors.Is(err, scheduler.ErrMediaExpired):
+			notice = "reprocess-expired"
+		}
+		http.Redirect(w, r, "/day/"+day+"?notice="+notice, http.StatusSeeOther)
 		return
 	}
 	redirectBack(w, r, "/day/"+day)

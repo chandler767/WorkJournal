@@ -633,3 +633,34 @@ func TestProcessNowIncludesRotatedChunk(t *testing.T) {
 // emptyWav is a canonical 16 kHz mono 16-bit PCM WAV with no samples, as
 // media.ToWav16k leaves it.
 var emptyWav = []byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00")
+
+// The day page offers Reprocess on the in-progress (partial) hour, whose
+// newest audio chunk the recorder is still writing (afconvert cannot read
+// it). Reprocessing must refresh the summary so far, not fail with
+// process.ErrChunkNotReady.
+func TestReprocessInProgressHourSkipsOpenChunk(t *testing.T) {
+	j, _, _ := newJobs(t)
+	fk := &closeSkills{}
+	now := time.Date(2026, 10, 7, 10, 20, 0, 0, time.Local)
+	withActivity(t, j, fk, "2026-10-07", 10, now)
+	chunk := filepath.Join(j.Paths.Audio("2026-10-07"), "1015-mic.m4a")
+	if err := os.MkdirAll(filepath.Dir(chunk), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(chunk, []byte("m4a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fresh := now.Add(-2 * time.Second)
+	os.Chtimes(chunk, fresh, fresh)
+
+	if err := j.ReprocessHour(context.Background(), "2026-10-07", 10); err != nil {
+		t.Fatalf("reprocess in-progress hour: %v", err)
+	}
+	if !equal(fk.called, []string{"summarize-hour"}) {
+		t.Errorf("skills %v, want summarize-hour", fk.called)
+	}
+	h, ok, err := j.Store.Hour("2026-10-07", 10)
+	if err != nil || !ok || h.Status != store.StatusPartial {
+		t.Errorf("hour 10 = %+v %v %v, want partial", h, ok, err)
+	}
+}

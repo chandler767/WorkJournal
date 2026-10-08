@@ -1,13 +1,19 @@
 package web
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"log"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/process"
+	"workjournal/internal/scheduler"
 	"workjournal/internal/store"
 )
 
@@ -74,5 +80,34 @@ func TestPartialHourShowsInProgress(t *testing.T) {
 	mustContain(t, hour, "in progress", "Summary so far — updates every 15 min", "Started the cache work.")
 	if strings.Contains(e.get("/hour/"+seedDay+"/09").Body.String(), "Summary so far") {
 		t.Error("finished hour labelled in progress")
+	}
+}
+
+// A failed reprocess is logged and shown as an allow-listed notice on the
+// day page instead of a bare 500.
+func TestReprocessFailureLoggedAndNoticed(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	for _, tc := range []struct {
+		err    error
+		notice string
+		text   string
+	}{
+		{fmt.Errorf("%w: 1555-system.m4a: afconvert: exit 1", process.ErrChunkNotReady), "reprocess-not-ready", "still being recorded"},
+		{scheduler.ErrMediaExpired, "reprocess-expired", "raw recordings were already removed"},
+		{errors.New("whisper-cli: exit 2"), "reprocess-failed", "Reprocessing failed"},
+	} {
+		e := newEnv(t)
+		logs.Reset()
+		e.jobs.reprocessErr = tc.err
+		rec := e.post("/hour/2026-10-07/15/reprocess", nil, nil)
+		if want := "/day/2026-10-07?notice=" + tc.notice; rec.Code != 303 || rec.Header().Get("Location") != want {
+			t.Errorf("%v: got %d %q, want 303 %q", tc.err, rec.Code, rec.Header().Get("Location"), want)
+		}
+		if !strings.Contains(logs.String(), "2026-10-07 15") || !strings.Contains(logs.String(), tc.err.Error()) {
+			t.Errorf("%v: log %q lacks the hour and error", tc.err, logs.String())
+		}
+		mustContain(t, e.get("/day/2026-10-07?notice="+tc.notice).Body.String(), tc.text)
 	}
 }
