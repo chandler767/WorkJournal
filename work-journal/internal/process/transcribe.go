@@ -27,8 +27,16 @@ type audioChunk struct {
 	us []media.Utterance // e.Utterances less silence hallucinations (see dropHallucinations)
 }
 
-// wavDir converts chunks to WAV in one temp directory, removed by close.
-type wavDir struct{ dir string }
+// wavDir converts chunks to WAV in one temp directory, removed by close. It
+// also tallies the hour's diarization results (see warnDiarization).
+type wavDir struct {
+	dir string
+	// eligible counts chunks whose speakers come from diarization (cached
+	// or diarized now); failed those whose Diarize call failed, the first
+	// with firstErr.
+	eligible, failed int
+	firstErr         error
+}
 
 // ensure creates the directory on first use.
 func (w *wavDir) ensure() error {
@@ -121,11 +129,14 @@ func (p *Pipeline) loadAudio(ctx context.Context, day string, chunks []chunk, sk
 				e = &chunkEntry{Version: cacheVersion, Key: key, Model: p.Cfg.WhisperModel, Utterances: us}
 			}
 			if needTurns {
-				p.diarizeChunk(ctx, d, wav, name, e)
+				p.diarizeChunk(ctx, d, wav, name, e, w)
 			}
 			if needText || e.Diarized {
 				p.saveChunk(day, c.path, e)
 			}
+		}
+		if c.track == "system" && d != nil {
+			w.eligible++
 		}
 		out = append(out, audioChunk{c: c, e: e})
 	}
@@ -156,12 +167,17 @@ func dropHallucinations(cs []audioChunk) {
 	}
 }
 
-// diarizeChunk stores wav's turns and embeddings in e; a failure is logged
-// and leaves e undiarized.
-func (p *Pipeline) diarizeChunk(ctx context.Context, d diarize.Diarizer, wav, name string, e *chunkEntry) {
+// diarizeChunk stores wav's turns and embeddings in e; a failure is logged,
+// tallied in w and leaves e undiarized (so the next pass tries again).
+func (p *Pipeline) diarizeChunk(ctx context.Context, d diarize.Diarizer, wav, name string, e *chunkEntry, w *wavDir) {
 	turns, embs, err := d.Diarize(ctx, wav)
 	if err != nil {
 		p.logf("process: diarize %s: %v; speakers unknown", name, err)
+		if ctx.Err() == nil {
+			if w.failed++; w.firstErr == nil {
+				w.firstErr = err
+			}
+		}
 		return
 	}
 	e.Diarized, e.Turns, e.Embeddings = true, turns, embs
@@ -210,6 +226,7 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, 
 			if d == nil || !slices.ContainsFunc(us, inside) {
 				break
 			}
+			w.eligible++
 			if !e.Diarized {
 				if err := w.ensure(); err != nil {
 					return nil, err
@@ -222,7 +239,7 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, 
 					}
 					p.logf("process: cannot read %s to diarize: %v; mic speech stays me", c.path, err)
 				} else {
-					p.diarizeChunk(ctx, d, wav, name, e)
+					p.diarizeChunk(ctx, d, wav, name, e, w)
 					if e.Diarized {
 						p.saveChunk(day, c.path, e)
 					}
@@ -248,6 +265,17 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, 
 		res.embs = lb.embs
 	}
 	return res, nil
+}
+
+// warnDiarization logs one WARNING line when diarization failed on more
+// than half of the hour's eligible chunks: speaker separation is then
+// probably broken rather than unlucky (see `journal doctor`).
+func (p *Pipeline) warnDiarization(day string, hour int, w *wavDir) {
+	if w.failed == 0 || 2*w.failed <= w.eligible {
+		return
+	}
+	p.logf("process: WARNING: speaker separation failed on %d of %d chunks in %s %02d (first error: %v); speakers unknown, run `journal doctor`",
+		w.failed, w.eligible, day, hour, w.firstErr)
 }
 
 // unknownSpeaker labels in-meeting mic speech no diarizer turn covers.

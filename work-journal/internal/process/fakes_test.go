@@ -66,12 +66,16 @@ type diar struct {
 
 type fakeDiarizer struct {
 	by    map[string]diar
+	errs  map[string]error
 	calls []string
 }
 
 func (f *fakeDiarizer) Diarize(ctx context.Context, wav string) ([]diarize.Turn, map[int][]float32, error) {
 	base := strings.TrimSuffix(filepath.Base(wav), ".wav")
 	f.calls = append(f.calls, base)
+	if err := f.errs[base]; err != nil {
+		return nil, nil, err
+	}
 	d := f.by[base]
 	return d.turns, d.embs, nil
 }
@@ -139,7 +143,7 @@ func newEnv(t *testing.T) *env {
 	e := &env{
 		t: t, paths: paths, st: st,
 		tr:  &fakeTranscriber{utts: map[string][]fu{}, errs: map[string]error{}},
-		dz:  &fakeDiarizer{by: map[string]diar{}},
+		dz:  &fakeDiarizer{by: map[string]diar{}, errs: map[string]error{}},
 		ocr: &fakeOCR{texts: map[string]string{}},
 		sum: &fakeSummarizer{},
 		bad: map[string]bool{},

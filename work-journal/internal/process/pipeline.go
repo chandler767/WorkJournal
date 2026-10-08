@@ -196,6 +196,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	p.warnDiarization(day, hour, &wavs)
 	utts, embs := lab.utts, lab.embs
 	for _, m := range inPerson {
 		if p.keepInPerson(day, hour, m, lab) {
