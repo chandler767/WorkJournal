@@ -2,8 +2,9 @@
 <nav class="daynav">
   <a href="/day/{{.Day}}">&larr; {{.Day}}</a>
   <h1>{{.Title}}</h1>
-  <span class="muted">{{.App}} · {{.Time}}</span>
+  <span></span>
 </nav>
+<p class="muted meeting-meta">{{.App}} · {{.Time}}</p>
 
 {{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
 {{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}

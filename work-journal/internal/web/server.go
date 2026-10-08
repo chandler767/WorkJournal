@@ -210,6 +210,16 @@ var funcs = template.FuncMap{
 	"thisWeek": func() string { return config.WeekKey(time.Now()) },
 	"div60":    func(n int) int { return n / 60 },
 	"mod60":    func(n int) int { return n % 60 },
+	"code":     codeSegs,
+	"plural":   plural,
+}
+
+// plural formats a count with its noun: "1 note", "12 notes".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func fmtDur(d time.Duration) string {

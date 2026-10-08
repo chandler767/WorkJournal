@@ -13,19 +13,35 @@
   function pad(n) { return (n < 10 ? "0" : "") + n; }
 
   // timeline draws spec = {from, to, day, segs:[{s,e,c,l,h}]} (minutes since midnight).
+  // The bars stretch with the SVG (preserveAspectRatio="none"); the hour
+  // labels are HTML in the sibling .timeline-axis so text never distorts.
   function timeline(svg, spec) {
-    var W = 1000, H = 64, top = 6, barH = 34;
+    var W = 1000, H = 44, top = 4, barH = 36;
     var from = spec.from * 60, span = (spec.to - spec.from) * 60;
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
     svg.setAttribute("preserveAspectRatio", "none");
     while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var axis = svg.nextElementSibling;
+    if (!axis || !axis.classList.contains("timeline-axis")) {
+      axis = document.createElement("div");
+      axis.className = "timeline-axis";
+      axis.setAttribute("aria-hidden", "true");
+      svg.parentNode.insertBefore(axis, svg.nextSibling);
+    }
+    while (axis.firstChild) axis.removeChild(axis.firstChild);
     var x = function (m) { return ((m - from) / span) * W; };
+    var narrow = (svg.getBoundingClientRect().width || W) < 480;
+    var step = spec.to - spec.from <= 12 && !narrow ? 1 : (narrow && spec.to - spec.from > 12 ? 3 : 2);
     for (var h = spec.from; h <= spec.to; h++) {
       var gx = x(h * 60);
-      el("line", { x1: gx, x2: gx, y1: top, y2: top + barH + 4, stroke: "currentColor", "stroke-opacity": 0.2 }, svg);
-      if ((h - spec.from) % 2 === 0 || spec.to - spec.from <= 12) {
-        var t = el("text", { x: Math.min(Math.max(gx, 12), W - 12), y: H - 8, "text-anchor": "middle" }, svg);
-        t.textContent = pad(h);
+      el("line", { x1: gx, x2: gx, y1: top, y2: top + barH, stroke: "currentColor", "stroke-opacity": 0.2, "vector-effect": "non-scaling-stroke" }, svg);
+      if ((h - spec.from) % step === 0) {
+        var t = document.createElement("span");
+        t.textContent = pad(h % 24);
+        t.style.left = (gx / W * 100) + "%";
+        if (h === spec.from) t.className = "first";
+        else if (h === spec.to) t.className = "last";
+        axis.appendChild(t);
       }
     }
     (spec.segs || []).forEach(function (s) {
@@ -47,8 +63,16 @@
   window.WJChart = { timeline: timeline, bar: bar };
 
   document.addEventListener("DOMContentLoaded", function () {
-    document.querySelectorAll('[data-chart="timeline"]').forEach(function (n) {
-      try { timeline(n, JSON.parse(n.getAttribute("data-spec"))); } catch (e) { console.error("timeline", e); }
+    var drawTimelines = function () {
+      document.querySelectorAll('[data-chart="timeline"]').forEach(function (n) {
+        try { timeline(n, JSON.parse(n.getAttribute("data-spec"))); } catch (e) { console.error("timeline", e); }
+      });
+    };
+    drawTimelines();
+    var resizeTimer;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(drawTimelines, 150);
     });
     document.querySelectorAll('[data-chart="bar"]').forEach(bar);
   });

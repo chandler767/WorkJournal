@@ -28,7 +28,12 @@ type hourRow struct {
 	NeedsReview bool
 	Pending     bool
 	Partial     bool
-	Summary     skills.HourSummary
+	// Empty is a finished hour with nothing in its summary: one muted line.
+	Empty bool
+	// Reprocess is offered only where it helps: needs_review, partial and
+	// transcribed (stuck before summarizing) hours.
+	Reprocess bool
+	Summary   skills.HourSummary
 }
 
 type meetingRow struct {
@@ -52,6 +57,7 @@ type timelineSpec struct {
 
 type dayPage struct {
 	Title, Date, Prev, Next string
+	PrevShort, NextShort    string // "Oct 7", for narrow screens
 	IsToday                 bool
 	RecorderUp              bool
 	Paused                  bool
@@ -77,9 +83,11 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	colors := colorMap(cfg.Categories)
 	p := dayPage{
 		Title: day, Date: day,
-		Prev:    config.DayKey(t.AddDate(0, 0, -1)),
-		Next:    config.DayKey(t.AddDate(0, 0, 1)),
-		IsToday: day == config.DayKey(time.Now()),
+		Prev:      config.DayKey(t.AddDate(0, 0, -1)),
+		Next:      config.DayKey(t.AddDate(0, 0, 1)),
+		PrevShort: t.AddDate(0, 0, -1).Format("Jan 2"),
+		NextShort: t.AddDate(0, 0, 1).Format("Jan 2"),
+		IsToday:   day == config.DayKey(time.Now()),
 	}
 	p.Notice = dayNotice(r.URL.Query())
 	p.RecorderUp, p.Paused, p.StatusText = s.recorderState()
@@ -110,11 +118,13 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 			NeedsReview: h.Status == store.StatusNeedsReview,
 			Pending:     h.Status == store.StatusPending || h.Status == store.StatusTranscribed,
 			Partial:     h.Status == store.StatusPartial}
+		row.Reprocess = row.NeedsReview || row.Partial || h.Status == store.StatusTranscribed
 		if h.SummaryJSON != "" {
 			if err := json.Unmarshal([]byte(h.SummaryJSON), &row.Summary); err != nil {
 				row.Summary.Notes = []string{"(summary unreadable: " + err.Error() + ")"}
 			}
 		}
+		row.Empty = !row.NeedsReview && !row.Partial && !row.Pending && summaryEmpty(row.Summary)
 		p.Hours = append(p.Hours, row)
 	}
 
@@ -151,6 +161,10 @@ func (s *Server) recorderState() (up, paused bool, text string) {
 		return false, false, "Recorder not running"
 	}
 	return true, st.State == "paused", st.State
+}
+
+func summaryEmpty(h skills.HourSummary) bool {
+	return h.Narrative == "" && h.MainFocus == "" && len(h.Notes) == 0 && len(h.ActionItems) == 0 && len(h.Timeline) == 0
 }
 
 func hourLabel(h int) string {

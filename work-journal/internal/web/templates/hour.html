@@ -1,13 +1,12 @@
 {{define "content"}}
 <nav class="daynav">
-  <a href="/day/{{.Date}}">&larr; {{.Date}}</a>
+  <a class="prev" href="/day/{{.Date}}">&larr; {{.Date}}</a>
   <h1>{{.Label}}</h1>
-  <span></span>
+  <form class="reprocess next" method="post" action="/hour/{{.Date}}/{{.Hour}}/reprocess"><button type="submit" class="link">Reprocess</button></form>
 </nav>
 
 {{if .NeedsReview}}<div class="banner"><span class="badge warn">needs review</span>
-  This hour could not be summarized cleanly.
-  <form method="post" action="/hour/{{.Date}}/{{.Hour}}/reprocess"><button type="submit" class="secondary">Reprocess</button></form></div>{{end}}
+  This hour could not be summarized cleanly. Reprocess it to try again.</div>{{end}}
 {{if .PartialNote}}<div class="banner" role="status"><span class="badge">in progress</span> {{.PartialNote}}</div>{{end}}
 {{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}
 
@@ -32,8 +31,8 @@
   <h2>Notes</h2>
   {{if .HasSummary}}
     {{if .Summary.MainFocus}}<p class="focus">{{.Summary.MainFocus}}</p>{{end}}
-    <ul>{{range .Summary.Notes}}<li>{{.}}</li>{{end}}</ul>
-    {{if .Summary.ActionItems}}<h3>Action items</h3><ul class="actions">{{range .Summary.ActionItems}}<li>{{.Text}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
+    {{with .Summary.Notes}}<details class="notes" open><summary>{{plural (len .) "note"}}</summary><ul class="notes-list">{{range .}}<li>{{range code .}}{{if .Code}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}</li>{{end}}</ul></details>{{end}}
+    {{if .Summary.ActionItems}}<h3 class="actions-h">Action items</h3><ul class="actions">{{range .Summary.ActionItems}}<li>{{range code .Text}}{{if .Code}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}{{if .Owner}} <span class="muted">({{.Owner}})</span>{{end}}</li>{{end}}</ul>{{end}}
   {{else}}<p class="muted">No notes yet.</p>{{end}}
 </section>
 
