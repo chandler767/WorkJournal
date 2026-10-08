@@ -1,0 +1,6 @@
+{
+  "name": "chandler-playground/git-hygiene",
+  "version": "0.1.1",
+  "description": "Skills for clean git workflows: commits, PRs, release notes",
+  "private": true
+}

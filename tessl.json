@@ -5,15 +5,15 @@
     "tessl-academy/skill-foundations": {
       "version": "0.1.9"
     },
-    "local/commit-conventions": {
-      "source": "file:./skills/commit-conventions"
-    },
     "obra/superpowers": {
       "version": "8ca22dba9a94f28898bbce59f2537ff4d87c747d",
       "source": "https://github.com/obra/superpowers"
     },
     "local/work-journal": {
       "source": "file:./work-journal/skills/work-journal"
+    },
+    "chandler-playground/git-hygiene": {
+      "version": "0.1.1"
     }
   },
   "agents": [

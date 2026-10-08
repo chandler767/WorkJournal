@@ -1,0 +1,53 @@
+{
+  "name": "obra/superpowers",
+  "version": "8ca22dba9a94f28898bbce59f2537ff4d87c747d",
+  "summary": "Auto-generated plugin from GitHub (15 skills)",
+  "private": true,
+  "skills": {
+    "brainstorming": {
+      "path": "skills/brainstorming/SKILL.md"
+    },
+    "diagnosing-superpowers": {
+      "path": "skills/diagnosing-superpowers/SKILL.md"
+    },
+    "dispatching-parallel-agents": {
+      "path": "skills/dispatching-parallel-agents/SKILL.md"
+    },
+    "executing-plans": {
+      "path": "skills/executing-plans/SKILL.md"
+    },
+    "finishing-a-development-branch": {
+      "path": "skills/finishing-a-development-branch/SKILL.md"
+    },
+    "receiving-code-review": {
+      "path": "skills/receiving-code-review/SKILL.md"
+    },
+    "requesting-code-review": {
+      "path": "skills/requesting-code-review/SKILL.md"
+    },
+    "subagent-driven-development": {
+      "path": "skills/subagent-driven-development/SKILL.md"
+    },
+    "systematic-debugging": {
+      "path": "skills/systematic-debugging/SKILL.md"
+    },
+    "test-driven-development": {
+      "path": "skills/test-driven-development/SKILL.md"
+    },
+    "using-git-worktrees": {
+      "path": "skills/using-git-worktrees/SKILL.md"
+    },
+    "using-superpowers": {
+      "path": "skills/using-superpowers/SKILL.md"
+    },
+    "verification-before-completion": {
+      "path": "skills/verification-before-completion/SKILL.md"
+    },
+    "writing-plans": {
+      "path": "skills/writing-plans/SKILL.md"
+    },
+    "writing-skills": {
+      "path": "skills/writing-skills/SKILL.md"
+    }
+  }
+}
