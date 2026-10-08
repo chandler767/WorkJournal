@@ -5,9 +5,12 @@ import CoreMedia
 import ImageIO
 import UniformTypeIdentifiers
 
-/// One `SCStream` on the main display carrying system audio to the "system" writer, plus
-/// periodic `SCScreenshotManager` screenshots (main display, or all displays side by side in
-/// arrangement order, each scaled to `--width`) written as `raw/<day>/screens/HHMMSS.jpg`. Control from the main thread.
+/// One `SCStream` on the main display carrying system audio to the "system" writer and a
+/// low-resolution change watcher (~2 fps, 320 px wide), plus change-driven `SCScreenshotManager`
+/// screenshots (main display, or all displays side by side in arrangement order, each scaled
+/// to `--width`) written as `raw/<day>/screens/HHMMSS.jpg`. A screenshot is taken on an app or
+/// window switch, when the watcher sees the screen change past the sensitivity threshold, or
+/// after the idle backstop, never closer than the min gap (see `nextShot`). Control from the main thread.
 /// When displays change (connected, removed, rearranged) the stream and display list go
 /// stale. A screen-parameters change or the stream's stop error restarts the stream; a round
 /// of failed screenshots only re-queries the displays used for screenshots, so system audio
@@ -15,10 +18,14 @@ import UniformTypeIdentifiers
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Gate for screenshots (pause, exclusion, sleep, disk guard).
     var screensEnabled = false {
-        didSet { if !screensEnabled { generation += 1 } }
+        didSet {
+            if !screensEnabled { generation += 1 } else if !oldValue { trigger(.resumed) }
+        }
     }
-    /// Selects the meeting screenshot cadence.
-    var meeting = false
+    /// Shortens the idle backstop to the meeting interval.
+    var meeting = false {
+        didSet { if meeting != oldValue { reschedule() } }
+    }
     var onError: ((String) -> Void)?
     var onRunning: (() -> Void)?
     /// Synchronous exclusion re-check of the current frontmost app/title; true drops the frame.
@@ -28,6 +35,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private let systemWriter: AudioChunkWriter
     private let audioQueue = DispatchQueue(label: "workjournal.capture.audio")
     private let encodeQueue = DispatchQueue(label: "workjournal.capture.jpeg")
+    private let watchQueue = DispatchQueue(label: "workjournal.capture.watch")
+    private var watchRef: [UInt8]? // watchQueue only: watcher thumbnail at the last change
     private var stream: SCStream?
     private var displays: [SCDisplay] = []
     private var active = false
@@ -35,6 +44,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var retryTimer: Timer?
     private var shooting = false
     private var generation = 0
+    private var restartGeneration = 0 // bumped by restart/stop; stale display queries are ignored
+    private var lastShot: Date?
+    private var pending = Set<ShotTrigger>()
+    private var displaysStale = false // every display failed; no shots until displays are refreshed
     private var lastThumb: [UInt8]?
     private var debounce = RestartDebounce(delay: 2)
     private var restartTimer: Timer?
@@ -77,6 +90,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         pendingAction = nil
         debounce = RestartDebounce(delay: 2)
         generation += 1
+        restartGeneration += 1
+        pending.removeAll()
+        displaysStale = false
         guard let s = stream else { return done() }
         stream = nil
         s.stopCapture { _ in DispatchQueue.main.async(execute: done) }
@@ -94,14 +110,17 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         config.sampleRate = 48_000
         config.channelCount = 1
         config.excludesCurrentProcessAudio = true
-        // Video frames are discarded (screenshots use SCScreenshotManager); keep them tiny and rare.
-        config.width = 64
-        config.height = 36
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        // Change watcher only (screenshots use SCScreenshotManager): small, 2 fps, no cursor.
+        config.width = 320
+        config.height = max(1, 320 * main.height / max(1, main.width))
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 2)
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+        config.queueDepth = 3
         let s = SCStream(filter: SCContentFilter(display: main, excludingWindows: []), configuration: config, delegate: self)
         do {
             try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
-            try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: audioQueue)
+            try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: watchQueue)
         } catch {
             return retry("cannot add stream output: \(error.localizedDescription)")
         }
@@ -113,7 +132,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                     self.retry("cannot start capture: \(error.localizedDescription)")
                 } else {
                     self.onRunning?()
-                    self.scheduleShot(after: 0)
+                    self.shootSoon()
                 }
             }
         }
@@ -165,6 +184,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         shotTimer?.invalidate()
         shotTimer = nil
         generation += 1
+        restartGeneration += 1
         lastThumb = nil
         guard let old = stream else { return start() }
         stream = nil
@@ -182,9 +202,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// audio stream running. With no stream (a restart or retry owns recovery) it does nothing.
     private func refreshDisplays() {
         guard active, stream != nil else { return }
+        let rg = restartGeneration
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { content, error in
             DispatchQueue.main.async {
-                guard self.active, self.stream != nil else { return }
+                // A stream restart meanwhile owns the display list; this answer is stale.
+                guard self.active, self.stream != nil, rg == self.restartGeneration else { return }
                 guard let content = content, let picked = self.pickDisplays(content) else {
                     return self.recoverAfterFailure(.screenshotsFailed,
                                                     "screen capture unavailable: \(error?.localizedDescription ?? "no display")")
@@ -192,7 +214,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                 self.displays = picked.displays
                 self.lastThumb = nil
                 self.generation += 1
-                self.scheduleShot(after: 0)
+                self.shootSoon()
             }
         }
     }
@@ -225,7 +247,31 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     // MARK: SCStreamOutput / SCStreamDelegate
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        if type == .audio { systemWriter.append(sampleBuffer) }
+        switch type {
+        case .audio: systemWriter.append(sampleBuffer)
+        case .screen: watch(sampleBuffer)
+        default: break
+        }
+    }
+
+    /// watchQueue: compares each complete watcher frame with the reference frame and asks for
+    /// a screenshot when it moved past the sensitivity threshold. `.idle` frames (nothing
+    /// changed) are skipped without touching pixels.
+    private func watch(_ sampleBuffer: CMSampleBuffer) {
+        guard let infos = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+                as? [[SCStreamFrameInfo: Any]],
+              let raw = infos.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete,
+              let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard CVPixelBufferGetPixelFormatType(pb) == kCVPixelFormatType_32BGRA,
+              let base = CVPixelBufferGetBaseAddress(pb) else { return }
+        let thumb = grayThumb(bgra: base, width: CVPixelBufferGetWidth(pb), height: CVPixelBufferGetHeight(pb),
+                              bytesPerRow: CVPixelBufferGetBytesPerRow(pb))
+        guard watchRef != nil else { watchRef = thumb; return }
+        guard contentChanged(ref: watchRef, next: thumb, threshold: options.shots.sensitivity.threshold) else { return }
+        watchRef = thumb
+        DispatchQueue.main.async { self.trigger(.contentChange) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -233,6 +279,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             guard self.stream === stream else { return }
             self.stream = nil
             self.shotTimer?.invalidate()
+            self.shotTimer = nil
             self.systemWriter.finish()
             self.recoverAfterFailure(.streamStopped, "capture stopped: \(error.localizedDescription)")
         }
@@ -240,19 +287,44 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     // MARK: Screenshots
 
-    private func scheduleShot(after seconds: TimeInterval) {
+    /// Asks for a screenshot (an app switch, a screen change, screens re-enabled); it is taken
+    /// now or at the end of the min gap, coalesced with other pending triggers.
+    func trigger(_ t: ShotTrigger) {
+        guard active, stream != nil else { return }
+        pending.insert(t)
+        reschedule()
+    }
+
+    /// Next screenshot as soon as possible, ignoring the gap (stream (re)started, displays refreshed).
+    private func shootSoon() {
+        displaysStale = false
+        lastShot = nil
+        reschedule()
+    }
+
+    /// Re-evaluates `nextShot` and either shoots or arms the timer for the next evaluation. While
+    /// a screenshot is in flight it waits; the shot's completion re-evaluates.
+    private func reschedule() {
         shotTimer?.invalidate()
-        shotTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            guard let self = self, self.active, self.stream != nil else { return }
-            self.shoot()
-            self.scheduleShot(after: TimeInterval(screenshotInterval(meeting: self.meeting, self.options.policy)))
+        shotTimer = nil
+        guard active, stream != nil, !shooting, !displaysStale else { return }
+        switch nextShot(now: Date(), lastShot: lastShot, pending: pending, meeting: meeting, options.shots) {
+        case .shootNow:
+            pending.removeAll()
+            lastShot = Date() // also when gated (paused, excluded): the next try is a backstop away
+            if !shoot() { reschedule() }
+        case .at(let due):
+            let t = Timer(fire: due, interval: 0, repeats: false) { [weak self] _ in self?.reschedule() }
+            RunLoop.main.add(t, forMode: .common)
+            shotTimer = t
         }
     }
 
-    private func shoot() {
-        guard screensEnabled, !shooting, !displays.isEmpty else { return }
+    /// Starts a screenshot; false when gated (nothing in flight, so the caller reschedules).
+    private func shoot() -> Bool {
+        guard screensEnabled, !shooting, !displays.isEmpty else { return false }
         // Title-only exclusions (a new Private/Incognito window) fire no activation notification.
-        guard !isExcludedNow(), screensEnabled else { return }
+        guard !isExcludedNow(), screensEnabled else { return false }
         shooting = true
         let taken = Date()
         let gen = generation
@@ -284,17 +356,20 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             if failures == images.count, gen == self.generation, self.active {
                 self.shotTimer?.invalidate() // no more shots on the stale display list
                 self.shotTimer = nil
+                self.displaysStale = true
                 self.recoverAfterFailure(.screenshotsFailed, "screenshots failed on every display; refreshing displays")
                 return
             }
+            defer { self.reschedule() }
             // Drop the frame if screens were disabled (e.g. an excluded app came up) meanwhile.
             guard !self.isExcludedNow(), self.screensEnabled, gen == self.generation, let image = sideBySide(images.compactMap { $0 }) else { return }
             let thumb = thumbnail(image)
-            if shouldSkipScreenshot(prev: self.lastThumb, next: thumb) { return }
+            if shouldSkipScreenshot(prev: self.lastThumb, next: thumb, threshold: self.options.shots.sensitivity.dedupThreshold) { return }
             self.lastThumb = thumb
             let url = rawDayDir(self.options.dataDir, taken).appendingPathComponent("screens/\(screenshotName(taken))")
             self.encodeQueue.async { writeJPEG(image, to: url) }
         }
+        return true
     }
 }
 

@@ -8,8 +8,6 @@ func runPolicyTests() -> Int32 {
     c.excludeTitles = ["Private Browsing"]
     c.meetingApps = ["zoom.us"]
     c.meetingTitles = ["Meet - ", "Huddle"]
-    c.interval = 10
-    c.meetingInterval = 5
 
     var cal = Calendar(identifier: .gregorian)
     cal.timeZone = .current
@@ -24,7 +22,7 @@ func runPolicyTests() -> Int32 {
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
-    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + restartChecks() + [
+    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + [
         ("excluded app 1Password", isExcluded(app: "1Password", title: "", c)),
         ("excluded app case-insensitive", isExcluded(app: "1password", title: "", c)),
         ("excluded title Private Browsing", isExcluded(app: "Safari", title: "Private Browsing — x", c)),
@@ -33,8 +31,6 @@ func runPolicyTests() -> Int32 {
         ("meeting Chrome Meet", isMeeting(app: "Google Chrome", title: "Meet - abc-defg", c)),
         ("meeting Slack Huddle", isMeeting(app: "Slack", title: "Huddle with Priya", c)),
         ("not meeting Safari", !isMeeting(app: "Safari", title: "Docs", c)),
-        ("meeting interval 5", screenshotInterval(meeting: true, c) == 5),
-        ("normal interval 10", screenshotInterval(meeting: false, c) == 10),
         ("chunk name mic", chunkName(start: t1405, track: "mic") == "1405-mic.m4a"),
         ("chunk ends on next 5-min boundary", chunkEnd(after: t1407, minutes: 5) == t1410),
         ("chunk starting on boundary ends 5 min later", chunkEnd(after: t1405, minutes: 5) == t1410),
@@ -107,6 +103,98 @@ func restartChecks() -> [(String, Bool)] {
          mergeRecovery(.refreshDisplays, .restartStream) == .restartStream
             && mergeRecovery(.restartStream, .refreshDisplays) == .restartStream),
         ("first recovery is the requested one", mergeRecovery(nil, .refreshDisplays) == .refreshDisplays),
+    ]
+}
+
+/// Change-driven screenshot scheduling: triggers, min gap, idle backstop, meeting backstop.
+func shotChecks() -> [(String, Bool)] {
+    let t0 = Date(timeIntervalSince1970: 2_000_000)
+    let c = ShotConfig() // min gap 3, backstop 60, meeting 5, capture on switch
+    func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
+    func next(_ now: TimeInterval, _ pending: Set<ShotTrigger>, meeting: Bool = false, _ cfg: ShotConfig = c) -> ShotDecision {
+        nextShot(now: at(now), lastShot: t0, pending: pending, meeting: meeting, cfg)
+    }
+    var noSwitch = c
+    noSwitch.captureOnSwitch = false
+    // A burst of content changes every 0.5 s right after a shot: one shot at the gap end.
+    var last = t0, pending = Set<ShotTrigger>(), shots: [TimeInterval] = []
+    for tick in stride(from: 0.5, through: 10, by: 0.5) {
+        if tick <= 2 { pending.insert(.contentChange) }
+        if nextShot(now: at(tick), lastShot: last, pending: pending, meeting: false, c) == .shootNow {
+            shots.append(tick)
+            last = at(tick)
+            pending.removeAll()
+        }
+    }
+    let flat = [UInt8](repeating: 100, count: 256)
+    var nudged = flat
+    for i in 0..<16 { nudged[i] = 140 } // mean diff 2.5
+    return [
+        ("first shot is immediate", nextShot(now: t0, lastShot: nil, pending: [], meeting: false, c) == .shootNow),
+        ("app switch after the gap shoots now", next(10, [.appSwitch]) == .shootNow),
+        ("app switch during the gap waits for the gap end", next(1, [.appSwitch]) == .at(at(3))),
+        ("content change during the gap is deferred to the gap end", next(1, [.contentChange]) == .at(at(3))),
+        ("content change at the gap end shoots", next(3, [.contentChange]) == .shootNow),
+        ("burst of changes gives one shot at the gap end", shots == [3]),
+        ("idle waits for the backstop", next(30, []) == .at(at(60))),
+        ("idle backstop shoots", next(60, []) == .shootNow),
+        ("meeting backstop is the meeting interval", next(1, [], meeting: true) == .at(at(5))),
+        ("meeting keeps the min gap", next(1, [.contentChange], meeting: true) == .at(at(3))),
+        ("capture-on-switch off ignores switches", next(10, [.appSwitch], noSwitch) == .at(at(60))),
+        ("capture-on-switch off still shoots on change", next(10, [.contentChange], noSwitch) == .shootNow),
+        ("resume trigger shoots after the gap", next(10, [.resumed], noSwitch) == .shootNow),
+        ("backstop never shorter than the min gap",
+         nextShot(now: at(1), lastShot: t0, pending: [], meeting: true,
+                  ShotConfig(minGap: 8, idleBackstop: 60, meetingInterval: 5, captureOnSwitch: true, sensitivity: .medium))
+            == .at(at(8))),
+        ("sensitivity thresholds high < medium < low",
+         ChangeSensitivity.high.threshold == 1 && ChangeSensitivity.medium.threshold == 3 && ChangeSensitivity.low.threshold == 8),
+        ("dedup threshold never above the change threshold",
+         [ChangeSensitivity.low, .medium, .high].allSatisfy { $0.dedupThreshold <= $0.threshold && $0.dedupThreshold <= 2 }),
+        ("no reference frame: no change", !contentChanged(ref: nil, next: flat, threshold: 1)),
+        ("same frame: no change", !contentChanged(ref: flat, next: flat, threshold: 1)),
+        ("small change past high sensitivity", contentChanged(ref: flat, next: nudged, threshold: ChangeSensitivity.high.threshold)),
+        ("small change below medium sensitivity", !contentChanged(ref: flat, next: nudged, threshold: ChangeSensitivity.medium.threshold)),
+    ] + thumbChecks()
+}
+
+/// `grayThumb` on synthetic BGRA buffers: 16x16 cell means of luminance.
+func thumbChecks() -> [(String, Bool)] {
+    let w = 64, h = 32, bpr = w * 4 + 16 // padded rows
+    var white = [UInt8](repeating: 255, count: bpr * h)
+    let allWhite = white.withUnsafeBytes { grayThumb(bgra: $0.baseAddress!, width: w, height: h, bytesPerRow: bpr) }
+    // Left half black.
+    for y in 0..<h { for x in 0..<(w / 2) { for k in 0..<3 { white[y * bpr + x * 4 + k] = 0 } } }
+    let half = white.withUnsafeBytes { grayThumb(bgra: $0.baseAddress!, width: w, height: h, bytesPerRow: bpr) }
+    return [
+        ("thumb is 16x16", allWhite.count == 256),
+        ("white frame thumb is white", allWhite.allSatisfy { $0 >= 254 }),
+        ("half-black frame: left cells dark, right cells light",
+         (0..<16).allSatisfy { r in (0..<8).allSatisfy { half[r * 16 + $0] <= 1 } && (8..<16).allSatisfy { half[r * 16 + $0] >= 254 } }),
+        ("tiny frame does not crash", [UInt8](repeating: 0, count: 8).withUnsafeBytes {
+            grayThumb(bgra: $0.baseAddress!, width: 2, height: 1, bytesPerRow: 8).count == 256 }),
+    ]
+}
+
+/// `recorder run` flags for change-driven capture.
+func runOptionChecks() -> [(String, Bool)] {
+    let d = (try? RunOptions.parse([]))?.shots
+    let set = (try? RunOptions.parse(["--min-gap", "5", "--idle-backstop", "120", "--change-sensitivity", "high",
+                                      "--capture-on-switch", "false", "--meeting-interval", "4"]))?.shots
+    let legacy = (try? RunOptions.parse(["--interval", "10"]))?.shots
+    let both = (try? RunOptions.parse(["--interval", "10", "--idle-backstop", "90"]))?.shots
+    func fails(_ a: [String]) -> Bool { (try? RunOptions.parse(a)) == nil }
+    return [
+        ("run defaults: gap 3, backstop 60, medium, switch on, meeting 5",
+         d.map { $0.minGap == 3 && $0.idleBackstop == 60 && $0.sensitivity == .medium && $0.captureOnSwitch && $0.meetingInterval == 5 } == true),
+        ("run flags parsed",
+         set.map { $0.minGap == 5 && $0.idleBackstop == 120 && $0.sensitivity == .high && !$0.captureOnSwitch && $0.meetingInterval == 4 } == true),
+        ("--interval maps to the backstop when --idle-backstop is absent", legacy?.idleBackstop == 10),
+        ("--idle-backstop wins over --interval", both?.idleBackstop == 90),
+        ("bad sensitivity rejected", fails(["--change-sensitivity", "max"])),
+        ("bad capture-on-switch rejected", fails(["--capture-on-switch", "maybe"])),
+        ("capture-on-switch true accepted", (try? RunOptions.parse(["--capture-on-switch", "true"]))?.shots.captureOnSwitch == true),
+        ("zero min gap rejected", fails(["--min-gap", "0"])),
     ]
 }
 

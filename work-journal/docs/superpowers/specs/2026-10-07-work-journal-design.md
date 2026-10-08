@@ -77,7 +77,7 @@ journal.db                         SQLite, rebuildable from derived/
 raw/YYYY-MM-DD/                    deleted after retention_days
   audio/HHMM-system.m4a            5-min chunks, others' audio
   audio/HHMM-mic.m4a               5-min chunks, user's mic
-  screens/HHMMSS.jpg               every 10s (5s in meetings), skipped if unchanged
+  screens/HHMMSS.jpg               on app switch / screen change, ≥3s apart, ≥1 per 60s (5s in meetings)
   activity.jsonl                   app/window/idle/pause/excluded events
 derived/YYYY-MM-DD/HH.json         transcript, OCR text, segments, status — kept
 journal/YYYY-MM-DD.md              daily journal — kept
@@ -90,6 +90,21 @@ models/                            whisper + sherpa-onnx models
 
 - **Screen:** ScreenCaptureKit; main display by default (`all_displays` option);
   JPEG at 1440px width per display (side by side with `all_displays`); perceptual-diff skip when unchanged.
+  Change-driven: the audio `SCStream` also carries a 320px-wide, 2 fps, cursor-less video
+  output of the main display; frames the stream marks `.idle` are ignored, and a `.complete`
+  frame whose 16x16 grayscale thumbnail differs from the frame at the last change by more than
+  the sensitivity threshold (mean absolute difference on 0–255: high 1.0, medium 3.0, low 8.0)
+  asks for a screenshot. So do an app or window-title switch (`capture_on_app_switch`) and
+  screens being re-enabled. Requests coalesce: at most one screenshot per
+  `screenshot_min_gap_sec` (3), a request inside the gap fires at its end; with no request a
+  backstop fires `screenshot_idle_backstop_sec` (60) after the last one (in meetings at most
+  `meeting_screenshot_interval_sec`, 5). The full screenshot is still skipped as a near
+  duplicate of the last one written below min(2.0, threshold/2). Only the main display is
+  watched for changes; other displays (`all_displays`) are captured on switches, main-display
+  changes and the backstop.
+  Recorder flags: `--min-gap SEC --idle-backstop SEC --change-sensitivity low|medium|high
+  --capture-on-switch true|false --meeting-interval SEC`; `--interval SEC` is still accepted and
+  sets the backstop when `--idle-backstop` is absent.
 - **Audio:** two tracks — system (ScreenCaptureKit) and mic (AVAudioEngine) —
   written as 5-minute AAC `.m4a` chunks.
 - **Activity:** frontmost app + window title on change; idle after

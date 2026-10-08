@@ -73,7 +73,7 @@ work-journal/
 **Raw media names:** `raw/<day>/audio/HHMM-system.m4a`, `raw/<day>/audio/HHMM-mic.m4a` (HHMM = chunk start; if that name already exists for the day, the chunk is named `HHMMSS-<track>.m4a` with the exact start second — Go parsers accept both 4- and 6-digit prefixes), `raw/<day>/screens/HHMMSS.jpg`.
 
 **Recorder CLI:**
-`WorkJournalRecorder.app/Contents/MacOS/recorder run --data-dir D --socket S --interval 10 --meeting-interval 5 --chunk-minutes 5 --width 1440 --idle-minutes 5 --pause-auto-resume 60 --dashboard-url U [--all-displays] [--exclude-app A]… [--exclude-title K]… [--meeting-app A]… [--meeting-title K]… [--degraded]`  (`--degraded` = start with the error icon; the supervisor passes it after 3 failures within 5 min)
+`WorkJournalRecorder.app/Contents/MacOS/recorder run --data-dir D --socket S --min-gap 3 --idle-backstop 60 --change-sensitivity medium --capture-on-switch true --meeting-interval 5 --chunk-minutes 5 --width 1440 --idle-minutes 5 --pause-auto-resume 60 --dashboard-url U [--all-displays] [--exclude-app A]… [--exclude-title K]… [--meeting-app A]… [--meeting-title K]… [--degraded]`  (`--degraded` = start with the error icon; the supervisor passes it after 3 failures within 5 min)
 `recorder ocr <file>…` → stdout `[{"file":"…","text":"…"}]`
 `recorder selftest --data-dir D` → exit 0 and `selftest ok`, or exit 1 and the failed check
 `recorder run-tests` → exit 0 when Policy assertions pass

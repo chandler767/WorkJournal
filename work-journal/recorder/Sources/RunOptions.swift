@@ -12,6 +12,7 @@ struct RunOptions {
     var allDisplays = false
     var degraded = false
     var policy = PolicyConfig()
+    var shots = ShotConfig()
 
     var socket: String { socketPath ?? dataDir.appendingPathComponent("recorder.sock").path }
 
@@ -28,12 +29,30 @@ struct RunOptions {
             guard let n = Int(try value()), n > 0 else { throw RunOptionsError("\(flag) needs a positive integer") }
             return n
         }
+        var legacyInterval: Int?
+        var backstopSet = false
         while i < args.count {
             switch args[i] {
             case "--data-dir": o.dataDir = URL(fileURLWithPath: try value())
             case "--socket": o.socketPath = try value()
-            case "--interval": o.policy.interval = try int()
-            case "--meeting-interval": o.policy.meetingInterval = try int()
+            case "--interval": legacyInterval = try int() // superseded by --idle-backstop
+            case "--meeting-interval": o.shots.meetingInterval = TimeInterval(try int())
+            case "--min-gap": o.shots.minGap = TimeInterval(try int())
+            case "--idle-backstop":
+                o.shots.idleBackstop = TimeInterval(try int())
+                backstopSet = true
+            case "--change-sensitivity":
+                let v = try value()
+                guard let s = ChangeSensitivity(rawValue: v) else {
+                    throw RunOptionsError("--change-sensitivity must be low, medium or high, got \(v)")
+                }
+                o.shots.sensitivity = s
+            case "--capture-on-switch":
+                switch try value() {
+                case "true": o.shots.captureOnSwitch = true
+                case "false": o.shots.captureOnSwitch = false
+                case let v: throw RunOptionsError("--capture-on-switch must be true or false, got \(v)")
+                }
             case "--chunk-minutes": o.chunkMinutes = try int()
             case "--width": o.width = try int()
             case "--idle-minutes": o.idleMinutes = try int()
@@ -52,6 +71,7 @@ struct RunOptions {
             }
             i += 1
         }
+        if !backstopSet, let n = legacyInterval { o.shots.idleBackstop = TimeInterval(n) }
         return o
     }
 }

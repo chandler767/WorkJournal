@@ -21,7 +21,8 @@ and not to your terminal.
 ```sh
 open -n recorder/build/WorkJournalRecorder.app --args run \
   --data-dir ~/WorkJournal --socket ~/WorkJournal/recorder.sock \
-  --interval 10 --meeting-interval 5 --chunk-minutes 5 --width 1440 \
+  --min-gap 3 --idle-backstop 60 --change-sensitivity medium --capture-on-switch true \
+  --meeting-interval 5 --chunk-minutes 5 --width 1440 \
   --idle-minutes 5 --pause-auto-resume 1 --dashboard-url http://127.0.0.1:4747 \
   --exclude-app 1Password --exclude-app "Keychain Access" \
   --exclude-title Private --exclude-title Incognito \
@@ -41,7 +42,8 @@ open -n recorder/build/WorkJournalRecorder.app --args run \
 - [ ] `ls D/audio` shows `HHMM-system.m4a` and `HHMM-mic.m4a` for the call.
 - [ ] `afplay D/audio/<HHMM>-system.m4a`: you hear the other side of the call.
 - [ ] `afplay D/audio/<HHMM>-mic.m4a`: you hear your own voice.
-- [ ] `D/screens/` gained JPEGs about every 5 s during the call (meeting cadence) and every 10 s otherwise, with no new file while the screen did not change.
+- [ ] `D/screens/` gained JPEGs about every 5 s during the call (meeting backstop), with no new file while the screen did not change.
+- [ ] Change-driven capture: switching apps (Cmd-Tab) writes a JPEG within about 1 s; scrolling or switching a browser tab writes one within about 1–2 s; continuous change (a playing video) writes about one every 3 s (min gap), not more; a still screen writes at most one per 60 s (backstop) and none when identical to the last one. With `--capture-on-switch false`, a switch between two apps showing the same window layout writes nothing until the screen changes or the backstop.
 - [ ] Silence for 6+ min during recording: chunk files still finalize (playable) at their boundary. With no audio playing and the mic muted, `afplay` of the previous `HHMM-system.m4a` works within a few seconds after the next 5-minute boundary, while the recorder keeps running.
 
 ## 4. 1Password is excluded

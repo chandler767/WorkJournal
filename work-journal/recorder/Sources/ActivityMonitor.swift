@@ -58,6 +58,8 @@ final class ActivityMonitor {
     var onMeetingChange: ((Bool) -> Void)?
     var onSleep: (() -> Void)?
     var onWake: (() -> Void)?
+    /// The frontmost app or its focused window title changed (not fired for the first poll).
+    var onSwitch: (() -> Void)?
 
     private(set) var excluded = false
     private(set) var meeting = false
@@ -71,6 +73,7 @@ final class ActivityMonitor {
     private let idleSeconds: Double
     private var idle = false
     private var lastLogged: Frontmost?
+    private var lastSeen: Frontmost?
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
 
@@ -131,6 +134,11 @@ final class ActivityMonitor {
         if nowMeeting != meeting {
             meeting = nowMeeting
             onMeetingChange?(nowMeeting)
+        }
+        if f != lastSeen {
+            let first = lastSeen == nil
+            lastSeen = f
+            if !first { onSwitch?() }
         }
         pollIdle()
     }

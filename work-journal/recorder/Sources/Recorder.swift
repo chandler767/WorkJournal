@@ -59,6 +59,7 @@ final class Recorder {
         monitor.onMeetingChange = { [unowned self] _ in apply() }
         monitor.onSleep = { [unowned self] in sleeping = true; apply() }
         monitor.onWake = { [unowned self] in sleeping = false; apply() }
+        monitor.onSwitch = { [unowned self] in capture.trigger(.appSwitch) }
         capture.onError = { [unowned self] msg in captureError = msg; report(msg) }
         capture.onRunning = { [unowned self] in captureError = nil; apply() }
         capture.isExcludedNow = { [unowned self] in monitor.refreshExclusion() }
@@ -230,13 +231,14 @@ func runRecorder(args: [String]) -> Int32 {
     return 0
 }
 
-/// Runs a non-interactive capture into `dataDir` for `seconds` (1 s screenshot cadence), then
+/// Runs a non-interactive capture into `dataDir` for `seconds` (1 s gap and backstop), then
 /// shuts down cleanly so the audio chunks are finished.
 func runSelftestCapture(dataDir: URL, seconds: TimeInterval) throws {
     var options = RunOptions()
     options.dataDir = dataDir
-    options.policy.interval = 1
-    options.policy.meetingInterval = 1
+    options.shots.minGap = 1
+    options.shots.idleBackstop = 1
+    options.shots.meetingInterval = 1
     let recorder = Recorder(options: options)
     try recorder.start(interactive: false)
     RunLoop.main.run(until: Date().addingTimeInterval(seconds))
