@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"workjournal/internal/activity"
 	"workjournal/internal/config"
 	"workjournal/internal/diarize"
 	"workjournal/internal/media"
@@ -25,14 +27,16 @@ var ErrNoRawAudio = errors.New("no raw audio left for the meeting")
 // EnrollSpeaker learns the voice of the meeting participant labelled
 // speaker and names it. The speaker's track is where the label appears
 // within the meeting: the system track for a call, the mic track for a
-// speaker diarized during an in-person meeting (see speakerTrack). For each
-// chunk of that track overlapping the meeting, its cached diarization (or,
-// without one, a fresh one) gives the chunk-local speakers whose turns
-// overlap the utterances labelled speaker; their unit embeddings, weighted
-// by that overlap, make the chunk's embedding. Labels are clustered per
-// meeting (speakers.go), but a doc labelled before that, or a meeting
-// detected differently in another hour, may reuse a label for another
-// voice, so the embeddings are grouped by hour (Ruling 37): the hour with
+// speaker diarized during an in-person meeting (see speakerTrack). The
+// meeting's speakers are clustered as the pipeline labels them (speakers.go;
+// that track's chunks from the cache or diarized again, the other track's
+// from the cache), and in each chunk only the chunk-local speakers clustered
+// as speaker contribute: their unit embeddings, weighted by their overlap
+// with the speaker's utterances, make the chunk's embedding, so crosstalk is
+// left out. A label the clustering does not produce (a doc labelled by an
+// older version) falls back to each chunk's best-overlapping local speaker.
+// A doc labelled by an older version, or a meeting detected
+// differently in another hour, may reuse a label for another voice, so the embeddings are grouped by hour (Ruling 37): the hour with
 // the most speech under the label is the anchor, and only hours whose
 // averaged embedding has cosine >= SpeakerClusterThreshold with the
 // anchor's are kept. The kept embeddings are averaged and enrolled as name,
@@ -56,9 +60,58 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 	}
 	defer os.RemoveAll(tmp)
 
+	// The meeting's speakers, clustered as the pipeline labels them: the
+	// speaker's track from the cache or diarized again, the other track
+	// (system always, mic for an in-person meeting) from the cache only.
+	var scope []diarChunk
+	diarized := map[string]diarChunk{}
+	for _, c := range chunks {
+		turns, cembs, err := p.chunkTurns(ctx, tmp, c)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			p.logf("enroll: %v", err)
+			continue
+		}
+		dc := diarChunk{chunk{path: c.path, start: c.start, track: track}, &chunkEntry{Diarized: true, Turns: turns, Embeddings: cembs}}
+		diarized[c.path] = dc
+		scope = append(scope, dc)
+	}
+	other := "system"
+	if track == "system" {
+		other = "mic"
+	}
+	if other == "system" || m.App == activity.InPersonApp {
+		ocs, err := p.meetingChunks(m, other)
+		if err != nil {
+			return err
+		}
+		for _, c := range ocs {
+			if key, err := statKey(c.path); err == nil {
+				if e, ok := p.loadChunk(config.DayKey(c.start), c.path, key); ok && e.Diarized {
+					scope = append(scope, diarChunk{chunk{path: c.path, start: c.start, track: other}, e})
+				}
+			}
+		}
+	}
+	am := activity.Meeting{ID: m.ID, Start: m.Start, End: m.End, App: m.App, Title: m.Title}
+	labels := p.clusterScope(scope, meetingWithin(am), map[string][]float32{}).labels
+	// A label the clustering does not produce comes from a doc labelled
+	// before it (or by a differently detected meeting): then each chunk's
+	// local speaker overlapping the label's lines most stands for it.
+	legacy := !slices.Contains(slices.Collect(maps.Values(labels)), speaker)
+	if legacy {
+		p.logf("enroll: %q is not a current speaker of meeting %s; using the best-overlapping voice per chunk", speaker, m.ID)
+	}
+
 	docs := map[HourKey]*HourDoc{}
 	byHour := map[HourKey][][]float32{}
 	for _, c := range chunks {
+		dc, ok := diarized[c.path]
+		if !ok {
+			continue
+		}
 		key := HourKey{config.DayKey(c.start), c.start.Hour()}
 		doc, ok := docs[key]
 		if !ok {
@@ -77,28 +130,31 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 				spans = append(spans, [2]float64{u.Start.Sub(c.start).Seconds(), u.End.Sub(c.start).Seconds()})
 			}
 		}
-		if len(spans) == 0 {
-			continue
-		}
-		turns, cembs, err := p.chunkTurns(ctx, tmp, c)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			p.logf("enroll: %v", err)
-			continue
-		}
+		// Only the chunk-local speakers clustered as speaker count, each by
+		// its overlap with the speaker's lines (summed in id order).
 		overlap := map[int]float64{}
-		for _, t := range turns {
+		for _, t := range dc.e.Turns {
+			if !legacy && labels[itemKey{c.path, t.Speaker}] != speaker {
+				continue
+			}
 			for _, s := range spans {
 				if ov := min(s[1], t.End) - max(s[0], t.Start); ov > 0 {
 					overlap[t.Speaker] += ov
 				}
 			}
 		}
+		if legacy && len(overlap) > 0 {
+			best := -1
+			for _, id := range slices.Sorted(maps.Keys(overlap)) {
+				if best < 0 || overlap[id] > overlap[best] {
+					best = id
+				}
+			}
+			overlap = map[int]float64{best: overlap[best]}
+		}
 		var sum []float32
-		for id, ov := range overlap {
-			u := unit(cembs[id])
+		for _, id := range slices.Sorted(maps.Keys(overlap)) {
+			u := unit(dc.e.Embeddings[id])
 			if u == nil || (sum != nil && len(u) != len(sum)) {
 				continue
 			}
@@ -106,7 +162,7 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 				sum = make([]float32, len(u))
 			}
 			for k, x := range u {
-				sum[k] += float32(ov) * x
+				sum[k] += float32(overlap[id]) * x
 			}
 		}
 		if e := unit(sum); e != nil {
@@ -282,9 +338,23 @@ func (p *Pipeline) relabel(m store.MeetingRecord, track, speaker, name string, h
 		if err := doc.Save(path); err != nil {
 			return fmt.Errorf("save %s: %w", path, err)
 		}
-		if err := p.IndexText(doc); err != nil {
+		if err := p.IndexTranscript(doc); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// IndexTranscript replaces the hour's indexed transcript and screen text
+// with doc's, leaving the notes and meeting summaries of its summary
+// indexed (unlike IndexText).
+func (p *Pipeline) IndexTranscript(doc *HourDoc) error {
+	start, _, err := hourBounds(doc.Day, doc.Hour)
+	if err != nil {
+		return err
+	}
+	if err := p.Store.ReplaceTextKinds(doc.Day, doc.Hour, []string{"transcript", "ocr"}, textDocs(doc, start)); err != nil {
+		return fmt.Errorf("index text: %w", err)
 	}
 	return nil
 }

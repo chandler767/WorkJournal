@@ -217,7 +217,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	doc := &HourDoc{
 		Day: day, Hour: hour, Status: store.StatusTranscribed,
 		Segments: segs, Transcript: utts, Screens: screens, Meetings: meetings,
-		Embeddings: embs,
+		Embeddings: embs, speakers: lab.sp,
 	}
 	if partial {
 		doc.Status = store.StatusPartial
@@ -234,8 +234,9 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	return doc, covered, nil
 }
 
-// record stores doc: meetings, segments, indexed text, the derived JSON and
-// the hour record with doc.Status and summaryJSON.
+// record stores doc: meetings, segments, indexed text, the derived JSON,
+// the meeting labels of earlier hours (relabelMeetings) and the hour record
+// with doc.Status and summaryJSON.
 func (p *Pipeline) record(doc *HourDoc, summaryJSON string) error {
 	if err := p.upsertMeetings(doc); err != nil {
 		return err
@@ -248,6 +249,9 @@ func (p *Pipeline) record(doc *HourDoc, summaryJSON string) error {
 	}
 	if err := doc.Save(p.Paths.DerivedHour(doc.Day, doc.Hour)); err != nil {
 		return fmt.Errorf("save derived doc: %w", err)
+	}
+	if err := p.relabelMeetings(doc); err != nil {
+		return err
 	}
 	return p.Store.UpsertHour(store.HourRecord{Day: doc.Day, Hour: doc.Hour, Status: doc.Status, SummaryJSON: summaryJSON, UpdatedAt: p.now()})
 }

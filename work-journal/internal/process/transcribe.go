@@ -302,6 +302,7 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, start, end time.T
 	if len(sp.embs) > 0 {
 		res.embs = sp.embs
 	}
+	res.sp = sp
 	return res, nil
 }
 
@@ -328,6 +329,7 @@ type labelled struct {
 	// In-person meeting mic speech from chunks that were (or could not be)
 	// diarized, for the two-voice check (see keepInPerson).
 	diarizedMic, undiarizedMic []media.Utterance
+	sp                         *speakerSet
 }
 
 // chunkMayBeOpen reports whether the chunk was modified within

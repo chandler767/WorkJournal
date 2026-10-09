@@ -38,6 +38,25 @@ func (s *Store) ReplaceText(day string, hour int, docs []TextDoc) error {
 	})
 }
 
+// ReplaceTextKinds replaces the hour's indexed docs of the given kinds with
+// docs (which must be of those kinds), leaving other kinds alone.
+func (s *Store) ReplaceTextKinds(day string, hour int, kinds []string, docs []TextDoc) error {
+	return s.tx(func(tx *sql.Tx) error {
+		for _, k := range kinds {
+			if _, err := tx.Exec(`DELETE FROM docs_fts WHERE day=? AND hour=? AND kind=?`, day, hour, k); err != nil {
+				return err
+			}
+		}
+		for _, d := range docs {
+			if _, err := tx.Exec(`INSERT INTO docs_fts(text,kind,day,hour,ts,ref) VALUES(?,?,?,?,?,?)`,
+				d.Text, d.Kind, day, hour, fmtTime(d.TS), d.Ref); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // quoteQuery turns free user input into an FTS5 query of quoted terms
 // (implicit AND), so operators and stray quotes are treated as literals.
 func quoteQuery(q string) string {

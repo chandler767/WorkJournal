@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,7 +52,7 @@ func enrollFixture(e *env) store.MeetingRecord {
 	}
 	e.dz.by["1305-system"] = diar{
 		turns: []diarize.Turn{tn(0.5, 6, 3)},
-		embs:  map[int][]float32{3: {0, 3, 0}},
+		embs:  map[int][]float32{3: {3, 3, 0}}, // Speaker 1's voice again (cosine 0.71)
 	}
 	return m
 }
@@ -64,19 +65,11 @@ func TestEnrollSpeakerAveragesEmbeddingsAndRelabels(t *testing.T) {
 	}
 
 	// Both chunks' Speaker 1 clusters, each normalized, averaged.
-	b, err := os.ReadFile(filepath.Join(e.paths.Voices(), "ana.json"))
-	if err != nil {
-		t.Fatal(err)
+	if got := profile(t, e, "ana"); !approx(got, [][]float64{{(1 + math.Sqrt2/2) / 2, math.Sqrt2 / 4, 0}}) {
+		t.Fatalf("profile = %v", got)
 	}
-	var prof struct {
-		Name       string      `json:"name"`
-		Embeddings [][]float32 `json:"embeddings"`
-	}
-	if err := json.Unmarshal(b, &prof); err != nil {
-		t.Fatal(err)
-	}
-	if prof.Name != "Ana" || !reflect.DeepEqual(prof.Embeddings, [][]float32{{0.5, 0.5, 0}}) {
-		t.Fatalf("profile = %+v", prof)
+	if names, _ := e.p.Voices.List(); !reflect.DeepEqual(names, []string{"Ana"}) {
+		t.Fatalf("voices = %v", names)
 	}
 
 	doc, err := Load(e.paths.DerivedHour(day, 13))

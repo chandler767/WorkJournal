@@ -31,6 +31,13 @@ const minWeight = 0.1
 // It returns each item's cluster, numbered 0, 1, ... in order of each
 // cluster's first item, so callers pass items in order of appearance.
 func Cluster(items []ClusterItem, threshold, minSeconds float64) []int {
+	ids, _ := ClusterFragments(items, threshold, minSeconds)
+	return ids
+}
+
+// ClusterFragments is Cluster that also reports which items were in a
+// fragment (a cluster under minSeconds, merged into another or unknown).
+func ClusterFragments(items []ClusterItem, threshold, minSeconds float64) (ids []int, fragment []bool) {
 	n := len(items)
 	dim := 0
 	for _, it := range items {
@@ -135,9 +142,13 @@ func Cluster(items []ClusterItem, threshold, minSeconds float64) []int {
 			real = append(real, i)
 		}
 	}
+	fragment = make([]bool, n)
 	for _, c := range cs {
 		if !c.alive || c.seconds >= minSeconds {
 			continue
+		}
+		for _, m := range c.members {
+			fragment[m] = true
 		}
 		to, best := -1, threshold-FragmentMargin
 		for _, r := range real {
@@ -151,21 +162,21 @@ func Cluster(items []ClusterItem, threshold, minSeconds float64) []int {
 	}
 
 	out := make([]int, n)
-	ids := map[int]int{}
+	number := map[int]int{}
 	for i := range items {
 		o := owner[i]
 		if o < 0 {
 			out[i] = -1
 			continue
 		}
-		id, ok := ids[o]
+		id, ok := number[o]
 		if !ok {
-			id = len(ids)
-			ids[o] = id
+			id = len(number)
+			number[o] = id
 		}
 		out[i] = id
 	}
-	return out
+	return out, fragment
 }
 
 // unitVec returns v scaled to length 1, or nil for an empty or zero vector.

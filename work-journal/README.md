@@ -97,8 +97,9 @@ or an **in-person** meeting: a conversation only your mic hears, where speech fi
 `in_person_speech_ratio` (0.4) of a rolling 5-minute window for at least
 `in_person_min_minutes` (5; pauses under 2 minutes do not split it). A locked or idle screen
 does not stop detection. With speaker identification on, an in-person meeting also needs
-at least two voices on the mic; one voice (dictation, or your side of a call on another
-device) is not a meeting and stays "me". A TV or a speakerphone on another device can still
+at least 15 seconds of mic speech from someone other than the main voice (a short reply
+counts, even one too brief to get its own speaker label); one voice (dictation, or your side
+of a call on another device) is not a meeting and stays "me". A TV or a speakerphone on another device can still
 look like an in-person meeting. In-person meetings show as "In person". An app or call meeting
 wins over the same time: a short call during a conversation splits it, and each remaining part
 of at least `in_person_min_minutes` is its own in-person meeting. A meeting that is no longer
@@ -122,7 +123,9 @@ at a time and splits one voice into many pieces, so the pieces are then grouped 
 across a whole meeting (all its chunks, in every hour it spans) and, outside meetings,
 across the hour. Voices are labelled `Speaker 1`, `Speaker 2`, … in order of first
 appearance within the meeting (one numbering for both tracks; a voice keeps its number in
-every hour of the meeting), or by name once you have named them. A voice with less than
+every hour of the meeting, and earlier hours are relabelled when later audio regroups the
+voices), or by name once you have named them. Numbers can have gaps (a "Speaker 2" with no
+"Speaker 1") because a voice keeps its number when another voice is named. A voice with less than
 `speaker_min_seconds` (default 20) of speech joins the most similar voice, or is
 `Speaker ?` when it sounds like nobody else; in-meeting mic speech no speaker turn covers
 is `Speaker ?` too. Only real voices are listed as meeting participants. To be "me" in

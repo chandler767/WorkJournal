@@ -42,6 +42,11 @@ type itemKey struct {
 // speakerScope labels the chunk-local speakers of one scope.
 type speakerScope struct {
 	labels map[itemKey]string
+	chunks map[string]diarChunk // the scope's chunks, by path
+	// Seconds of mic turns in the scope by label, counting only speakers
+	// outside fragments (see diarize.ClusterFragments), and in fragments.
+	micSeconds  map[string]float64
+	micFragment float64
 }
 
 // speakerSet holds the labels of every scope of one hour.
@@ -65,8 +70,7 @@ func (p *Pipeline) newSpeakers(day string, start, end time.Time, meetings []acti
 			}
 		}
 		cs = append(cs, p.otherHourChunks(m, start, end)...)
-		within := func(from, to time.Time) float64 { return overlap(from, to, m.Start, m.End) }
-		sp.scopes = append(sp.scopes, p.clusterScope(cs, within, sp.embs))
+		sp.scopes = append(sp.scopes, p.clusterScope(cs, meetingWithin(m), sp.embs))
 	}
 	var sys []diarChunk
 	for _, dc := range turns {
@@ -83,6 +87,21 @@ func (p *Pipeline) newSpeakers(day string, start, end time.Time, meetings []acti
 	}
 	sp.hour = p.clusterScope(sys, outside, sp.embs)
 	return sp
+}
+
+// meetingWithin measures a span's seconds within meeting m.
+func meetingWithin(m activity.Meeting) func(from, to time.Time) float64 {
+	return func(from, to time.Time) float64 { return overlap(from, to, m.Start, m.End) }
+}
+
+// scopeOf returns the scope of the meeting with id, or nil.
+func (sp *speakerSet) scopeOf(id string) *speakerScope {
+	for i, m := range sp.meetings {
+		if m.ID == id {
+			return sp.scopes[i]
+		}
+	}
+	return nil
 }
 
 // overlap is the seconds [from, to) shares with [s, e].
@@ -149,6 +168,7 @@ func (p *Pipeline) otherHourChunks(m activity.Meeting, start, end time.Time) []d
 func (p *Pipeline) clusterScope(cs []diarChunk, within func(from, to time.Time) float64, embs map[string][]float32) *speakerScope {
 	type item struct {
 		key     itemKey
+		track   string
 		emb     []float32
 		seconds float64
 		first   time.Time
@@ -166,7 +186,7 @@ func (p *Pipeline) clusterScope(cs []diarChunk, within func(from, to time.Time) 
 			k := itemKey{dc.c.path, t.Speaker}
 			it, ok := byKey[k]
 			if !ok {
-				it = &item{key: k, emb: dc.e.Embeddings[t.Speaker], first: from}
+				it = &item{key: k, track: dc.c.track, emb: dc.e.Embeddings[t.Speaker], first: from}
 				byKey[k] = it
 				items = append(items, it)
 			}
@@ -183,7 +203,7 @@ func (p *Pipeline) clusterScope(cs []diarChunk, within func(from, to time.Time) 
 	for i, it := range items {
 		in[i] = diarize.ClusterItem{Emb: it.emb, Seconds: it.seconds}
 	}
-	ids := diarize.Cluster(in, p.Cfg.SpeakerClusterThreshold, float64(p.Cfg.SpeakerMinSeconds))
+	ids, fragment := diarize.ClusterFragments(in, p.Cfg.SpeakerClusterThreshold, float64(p.Cfg.SpeakerMinSeconds))
 
 	// Duration-weighted mean of each cluster's unit embeddings.
 	sums := map[int][]float32{}
@@ -205,8 +225,14 @@ func (p *Pipeline) clusterScope(cs []diarChunk, within func(from, to time.Time) 
 		}
 	}
 	names := map[int]string{}
-	sc := &speakerScope{labels: map[itemKey]string{}}
+	sc := &speakerScope{labels: map[itemKey]string{}, chunks: map[string]diarChunk{}, micSeconds: map[string]float64{}}
+	for _, dc := range cs {
+		sc.chunks[dc.c.path] = dc
+	}
 	for i, id := range ids {
+		if items[i].track == "mic" && fragment[i] {
+			sc.micFragment += items[i].seconds
+		}
 		if id < 0 {
 			sc.labels[items[i].key] = unknownSpeaker
 			continue
@@ -226,6 +252,9 @@ func (p *Pipeline) clusterScope(cs []diarChunk, within func(from, to time.Time) 
 			}
 		}
 		sc.labels[items[i].key] = name
+		if items[i].track == "mic" && !fragment[i] {
+			sc.micSeconds[name] += items[i].seconds
+		}
 	}
 	return sc
 }
@@ -266,4 +295,113 @@ func (sp *speakerSet) label(c chunk, e *chunkEntry, us []media.Utterance, only f
 		}
 		us[i].Speaker = lab
 	}
+}
+
+// relabelMeetings applies doc's meeting labels (doc.speakers) to each of
+// its meetings' utterances in the earlier hours' derived docs: a pass that
+// sees more of a meeting may cluster it differently, and the meeting must
+// read with one numbering (its summary input spans those hours). Changed
+// docs are saved and their transcript indexed again. Then the meeting's
+// unconfirmed participants whose label is heard in none of its hours are
+// removed.
+func (p *Pipeline) relabelMeetings(doc *HourDoc) error {
+	sp := doc.speakers
+	if sp == nil {
+		return nil
+	}
+	hourStart, _, err := hourBounds(doc.Day, doc.Hour)
+	if err != nil {
+		return err
+	}
+	chunksOf := map[string][]chunk{}
+	for k, m := range sp.meetings {
+		heard := map[string]bool{}
+		note := func(d *HourDoc) {
+			for _, u := range visibleSpeech(d) {
+				if inMeetingSpan(m, u) {
+					heard[speaker(u)] = true
+				}
+			}
+		}
+		note(doc)
+		s := m.Start.In(time.Local)
+		for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, time.Local); !t.After(m.End); t = t.Add(time.Hour) {
+			if t.Equal(hourStart) {
+				continue
+			}
+			day := config.DayKey(t)
+			path := p.Paths.DerivedHour(day, t.Hour())
+			d, err := Load(path)
+			if err != nil {
+				continue
+			}
+			if t.Before(hourStart) {
+				all, ok := chunksOf[day]
+				if !ok {
+					if all, err = p.chunks(day); err != nil {
+						return err
+					}
+					chunksOf[day] = all
+				}
+				if p.relabelDoc(d, m, sp, sp.scopes[k], all) {
+					if err := d.Save(path); err != nil {
+						return fmt.Errorf("save %s: %w", path, err)
+					}
+					if err := p.IndexTranscript(d); err != nil {
+						return err
+					}
+				}
+			}
+			note(d)
+		}
+		parts, err := p.Store.Participants(m.ID)
+		if err != nil {
+			return err
+		}
+		for _, r := range parts {
+			if !r.Confirmed && !heard[r.Speaker] {
+				if err := p.Store.DeleteParticipant(m.ID, r.Speaker); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// relabelDoc labels d's utterances in meeting m (mic ones only for an
+// in-person meeting) from their chunk's turns in sc, reporting whether any
+// label changed. all is the day's chunks; an utterance whose chunk is not in
+// the scope keeps its label.
+func (p *Pipeline) relabelDoc(d *HourDoc, m activity.Meeting, sp *speakerSet, sc *speakerScope, all []chunk) bool {
+	changed := false
+	for i, u := range d.Transcript {
+		if !inMeetingSpan(m, u) || (u.Track == "mic" && m.App != activity.InPersonApp) {
+			continue
+		}
+		var c *chunk
+		for j := range all {
+			if all[j].track == u.Track && !all[j].start.After(u.Start) && (c == nil || all[j].start.After(c.start)) {
+				c = &all[j]
+			}
+		}
+		if c == nil {
+			continue
+		}
+		dc, ok := sc.chunks[c.path]
+		if !ok {
+			continue
+		}
+		fallback := "others"
+		if u.Track == "mic" {
+			fallback = unknownSpeaker
+		}
+		us := []media.Utterance{u}
+		sp.label(dc.c, dc.e, us, nil, fallback)
+		if us[0].Speaker != u.Speaker {
+			d.Transcript[i].Speaker = us[0].Speaker
+			changed = true
+		}
+	}
+	return changed
 }

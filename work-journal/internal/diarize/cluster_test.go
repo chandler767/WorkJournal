@@ -66,10 +66,13 @@ func TestClusterFragments(t *testing.T) {
 		{Emb: []float32{0, 0, 0, 0, 1}, Seconds: 12},
 		{Emb: []float32{0, 0, 0, 0.05, 1}, Seconds: 12},
 	}
-	got := Cluster(items, 0.45, 20)
+	got, frag := ClusterFragments(items, 0.45, 20)
 	want := []int{0, 1, 0, -1, 2, 2}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clusters = %v, want %v", got, want)
+	}
+	if w := []bool{false, false, true, true, false, false}; !reflect.DeepEqual(frag, w) {
+		t.Fatalf("fragments = %v, want %v", frag, w)
 	}
 }
 

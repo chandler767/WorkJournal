@@ -53,12 +53,19 @@ func inMeetingSpan(m activity.Meeting, u media.Utterance) bool {
 	return !u.Start.Before(m.Start) && !u.Start.After(m.End)
 }
 
-// keepInPerson reports whether in-person meeting m has at least two voices.
-// With diarization off it is always kept. Otherwise it is kept when, in this
-// hour's labelling (lab) or in another derived hour of the day, its mic
-// speech carries two or more speaker labels ("Speaker ?" not counted;
-// labels are compared within one hour only). It is also kept, as unknown,
-// when this hour has its mic speech but none of it could be diarized.
+// inPersonOtherSeconds is how much speech besides the dominant voice makes
+// an in-person conversation a meeting rather than dictation.
+const inPersonOtherSeconds = 15
+
+// keepInPerson reports whether in-person meeting m has more than one voice.
+// With diarization off it is always kept. It is kept, as unknown, when this
+// hour has its mic speech but none of it could be diarized. Otherwise the
+// meeting's clustered mic speech (lab.sp, across all its hours) decides:
+// it is kept when the seconds of speech apart from the dominant voice
+// (other voices, fragments merged into any voice, and "Speaker ?" ones)
+// reach inPersonOtherSeconds. Without any clustered mic speech, another
+// derived hour of the day whose mic speech in the meeting carries two or
+// more speaker labels keeps it.
 func (p *Pipeline) keepInPerson(day string, hour int, m activity.Meeting, lab *labelled) bool {
 	if p.diarizer() == nil {
 		return true
@@ -72,12 +79,17 @@ func (p *Pipeline) keepInPerson(day string, hour int, m activity.Meeting, lab *l
 		}
 		return len(seen)
 	}
-	if voices(lab.diarizedMic) >= 2 {
-		return true
-	}
 	if voices(lab.diarizedMic) == 0 && voices(lab.undiarizedMic) > 0 {
 		p.logf("process: in-person meeting %s: mic not diarized; keeping it", m.ID)
 		return true
+	}
+	if sc := lab.sp.scopeOf(m.ID); sc != nil && (len(sc.micSeconds) > 0 || sc.micFragment > 0) {
+		total, top := sc.micFragment, 0.0
+		for _, sec := range sc.micSeconds {
+			total += sec
+			top = max(top, sec)
+		}
+		return total-top >= inPersonOtherSeconds
 	}
 	from, to := m.Start.In(time.Local).Hour(), m.End.In(time.Local).Hour()
 	if config.DayKey(m.Start) != day {

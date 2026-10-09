@@ -260,16 +260,19 @@ func TestMeetingParticipantsOnlyRealVoices(t *testing.T) {
 	}
 }
 
-// Enrollment reads the meeting's cached diarization, and every chunk-local
-// speaker under the label contributes, weighted by its overlap.
-func TestEnrollUsesCachedTurnsOfEveryLocalSpeaker(t *testing.T) {
+// Enrollment reads the meeting's cached diarization and takes only the
+// chunk-local speakers the meeting's clustering labels as the named
+// speaker: crosstalk overlapping the label's lines is left out.
+func TestEnrollUsesOnlyTheLabelsLocalSpeakers(t *testing.T) {
 	e := newEnv(t)
 	m := enrollFixture(e)
 	e.dz.by["1300-system"] = diar{
-		// "first point" (2–8 s) is split between local speakers 0 and 2.
+		// "first point" (2–8 s) overlaps local speaker 2, another voice.
 		turns: []diarize.Turn{tn(0, 5, 0), tn(5, 9, 2), tn(9, 21, 1)},
 		embs:  map[int][]float32{0: {2, 0, 0}, 1: {0, 0, 5}, 2: {0, 4, 0}},
 	}
+	// 1305's voice is local 2's, so it is not "Speaker 1" either.
+	e.dz.by["1305-system"] = diar{turns: []diarize.Turn{tn(0.5, 6, 3)}, embs: map[int][]float32{3: {0, 3, 0}}}
 	// Cache both chunks' diarization as a pass over hour 13 would.
 	for _, name := range []string{"1300-system", "1305-system"} {
 		path := filepath.Join(e.paths.Audio(day), name+".m4a")
@@ -288,7 +291,18 @@ func TestEnrollUsesCachedTurnsOfEveryLocalSpeaker(t *testing.T) {
 	if len(e.dz.calls) != 0 {
 		t.Fatalf("diarized %v despite the cache", e.dz.calls)
 	}
-	b, err := os.ReadFile(filepath.Join(e.paths.Voices(), "ana.json"))
+	if got := profile(t, e, "ana"); !approx(got, [][]float64{{1, 0, 0}}) {
+		t.Fatalf("enrolled %v, want only local 0's voice", got)
+	}
+	if !slices.Contains(speakers(mustLoad(t, e, 13).Transcript), "Ana: first point") {
+		t.Fatalf("not relabelled")
+	}
+}
+
+// profile reads the embeddings enrolled under slug.
+func profile(t *testing.T, e *env, slug string) [][]float32 {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.paths.Voices(), slug+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,19 +312,147 @@ func TestEnrollUsesCachedTurnsOfEveryLocalSpeaker(t *testing.T) {
 	if err := json.Unmarshal(b, &prof); err != nil {
 		t.Fatal(err)
 	}
-	// 1300: 3 s of local 0 (x) and 3 s of local 2 (y) → (0.707, 0.707, 0);
-	// 1305: y. Mean: (0.354, 0.854, 0).
-	want := []float64{math.Sqrt2 / 4, (math.Sqrt2/2 + 1) / 2, 0}
-	if len(prof.Embeddings) != 1 || len(prof.Embeddings[0]) != 3 {
-		t.Fatalf("enrolled %v", prof.Embeddings)
+	return prof.Embeddings
+}
+
+func approx(got [][]float32, want [][]float64) bool {
+	if len(got) != len(want) {
+		return false
 	}
-	for i, x := range prof.Embeddings[0] {
-		if math.Abs(float64(x)-want[i]) > 1e-4 {
-			t.Fatalf("enrolled %v, want %v", prof.Embeddings[0], want)
+	for i := range got {
+		if len(got[i]) != len(want[i]) {
+			return false
+		}
+		for k, x := range got[i] {
+			if math.Abs(float64(x)-want[i][k]) > 1e-4 {
+				return false
+			}
 		}
 	}
-	if !slices.Contains(speakers(mustLoad(t, e, 13).Transcript), "Ana: first point") {
-		t.Fatalf("not relabelled")
+	return true
+}
+
+// I-1: hour 13's final pass sees only part of the meeting; when hour 14
+// reclusters the whole meeting, hour 13's doc, index and participants
+// follow the final numbering.
+func TestEarlierHourRelabelledWithFinalNumbers(t *testing.T) {
+	e := newEnv(t)
+	e.p.Cfg.SpeakerMinSeconds = 20
+	e.activity(old, ev(13, 50, "start"), ev(13, 50, "app", "loginwindow"), ev(13, 52, "idle"))
+	// X says 10 s in hour 13 (a fragment like nobody: "Speaker ?"), then
+	// speaks at length in hour 14, which makes it the first voice.
+	want := voiceChunks(e, rand.New(rand.NewSource(5)), map[string][]seg{
+		"1350-mic": {{0, 10, 'D', 0}, {10, 300, 'A', 1}},
+		"1355-mic": {{0, 150, 'B', 0}, {150, 300, 'A', 2}},
+	})
+	ctx := context.Background()
+	h13, err := e.p.Transcribe(ctx, day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkVoices(t, h13, want, map[byte]string{'D': unknownSpeaker, 'A': "Speaker 1", 'B': "Speaker 2"})
+	const id = "2026-10-07-1350-in-person"
+	for _, p := range []store.ParticipantRecord{
+		{MeetingID: id, Speaker: "Speaker 2", Name: "Ann", Confidence: 0.8},
+		{MeetingID: id, Speaker: "Speaker 4"}, // no such voice in the end
+		{MeetingID: id, Speaker: "Speaker 9", Name: "Bob", Confidence: 1, Confirmed: true},
+	} {
+		if err := e.st.SetParticipant(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for k, v := range voiceChunks(e, rand.New(rand.NewSource(6)), map[string][]seg{
+		"1400-mic": {{0, 100, 'D', 0}, {100, 300, 'B', 1}},
+	}) {
+		want[k] = v
+	}
+	names := map[byte]string{'D': "Speaker 1", 'A': "Speaker 2", 'B': "Speaker 3"}
+	h14, err := e.p.Transcribe(ctx, day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h14.Meetings) != 1 || h14.Meetings[0].ID != id {
+		t.Fatalf("meetings = %+v", h14.Meetings)
+	}
+	checkVoices(t, h14, map[string]byte{"1400-mic-0": 'D', "1400-mic-150": 'B'}, names)
+	h13 = mustLoad(t, e, 13)
+	checkVoices(t, h13, want13(want), names)
+	hits, err := e.st.Search("1350-mic-0", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(hits, func(h store.SearchHit) bool { return h.Text == "Speaker 1: 1350-mic-0" }) {
+		t.Errorf("hour 13 index not updated: %+v", hits)
+	}
+	ps, err := e.st.Participants(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range ps {
+		got = append(got, p.Speaker+"="+p.Name)
+	}
+	if w := []string{"Speaker 2=Ann", "Speaker 9=Bob"}; !reflect.DeepEqual(got, w) {
+		t.Fatalf("participants = %v, want %v", got, w)
+	}
+}
+
+// want13 is the part of want spoken in hour 13.
+func want13(want map[string]byte) map[string]byte {
+	out := map[string]byte{}
+	for k, v := range want {
+		if strings.HasPrefix(k, "13") {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// shortExchangeFixture: ten minutes of one voice (A) in an in-person setting,
+// over-split by the diarizer; with other set, a second voice answers for
+// 16 s, too short for a speaker of its own (speaker_min_seconds 20) and close
+// enough to A (cosine 0.35) that its fragment merges into A.
+func shortExchangeFixture(e *env, other bool) {
+	e.p.Cfg.SpeakerMinSeconds = 20
+	e.activity(old, ev(14, 0, "start"), ev(14, 0, "app", "loginwindow"), ev(14, 2, "idle"))
+	a := []float32{1, 0, 0, 0}
+	b := []float32{0.35, 0, 0, float32(math.Sqrt(1 - 0.35*0.35))}
+	first := diar{turns: []diarize.Turn{tn(0, 300, 0)}, embs: map[int][]float32{0: a}}
+	if other {
+		first = diar{turns: []diarize.Turn{tn(0, 100, 0), tn(100, 116, 1), tn(116, 300, 0)}, embs: map[int][]float32{0: a, 1: b}}
+	}
+	e.dz.by["1400-mic"] = first
+	e.dz.by["1405-mic"] = diar{turns: []diarize.Turn{tn(0, 150, 2), tn(150, 300, 5)}, embs: map[int][]float32{2: a, 5: {0.98, 0.1, 0, 0}}}
+	for _, n := range []string{"1400-mic", "1405-mic"} {
+		e.file("audio/"+n+".m4a", old)
+		e.tr.utts[n] = talk(n+"-", 0, 300)
+	}
+}
+
+// I-2: an in-person meeting is kept when, apart from the dominant voice,
+// at least 15 s of speech is someone else's, even as a merged fragment.
+func TestInPersonKeepsShortExchange(t *testing.T) {
+	e := newEnv(t)
+	shortExchangeFixture(e, true)
+	doc, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 1 {
+		t.Fatalf("a 16 s answer did not keep the meeting: %+v", doc.Meetings)
+	}
+}
+
+func TestInPersonDropsMonologue(t *testing.T) {
+	e := newEnv(t)
+	shortExchangeFixture(e, false)
+	doc, err := e.p.Transcribe(context.Background(), day, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Meetings) != 0 {
+		t.Fatalf("one voice made a meeting: %+v", doc.Meetings)
 	}
 }
 

@@ -24,6 +24,10 @@ type HourDoc struct {
 	Meetings      []activity.Meeting   `json:"meetings"`
 	EndedMeetings []string             `json:"ended_meetings"`
 	Embeddings    map[string][]float32 `json:"-"`
+
+	// speakers is the clustering the doc was labelled with (nil for a
+	// loaded doc); record applies its meeting labels to earlier hours.
+	speakers *speakerSet
 }
 
 // Load reads a derived HourDoc.
