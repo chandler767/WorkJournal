@@ -117,9 +117,15 @@ With `diarization = "sherpa"` (the default), each system-audio chunk is split in
 turns locally with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): pyannote
 segmentation 3.0 finds the turns and NeMo TitaNet-small gives each speaker a voice
 embedding. Your microphone is "me", except during an in-person meeting: there the mic
-is diarized too, since everyone in the room is on it. Other voices are labelled `Speaker 1`,
-`Speaker 2`, … within each hour (one numbering for both tracks), or by name once you have
-named them; in-meeting mic speech no speaker turn covers is `Speaker ?`. To be "me" in
+is diarized too, since everyone in the room is on it. The diarizer works one 5-minute chunk
+at a time and splits one voice into many pieces, so the pieces are then grouped into voices
+across a whole meeting (all its chunks, in every hour it spans) and, outside meetings,
+across the hour. Voices are labelled `Speaker 1`, `Speaker 2`, … in order of first
+appearance within the meeting (one numbering for both tracks; a voice keeps its number in
+every hour of the meeting), or by name once you have named them. A voice with less than
+`speaker_min_seconds` (default 20) of speech joins the most similar voice, or is
+`Speaker ?` when it sounds like nobody else; in-meeting mic speech no speaker turn covers
+is `Speaker ?` too. Only real voices are listed as meeting participants. To be "me" in
 in-person meetings, name your own voice exactly `me` once on an in-person meeting's page. Nothing is sent
 anywhere; diarization adds a few seconds per 5-minute chunk.
 
@@ -129,21 +135,24 @@ anywhere; diarization adds a few seconds per 5-minute chunk.
   Without them, system speech is labelled "others" (a warning is logged). When
   diarization fails on more than half of an hour's chunks, `logs/serve.log` gets one
   `WARNING: speaker separation failed …` line with the first error; failed chunks are
-  diarized again on the next pass.
+  diarized again on the next pass. A chunk whose converted WAV the diarizer cannot read is
+  still transcribed; only its speakers are unknown (and it counts as a failure).
 - Naming: on a meeting's page, name a speaker. While the meeting's raw audio still exists
-  (`retention_days`), its chunks are diarized again, that speaker's voice embedding is
-  saved as a voice profile in `voices/<name>.json`, and their lines in that meeting are
-  relabelled with the name (labels restart each hour, so a later hour whose "Speaker N"
-  sounds different is left alone). Later recordings of a voice that matches a profile get the
+  (`retention_days`), the voice embeddings of that speaker's lines (from the cached
+  diarization, or the chunks diarized again) are saved as a voice profile in
+  `voices/<name>.json`, and their lines in that meeting are relabelled with the name (an
+  hour whose "Speaker N" sounds different, e.g. one labelled by an older version, is left
+  alone). Later recordings of a voice that matches a profile get the
   name automatically. After retention removed the audio, the name is saved but no voice
   is learned.
 - Voice profiles stay in `voices/` on this machine and are never passed to Claude.
   Delete them under Settings → Voice profiles.
 - Thresholds: `voice_match_threshold` (default 0.60) is the cosine similarity at which a
-  voice matches a profile or a speaker heard earlier in the same hour. Raise it if
-  different people get the same name; lower it if a known voice is not recognized. The
-  speaker clustering threshold (0.7) is fixed. Two similar voices taking quick turns may
-  be merged into one speaker.
+  voice matches a profile. Raise it if different people get the same name; lower it if a
+  known voice is not recognized. `speaker_cluster_threshold` (default 0.45, 0.2–0.9) is
+  the similarity at which pieces of speech count as one voice: raise it if different people
+  share a label, lower it if one person shows up as several speakers. Two similar voices
+  may still be merged into one speaker.
 - Set `diarization = "off"` to label all system speech "others" and hide speaker naming.
 
 ## Permissions

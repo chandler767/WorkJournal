@@ -52,11 +52,23 @@ func (w *wavDir) ensure() error {
 }
 
 // convert writes c as a 16 kHz WAV into the directory (see ensure) and
-// returns its path; an error is afconvert's.
-func (w *wavDir) convert(ctx context.Context, p *Pipeline, c chunk) (string, error) {
+// returns its path; err is afconvert's. normErr is set when the WAV's header
+// cannot be rewritten as canonical PCM (media.NormalizeWav16k): whisper can
+// still read the file, the diarizer cannot.
+func (w *wavDir) convert(ctx context.Context, p *Pipeline, c chunk) (wav string, normErr, err error) {
 	name := filepath.Base(c.path)
-	wav := filepath.Join(w.dir, strings.TrimSuffix(name, filepath.Ext(name))+".wav")
-	return wav, media.ToWav16k(ctx, p.Run, c.path, wav)
+	wav = filepath.Join(w.dir, strings.TrimSuffix(name, filepath.Ext(name))+".wav")
+	if err := media.ConvertToWav16k(ctx, p.Run, c.path, wav); err != nil {
+		return wav, nil, err
+	}
+	return wav, media.NormalizeWav16k(wav), nil
+}
+
+// fail tallies a chunk whose speakers could not be separated.
+func (w *wavDir) fail(err error) {
+	if w.failed++; w.firstErr == nil {
+		w.firstErr = err
+	}
 }
 
 func (w *wavDir) close() {
@@ -103,7 +115,12 @@ func (p *Pipeline) loadAudio(ctx context.Context, day string, chunks []chunk, sk
 			if err := w.ensure(); err != nil {
 				return nil, err
 			}
-			wav, err := w.convert(ctx, p, c)
+			wav, normErr, err := w.convert(ctx, p, c)
+			if err == nil && normErr != nil && needTurns {
+				p.logf("process: %v; transcribing %s as is, speakers unknown", normErr, name)
+				w.fail(normErr)
+				needTurns = false
+			}
 			if err != nil {
 				switch {
 				case ctx.Err() != nil:
@@ -174,9 +191,7 @@ func (p *Pipeline) diarizeChunk(ctx context.Context, d diarize.Diarizer, wav, na
 	if err != nil {
 		p.logf("process: diarize %s: %v; speakers unknown", name, err)
 		if ctx.Err() == nil {
-			if w.failed++; w.firstErr == nil {
-				w.firstErr = err
-			}
+			w.fail(err)
 		}
 		return
 	}
@@ -193,64 +208,87 @@ func speechOf(cs []audioChunk) []media.Utterance {
 	return all
 }
 
-// labelAudio returns the chunks' speech with speakers labelled. Speaker
-// labels are assigned afresh on every call from the cached turns and
-// embeddings, so they stay stable as chunks are added. System speech is
-// labelled by diarization ("others" without it). Mic speech is "me", except
-// during an in-person meeting (one of inPerson; the utterance starts within
-// it): there the mic chunk is diarized too (and cached) and its speakers are
-// labelled like system ones, sharing the hour's "Speaker N" numbering. The
-// user's own voice is "me" there only through an enrolled voice named "me";
-// an in-meeting mic utterance no diarizer turn covers is "Speaker ?". If the
-// mic chunk cannot be diarized its speech stays "me".
-func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, inPerson []activity.Meeting, w *wavDir) (*labelled, error) {
+// labelAudio returns the chunks' speech with speakers labelled (see
+// speakers.go). System speech is labelled by diarization ("others" without it).
+// Mic speech is "me", except during an in-person meeting (one of meetings;
+// the utterance starts within it): there the mic chunk is diarized too (and
+// cached) and its speakers are labelled like system ones, sharing the
+// meeting's "Speaker N" numbering. The user's own voice is "me" there only
+// through an enrolled voice named "me"; an in-meeting mic utterance no
+// diarizer turn covers is "Speaker ?". If the mic chunk cannot be diarized
+// its speech stays "me". start and end bound the hour cs belongs to.
+func (p *Pipeline) labelAudio(ctx context.Context, day string, start, end time.Time, cs []audioChunk, meetings []activity.Meeting, w *wavDir) (*labelled, error) {
 	d := p.diarizer()
-	inside := func(u media.Utterance) bool {
-		return slices.ContainsFunc(inPerson, func(m activity.Meeting) bool {
-			return !u.Start.Before(m.Start) && !u.Start.After(m.End)
-		})
+	var inPerson []activity.Meeting
+	for _, m := range meetings {
+		if m.App == activity.InPersonApp {
+			inPerson = append(inPerson, m)
+		}
 	}
-	lb := &labeler{p: p, embs: map[string][]float32{}}
-	res := &labelled{}
+	inside := func(u media.Utterance) bool {
+		return slices.ContainsFunc(inPerson, func(m activity.Meeting) bool { return inMeetingSpan(m, u) })
+	}
+	diarizedMic := func(ac audioChunk) bool {
+		return ac.c.track == "mic" && d != nil && ac.e.Diarized && slices.ContainsFunc(ac.us, inside)
+	}
+	var turns []diarChunk // this hour's chunks whose turns label speech
 	for _, ac := range cs {
 		c, e := ac.c, ac.e
-		us := append([]media.Utterance(nil), ac.us...)
-		switch c.track {
-		case "system":
-			var turns []diarize.Turn
+		switch {
+		case c.track == "system":
 			if d != nil && e.Diarized {
-				turns = e.Turns
+				turns = append(turns, diarChunk{c, e})
 			}
-			lb.label(turns, e.Embeddings, c.start, us, nil, "others")
-		case "mic":
-			if d == nil || !slices.ContainsFunc(us, inside) {
-				break
+			continue
+		case d == nil || !slices.ContainsFunc(ac.us, inside):
+			continue
+		}
+		w.eligible++
+		if !e.Diarized {
+			if err := w.ensure(); err != nil {
+				return nil, err
 			}
-			w.eligible++
-			if !e.Diarized {
-				if err := w.ensure(); err != nil {
-					return nil, err
+			name := filepath.Base(c.path)
+			wav, normErr, err := w.convert(ctx, p, c)
+			switch {
+			case err != nil && ctx.Err() != nil:
+				return nil, ctx.Err()
+			case err != nil:
+				p.logf("process: cannot read %s to diarize: %v; mic speech stays me", c.path, err)
+			case normErr != nil:
+				p.logf("process: %v; mic speech of %s stays me", normErr, name)
+				w.fail(normErr)
+			default:
+				p.diarizeChunk(ctx, d, wav, name, e, w)
+				if e.Diarized {
+					p.saveChunk(day, c.path, e)
 				}
-				name := filepath.Base(c.path)
-				wav, err := w.convert(ctx, p, c)
-				if err != nil {
-					if ctx.Err() != nil {
-						return nil, ctx.Err()
-					}
-					p.logf("process: cannot read %s to diarize: %v; mic speech stays me", c.path, err)
-				} else {
-					p.diarizeChunk(ctx, d, wav, name, e, w)
-					if e.Diarized {
-						p.saveChunk(day, c.path, e)
-					}
-				}
 			}
-			if e.Diarized {
-				lb.label(e.Turns, e.Embeddings, c.start, us, inside, unknownSpeaker)
+		}
+		if e.Diarized {
+			turns = append(turns, diarChunk{c, e})
+		}
+	}
+
+	sp := p.newSpeakers(day, start, end, meetings, turns)
+	res := &labelled{}
+	for _, ac := range cs {
+		us := append([]media.Utterance(nil), ac.us...)
+		switch {
+		case ac.c.track == "system" && d != nil && ac.e.Diarized:
+			sp.label(ac.c, ac.e, us, nil, "others")
+		case ac.c.track == "system":
+			for i := range us {
+				us[i].Speaker = "others"
+			}
+		case ac.c.track == "mic" && d != nil && slices.ContainsFunc(ac.us, inside):
+			ok := diarizedMic(ac)
+			if ok {
+				sp.label(ac.c, ac.e, us, inside, unknownSpeaker)
 			}
 			for _, u := range us {
 				if inside(u) {
-					if e.Diarized {
+					if ok {
 						res.diarizedMic = append(res.diarizedMic, u)
 					} else {
 						res.undiarizedMic = append(res.undiarizedMic, u)
@@ -261,8 +299,8 @@ func (p *Pipeline) labelAudio(ctx context.Context, day string, cs []audioChunk, 
 		res.utts = append(res.utts, us...)
 	}
 	sort.SliceStable(res.utts, func(i, j int) bool { return res.utts[i].Start.Before(res.utts[j].Start) })
-	if len(lb.embs) > 0 {
-		res.embs = lb.embs
+	if len(sp.embs) > 0 {
+		res.embs = sp.embs
 	}
 	return res, nil
 }
@@ -278,7 +316,9 @@ func (p *Pipeline) warnDiarization(day string, hour int, w *wavDir) {
 		w.failed, w.eligible, day, hour, w.firstErr)
 }
 
-// unknownSpeaker labels in-meeting mic speech no diarizer turn covers.
+// unknownSpeaker labels diarized speech of no known voice: in-meeting mic
+// speech no diarizer turn covers, or a voice with too little speech that
+// sounds like no other in its meeting (see speakers.go).
 const unknownSpeaker = "Speaker ?"
 
 // labelled is labelAudio's result.
@@ -288,94 +328,6 @@ type labelled struct {
 	// In-person meeting mic speech from chunks that were (or could not be)
 	// diarized, for the two-voice check (see keepInPerson).
 	diarizedMic, undiarizedMic []media.Utterance
-}
-
-// labeler assigns speaker labels to diarized utterances across one hour.
-type labeler struct {
-	p      *Pipeline
-	embs   map[string][]float32
-	labels []string // labels with embeddings, in first-seen order
-	anon   int
-}
-
-// label sets Speaker on the utterances of one chunk that only accepts (all
-// when only is nil): the label of the turn with the largest time overlap, or
-// fallback without one. Without a filter every turn's speaker is named, in
-// turn order; with one, only the speakers given to accepted utterances are.
-func (l *labeler) label(turns []diarize.Turn, embs map[int][]float32, chunkStart time.Time, us []media.Utterance, only func(media.Utterance) bool, fallback string) {
-	best := make([]int, len(us))
-	used := map[int]bool{}
-	for i := range us {
-		best[i] = -1
-		if only != nil && !only(us[i]) {
-			continue
-		}
-		from := us[i].Start.Sub(chunkStart).Seconds()
-		to := us[i].End.Sub(chunkStart).Seconds()
-		bestOv := 0.0
-		for j, t := range turns {
-			if ov := min(to, t.End) - max(from, t.Start); ov > bestOv {
-				best[i], bestOv = j, ov
-			}
-		}
-		if best[i] >= 0 {
-			used[turns[best[i]].Speaker] = true
-		}
-	}
-	ordered := append([]diarize.Turn(nil), turns...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Start < ordered[j].Start })
-	names := map[int]string{}
-	for _, t := range ordered {
-		if _, ok := names[t.Speaker]; !ok && (only == nil || used[t.Speaker]) {
-			names[t.Speaker] = l.resolve(embs[t.Speaker])
-		}
-	}
-	for i := range us {
-		switch {
-		case only != nil && !only(us[i]):
-		case best[i] < 0:
-			us[i].Speaker = fallback
-		default:
-			us[i].Speaker = names[turns[best[i]].Speaker]
-		}
-	}
-}
-
-// resolve names one chunk-local speaker: a known voice, else a speaker
-// already heard this hour (cosine >= VoiceMatchThreshold), else the next
-// "Speaker N".
-func (l *labeler) resolve(emb []float32) string {
-	if len(emb) > 0 {
-		if l.p.Voices != nil {
-			if name, _, ok := l.p.Voices.Match(emb); ok {
-				l.remember(name, emb)
-				return name
-			}
-		}
-		best, bestScore := "", l.p.Cfg.VoiceMatchThreshold
-		for _, lab := range l.labels {
-			if s := diarize.Cosine(emb, l.embs[lab]); s >= bestScore {
-				best, bestScore = lab, s
-			}
-		}
-		if best != "" {
-			return best
-		}
-	}
-	l.anon++
-	lab := fmt.Sprintf("Speaker %d", l.anon)
-	l.remember(lab, emb)
-	return lab
-}
-
-func (l *labeler) remember(label string, emb []float32) {
-	if len(emb) == 0 {
-		return
-	}
-	if _, ok := l.embs[label]; !ok {
-		l.embs[label] = emb
-		l.labels = append(l.labels, label)
-	}
 }
 
 // chunkMayBeOpen reports whether the chunk was modified within

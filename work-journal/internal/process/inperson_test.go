@@ -69,11 +69,11 @@ func TestInPersonMicSpeechIsDiarized(t *testing.T) {
 		"a0":           "mic/me", // cluster 0 is the enrolled "me" voice
 		"a130":         "mic/me",
 		"a140":         "mic/Speaker ?", // in the meeting but no diarizer turn
-		"a150":         "mic/Speaker 1",
-		"a290":         "mic/Speaker 1",
-		"b0":           "mic/Speaker 1", // matched across chunks within the hour
-		"b290":         "mic/Speaker 1",
-		"system voice": "system/Speaker 2", // shared numbering with mic speakers
+		"a150":         "mic/Speaker 2", // the second voice to speak; "me" was the first
+		"a290":         "mic/Speaker 2",
+		"b0":           "mic/Speaker 2", // the same voice across chunks
+		"b290":         "mic/Speaker 2",
+		"system voice": "system/Speaker 3", // shared numbering with mic speakers
 		"lone remark":  "mic/me",           // outside the meeting: not diarized
 	}
 	for text, w := range want {

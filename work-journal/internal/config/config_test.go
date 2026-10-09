@@ -28,6 +28,9 @@ func TestDefaults(t *testing.T) {
 	if c.Diarization != "sherpa" || c.VoiceMatchThreshold != 0.60 {
 		t.Fatalf("diarization = %q, voice_match_threshold = %v", c.Diarization, c.VoiceMatchThreshold)
 	}
+	if c.SpeakerClusterThreshold != 0.45 || c.SpeakerMinSeconds != 20 {
+		t.Fatalf("speaker_cluster_threshold = %v, speaker_min_seconds = %v", c.SpeakerClusterThreshold, c.SpeakerMinSeconds)
+	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("defaults invalid: %v", err)
 	}
@@ -87,6 +90,10 @@ func TestValidate(t *testing.T) {
 		{"categories", func(c *Config) { c.Categories = nil }, "categories"},
 		{"voice threshold", func(c *Config) { c.VoiceMatchThreshold = 1.5 }, "voice_match_threshold"},
 		{"diarization", func(c *Config) { c.Diarization = "bogus" }, "diarization"},
+		{"cluster threshold low", func(c *Config) { c.SpeakerClusterThreshold = 0.1 }, "speaker_cluster_threshold"},
+		{"cluster threshold high", func(c *Config) { c.SpeakerClusterThreshold = 0.95 }, "speaker_cluster_threshold"},
+		{"speaker min seconds", func(c *Config) { c.SpeakerMinSeconds = -1 }, "speaker_min_seconds"},
+		{"speaker min seconds high", func(c *Config) { c.SpeakerMinSeconds = 601 }, "speaker_min_seconds"},
 		{"relative data dir", func(c *Config) { c.DataDir = "WorkJournal" }, "data_dir"},
 		{"unexpanded tilde", func(c *Config) { c.DataDir = "~/WorkJournal" }, "data_dir"},
 	}

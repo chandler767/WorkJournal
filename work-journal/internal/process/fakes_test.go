@@ -122,6 +122,7 @@ type env struct {
 	ocr   *fakeOCR
 	sum   *fakeSummarizer
 	bad   map[string]bool // chunk names afconvert fails on
+	raw   map[string]bool // chunk names afconvert writes a WAV NormalizeWav16k rejects for
 	mu    sync.Mutex
 	logs  []string
 }
@@ -140,6 +141,9 @@ func newEnv(t *testing.T) *env {
 	cfg := config.Default()
 	cfg.DataDir = paths.Root
 	cfg.Diarization = "sherpa" // the shipped default; set explicitly because these tests exercise diarization
+	// The fixtures' voices speak for seconds; the speaker_min_seconds
+	// fragment rule has its own tests (speakers_test.go).
+	cfg.SpeakerMinSeconds = 0
 	e := &env{
 		t: t, paths: paths, st: st,
 		tr:  &fakeTranscriber{utts: map[string][]fu{}, errs: map[string]error{}},
@@ -147,6 +151,7 @@ func newEnv(t *testing.T) *env {
 		ocr: &fakeOCR{texts: map[string]string{}},
 		sum: &fakeSummarizer{},
 		bad: map[string]bool{},
+		raw: map[string]bool{},
 	}
 	e.p = &Pipeline{
 		Cfg: cfg, Paths: paths, Store: st,
@@ -172,6 +177,9 @@ func (e *env) run(ctx context.Context, name string, args ...string) ([]byte, err
 	in, out := args[len(args)-2], args[len(args)-1]
 	if e.bad[filepath.Base(in)] {
 		return nil, fmt.Errorf("afconvert: cannot read %s", in)
+	}
+	if e.raw[filepath.Base(in)] {
+		return nil, os.WriteFile(out, []byte("RIFF\x04\x00\x00\x00WAVE"), 0o644)
 	}
 	return nil, os.WriteFile(out, emptyWav, 0o644)
 }

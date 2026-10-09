@@ -33,6 +33,8 @@ type Config struct {
 	WhisperModel                 string            `toml:"whisper_model"`
 	Diarization                  string            `toml:"diarization"`
 	VoiceMatchThreshold          float64           `toml:"voice_match_threshold"`
+	SpeakerClusterThreshold      float64           `toml:"speaker_cluster_threshold"`
+	SpeakerMinSeconds            int               `toml:"speaker_min_seconds"`
 	NameConfidenceThreshold      float64           `toml:"name_confidence_threshold"`
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
@@ -69,6 +71,8 @@ func Default() Config {
 		WhisperModel:                 "base.en",
 		Diarization:                  "sherpa",
 		VoiceMatchThreshold:          0.60,
+		SpeakerClusterThreshold:      0.45,
+		SpeakerMinSeconds:            20,
 		NameConfidenceThreshold:      0.7,
 		MinFreeGB:                    5,
 		ListenAddr:                   "127.0.0.1:4747",
@@ -178,6 +182,12 @@ func (c Config) Validate() error {
 	}
 	if c.VoiceMatchThreshold < 0 || c.VoiceMatchThreshold > 1 {
 		return fmt.Errorf("voice_match_threshold must be within [0,1], got %v", c.VoiceMatchThreshold)
+	}
+	if c.SpeakerClusterThreshold < 0.2 || c.SpeakerClusterThreshold > 0.9 {
+		return fmt.Errorf("speaker_cluster_threshold must be within [0.2,0.9], got %v", c.SpeakerClusterThreshold)
+	}
+	if c.SpeakerMinSeconds < 0 || c.SpeakerMinSeconds > 600 {
+		return fmt.Errorf("speaker_min_seconds must be within 0–600, got %d", c.SpeakerMinSeconds)
 	}
 	if c.NameConfidenceThreshold < 0 || c.NameConfidenceThreshold > 1 {
 		return fmt.Errorf("name_confidence_threshold must be within [0,1], got %v", c.NameConfidenceThreshold)

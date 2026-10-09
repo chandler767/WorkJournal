@@ -25,16 +25,19 @@ var ErrNoRawAudio = errors.New("no raw audio left for the meeting")
 // EnrollSpeaker learns the voice of the meeting participant labelled
 // speaker and names it. The speaker's track is where the label appears
 // within the meeting: the system track for a call, the mic track for a
-// speaker diarized during an in-person meeting (see speakerTrack). Each chunk
-// of that track overlapping the meeting is diarized again; in each, the cluster whose turns best overlap the
-// utterances labelled speaker contributes its embedding (unit-normalized).
-// "Speaker N" labels are only consistent within one hour (Ruling 17), so the
-// embeddings are grouped by hour (Ruling 37): the hour with the most speech
-// under the label is the anchor, and only hours whose averaged embedding has
-// cosine >= VoiceMatchThreshold with the anchor's are kept. The kept
-// embeddings are averaged and enrolled as name, and the speaker's
-// utterances on that track within the meeting are relabelled name in the kept hours only,
-// whose text is then indexed again.
+// speaker diarized during an in-person meeting (see speakerTrack). For each
+// chunk of that track overlapping the meeting, its cached diarization (or,
+// without one, a fresh one) gives the chunk-local speakers whose turns
+// overlap the utterances labelled speaker; their unit embeddings, weighted
+// by that overlap, make the chunk's embedding. Labels are clustered per
+// meeting (speakers.go), but a doc labelled before that, or a meeting
+// detected differently in another hour, may reuse a label for another
+// voice, so the embeddings are grouped by hour (Ruling 37): the hour with
+// the most speech under the label is the anchor, and only hours whose
+// averaged embedding has cosine >= SpeakerClusterThreshold with the
+// anchor's are kept. The kept embeddings are averaged and enrolled as name,
+// and the speaker's utterances on that track within the meeting are
+// relabelled name in the kept hours only, whose text is then indexed again.
 func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, speaker, name string) error {
 	if p.Diarizer == nil || p.Voices == nil {
 		return errors.New("enroll: no diarizer or voice store configured")
@@ -77,21 +80,12 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 		if len(spans) == 0 {
 			continue
 		}
-		base := filepath.Base(c.path)
-		wav := filepath.Join(tmp, strings.TrimSuffix(base, filepath.Ext(base))+".wav")
-		if err := media.ToWav16k(ctx, p.Run, c.path, wav); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			p.logf("enroll: skipping unreadable chunk %s: %v", c.path, err)
-			continue
-		}
-		turns, cembs, err := p.Diarizer.Diarize(ctx, wav)
+		turns, cembs, err := p.chunkTurns(ctx, tmp, c)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			p.logf("enroll: diarize %s: %v", base, err)
+			p.logf("enroll: %v", err)
 			continue
 		}
 		overlap := map[int]float64{}
@@ -102,16 +96,20 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 				}
 			}
 		}
-		best, bestOv := -1, 0.0
+		var sum []float32
 		for id, ov := range overlap {
-			if ov > bestOv || (ov == bestOv && id < best) {
-				best, bestOv = id, ov
+			u := unit(cembs[id])
+			if u == nil || (sum != nil && len(u) != len(sum)) {
+				continue
+			}
+			if sum == nil {
+				sum = make([]float32, len(u))
+			}
+			for k, x := range u {
+				sum[k] += float32(ov) * x
 			}
 		}
-		if best < 0 {
-			continue
-		}
-		if e := unit(cembs[best]); e != nil {
+		if e := unit(sum); e != nil {
 			byHour[key] = append(byHour[key], e)
 		}
 	}
@@ -154,7 +152,7 @@ func (p *Pipeline) speakerTrack(m store.MeetingRecord, speaker string) string {
 
 // matchingHours picks the anchor hour (the most speech under speaker within
 // the meeting; the earliest on a tie) and returns, in time order, the hours
-// whose averaged embedding matches the anchor's at VoiceMatchThreshold.
+// whose averaged embedding matches the anchor's at SpeakerClusterThreshold.
 func (p *Pipeline) matchingHours(m store.MeetingRecord, track, speaker string, docs map[HourKey]*HourDoc, byHour map[HourKey][][]float32) []HourKey {
 	var keys []HourKey
 	for k := range byHour {
@@ -181,13 +179,34 @@ func (p *Pipeline) matchingHours(m store.MeetingRecord, track, speaker string, d
 	ref := mean(byHour[anchor])
 	var kept []HourKey
 	for _, k := range keys {
-		if k == anchor || diarize.Cosine(mean(byHour[k]), ref) >= p.Cfg.VoiceMatchThreshold {
+		if k == anchor || diarize.Cosine(mean(byHour[k]), ref) >= p.Cfg.SpeakerClusterThreshold {
 			kept = append(kept, k)
 		} else {
 			p.logf("enroll: %q in %s %02d sounds like someone else; left unchanged", speaker, k.Day, k.Hour)
 		}
 	}
 	return kept
+}
+
+// chunkTurns returns the diarization of c: its cache entry's when current
+// and diarized, else the diarizer's on a WAV written into dir.
+func (p *Pipeline) chunkTurns(ctx context.Context, dir string, c timedChunk) ([]diarize.Turn, map[int][]float32, error) {
+	day := config.DayKey(c.start)
+	if key, err := statKey(c.path); err == nil {
+		if e, ok := p.loadChunk(day, c.path, key); ok && e.Diarized {
+			return e.Turns, e.Embeddings, nil
+		}
+	}
+	base := filepath.Base(c.path)
+	wav := filepath.Join(dir, strings.TrimSuffix(base, filepath.Ext(base))+".wav")
+	if err := media.ToWav16k(ctx, p.Run, c.path, wav); err != nil {
+		return nil, nil, fmt.Errorf("skipping unreadable chunk %s: %w", c.path, err)
+	}
+	turns, embs, err := p.Diarizer.Diarize(ctx, wav)
+	if err != nil {
+		return nil, nil, fmt.Errorf("diarize %s: %w", base, err)
+	}
+	return turns, embs, nil
 }
 
 type timedChunk struct {

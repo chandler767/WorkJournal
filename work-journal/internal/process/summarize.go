@@ -433,12 +433,13 @@ func dedupe(texts []string) []string {
 // anonLabel matches the labels of unnamed voices.
 var anonLabel = regexp.MustCompile(`^Speaker \d+$`)
 
-// saveMeeting stores the summary and the proposed participants, leaving any
-// participant the user already confirmed untouched. A speaker label in the
-// transcript the skill left out is listed too, so every voice, such as one
-// diarized in an in-person meeting, can be named on the meeting page:
-// "Speaker N" unnamed, a label that is already a name (a known voice) with
-// that name. "others" and "Speaker ?" are not voices and are skipped.
+// saveMeeting stores the summary and the meeting's participants: the voices
+// in its transcript and any participant the user confirmed, which is never
+// changed. A voice gets the skill's proposed name, else none for "Speaker N"
+// (and "You"), else its label when that is already a name (a known voice).
+// "others" and "Speaker ?" are not voices; a participant the skill invents
+// is ignored; an unconfirmed participant whose label is no longer in the
+// transcript (speakers were clustered again) is removed.
 func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.MeetingSummary, transcript []lineInput) error {
 	b, err := json.Marshal(ms)
 	if err != nil {
@@ -459,29 +460,37 @@ func (s *SkillSummarizer) saveMeeting(day string, m activity.Meeting, ms skills.
 	if err != nil {
 		return err
 	}
-	for _, p := range ms.Participants {
-		if slices.ContainsFunc(existing, func(e store.ParticipantRecord) bool { return e.Speaker == p.Speaker && e.Confirmed }) {
-			continue
-		}
-		if err := s.Store.SetParticipant(store.ParticipantRecord{MeetingID: m.ID, Speaker: p.Speaker, Name: p.Name, Confidence: p.Confidence}); err != nil {
-			return err
+	confirmed := map[string]bool{}
+	for _, e := range existing {
+		confirmed[e.Speaker] = e.Confirmed
+	}
+	var voices []string
+	for _, l := range transcript {
+		if l.Speaker != "" && l.Speaker != "others" && l.Speaker != unknownSpeaker && !slices.Contains(voices, l.Speaker) {
+			voices = append(voices, l.Speaker)
 		}
 	}
-	for _, l := range transcript {
-		if l.Speaker == "" || l.Speaker == "others" || l.Speaker == unknownSpeaker ||
-			slices.ContainsFunc(ms.Participants, func(p skills.Participant) bool { return p.Speaker == l.Speaker }) ||
-			slices.ContainsFunc(existing, func(e store.ParticipantRecord) bool { return e.Speaker == l.Speaker }) {
+	for _, v := range voices {
+		if confirmed[v] {
 			continue
 		}
-		rec := store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker}
-		if !anonLabel.MatchString(l.Speaker) && l.Speaker != "You" && l.Speaker != "me" {
+		rec := store.ParticipantRecord{MeetingID: m.ID, Speaker: v}
+		if i := slices.IndexFunc(ms.Participants, func(p skills.Participant) bool { return p.Speaker == v }); i >= 0 {
+			rec.Name, rec.Confidence = ms.Participants[i].Name, ms.Participants[i].Confidence
+		} else if !anonLabel.MatchString(v) && v != "You" && v != "me" {
 			// Already a name: a voice matched to a profile.
-			rec.Name, rec.Confidence = l.Speaker, 1
+			rec.Name, rec.Confidence = v, 1
 		}
 		if err := s.Store.SetParticipant(rec); err != nil {
 			return err
 		}
-		existing = append(existing, store.ParticipantRecord{MeetingID: m.ID, Speaker: l.Speaker})
+	}
+	for _, e := range existing {
+		if !e.Confirmed && !slices.Contains(voices, e.Speaker) {
+			if err := s.Store.DeleteParticipant(m.ID, e.Speaker); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

@@ -33,6 +33,24 @@ func TestToWav16kArgs(t *testing.T) {
 	}
 }
 
+// ConvertToWav16k only runs afconvert; normalizing the header is a separate
+// step (NormalizeWav16k) whose failure must not cost the transcript.
+func TestConvertToWav16kDoesNotNormalize(t *testing.T) {
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, os.WriteFile(args[len(args)-1], []byte("not a wav"), 0o644)
+	}
+	out := filepath.Join(t.TempDir(), "out.wav")
+	if err := ConvertToWav16k(context.Background(), run, "in.m4a", out); err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if err := ToWav16k(context.Background(), run, "in.m4a", out); err == nil {
+		t.Fatal("ToWav16k accepted a WAV it cannot normalize")
+	}
+	if b, _ := os.ReadFile(out); string(b) != "not a wav" {
+		t.Fatalf("output changed: %q", b)
+	}
+}
+
 func whisperRunner(t *testing.T, calls *[]call) Runner {
 	fixture, err := os.ReadFile("testdata/whisper.json")
 	if err != nil {

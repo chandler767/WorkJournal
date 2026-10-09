@@ -90,6 +90,13 @@ func (s *Store) Participants(meetingID string) ([]ParticipantRecord, error) {
 	return out, rows.Err()
 }
 
+// DeleteParticipant removes one speaker of a meeting; a missing row is not
+// an error.
+func (s *Store) DeleteParticipant(meetingID, speaker string) error {
+	_, err := s.db.Exec(`DELETE FROM participants WHERE meeting_id=? AND speaker=?`, meetingID, speaker)
+	return err
+}
+
 // DeleteMeeting removes the meeting and its participants.
 func (s *Store) DeleteMeeting(id string) error {
 	tx, err := s.db.Begin()

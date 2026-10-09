@@ -192,7 +192,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 			inPerson = append(inPerson, m)
 		}
 	}
-	lab, err := p.labelAudio(ctx, day, audio, inPerson, &wavs)
+	lab, err := p.labelAudio(ctx, day, start, end, audio, meetings, &wavs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
