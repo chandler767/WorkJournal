@@ -14,6 +14,9 @@
     },
     "chandler-playground/git-hygiene": {
       "version": "0.1.1"
+    },
+    "tessl-academy/tuning-your-agent": {
+      "version": "0.1.4"
     }
   },
   "agents": [
