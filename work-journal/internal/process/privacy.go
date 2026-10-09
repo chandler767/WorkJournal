@@ -40,7 +40,7 @@ const privacySkill = "privacy-filter"
 // is sent along as context.
 const privacyContext = 2 * time.Minute
 
-// redactedMark replaces each identifier in a redacted text.
+// redactedMark replaces each identifier in a redacted text (any case).
 const redactedMark = "[redacted]"
 
 // RemovedSpan is a stretch of speech the privacy filter removed; it holds no
@@ -99,7 +99,7 @@ func (c *checkedPrivacy) Validate() error {
 		if r.Index < 0 || r.Index >= c.lines {
 			return fmt.Errorf("redact[%d] index %d is not one of the %d utterances", i, r.Index, c.lines)
 		}
-		if !strings.Contains(r.Text, redactedMark) {
+		if !strings.Contains(strings.ToLower(r.Text), redactedMark) {
 			return fmt.Errorf("redact[%d] text has no %s", i, redactedMark)
 		}
 	}
@@ -154,8 +154,9 @@ func (p *Pipeline) privacyOn() bool {
 
 // decidePrivacy returns a decision for every utterance of us (the hour's
 // audible speech, in time order), running the skill on those without a
-// cached one. Any skill failure, invalid output included, is transient
-// (skills.ErrUnavailable): the caller writes nothing and the hour is retried.
+// cached one. A skill failure is returned as is: skills.ErrUnavailable is
+// transient (nothing is written, the hour is retried); on
+// skills.ErrInvalidOutput the final pass withholds the hour's speech.
 func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us []media.Utterance, meetings []activity.Meeting) (map[string]privacyDecision, error) {
 	cache := p.loadPrivacyCache(day)
 	var undecided []time.Time
@@ -193,9 +194,19 @@ func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us [
 	}
 	for _, d := range out.Drop {
 		for i := d.From; i <= d.To; i++ {
-			if dec, ok := fresh[i]; ok && (!dec.Drop || d.Confidence > dec.Confidence) {
+			dec, ok := fresh[i]
+			if !ok {
+				// A context line: a drop range over it upgrades its earlier
+				// decision (a keep becomes a drop, never the reverse).
+				dec = cache.Lines[privacyKey(sent[i])]
+			}
+			if !dec.Drop || d.Confidence > dec.Confidence {
 				dec.Drop, dec.Reason, dec.Confidence = true, d.Reason, d.Confidence
+			}
+			if ok {
 				fresh[i] = dec
+			} else {
+				cache.Lines[privacyKey(sent[i])] = dec
 			}
 		}
 	}
@@ -232,11 +243,7 @@ func (p *Pipeline) runPrivacy(ctx context.Context, day string, hour int, in priv
 		return fmt.Errorf("write skill input: %w", err)
 	}
 	defer os.Remove(path)
-	err = p.Privacy.Run(ctx, privacySkill, path, out)
-	if errors.Is(err, skills.ErrInvalidOutput) {
-		err = fmt.Errorf("%w: %w", skills.ErrUnavailable, err)
-	}
-	if err != nil {
+	if err := p.Privacy.Run(ctx, privacySkill, path, out); err != nil {
 		return fmt.Errorf("privacy filter: %w", err)
 	}
 	return nil
@@ -345,4 +352,100 @@ func removedSpans(us []media.Utterance, dropped map[int]string) []RemovedSpan {
 		}
 	}
 	return out
+}
+
+// hourAudio is what build gathered about an hour, for filterHour.
+type hourAudio struct {
+	day        string
+	hour       int
+	start, end time.Time
+	cut        time.Time
+	events     []activity.Event
+	segs       []activity.Segment
+	audio      []audioChunk
+	speech     []media.Utterance  // unlabelled audible speech
+	detected   []activity.Meeting // meetings detected from speech
+	wavs       *wavDir
+}
+
+// hearing is the hour's labelled speech and meetings.
+type hearing struct {
+	lab      *labelled
+	utts     []media.Utterance
+	meetings []activity.Meeting
+	removed  []RemovedSpan
+	withheld bool
+}
+
+// filterHour runs the privacy filter on h's speech and applies it. When
+// anything is removed, meetings are detected again without it (a bystander
+// conversation is not an in-person meeting) and, if they changed, the audio
+// is labelled again for them. On invalid filter output the final pass
+// withholds all speech (retrying would fail the same way); a partial pass,
+// and any other failure, returns the error and nothing is written.
+func (p *Pipeline) filterHour(ctx context.Context, a hourAudio, h *hearing, partial bool) (*hearing, error) {
+	relabel := func(speech []media.Utterance) (*hearing, error) {
+		again, err := p.detectMeetings(a.day, a.hour, a.start, a.cut, a.events, speech)
+		if err != nil {
+			return nil, err
+		}
+		audio := a.audio
+		if speech == nil {
+			audio = nil
+		}
+		if sameMeetings(again, a.detected) && speech != nil {
+			return h, nil
+		}
+		lab, utts, meetings, err := p.labelHour(ctx, a.day, a.hour, a.start, a.end, audio, again, a.segs, a.wavs)
+		if err != nil {
+			return nil, err
+		}
+		return &hearing{lab: lab, utts: utts, meetings: meetings}, nil
+	}
+	dec, err := p.decidePrivacy(ctx, a.day, a.hour, h.utts, h.meetings)
+	if errors.Is(err, skills.ErrInvalidOutput) && !partial {
+		p.logf("process: hour %s %02d: %v; its speech is withheld and the hour needs review", a.day, a.hour, err)
+		out, err := relabel(nil)
+		if err != nil {
+			return nil, err
+		}
+		out.utts, out.withheld = nil, true
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	kept, removed := p.applyPrivacy(h.utts, dec)
+	if len(removed) == 0 {
+		return &hearing{lab: h.lab, utts: kept, meetings: h.meetings}, nil
+	}
+	out, err := relabel(p.withoutDropped(a.speech, dec))
+	if err != nil {
+		return nil, err
+	}
+	out.utts, out.removed = p.applyPrivacy(out.utts, dec)
+	return out, nil
+}
+
+// ForgetPrivacy removes the cached decisions on the hour's utterances, so
+// the next pass asks again (Reprocess: a wrong removal can be undone).
+func (p *Pipeline) ForgetPrivacy(day string, hour int) error {
+	if _, err := os.Stat(p.privacyCachePath(day)); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	start, end, err := hourBounds(day, hour)
+	if err != nil {
+		return err
+	}
+	c := p.loadPrivacyCache(day)
+	for k := range c.Lines {
+		parts := strings.SplitN(k, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, parts[1]); err == nil && !t.Before(start) && t.Before(end) {
+			delete(c.Lines, k)
+		}
+	}
+	return writePrivateJSON(p.privacyCachePath(day), c)
 }

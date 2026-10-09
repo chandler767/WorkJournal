@@ -197,8 +197,8 @@ already-built recorder.
   written anywhere, the `privacy-filter` skill reads its speech and marks two kinds of
   conversation for removal: bystanders talking among themselves without you (outside a
   call or meeting), and your own personal non-work conversations with people who are not
-  coworkers (a family call, say). Anything with coworkers, personal chat included, and
-  system audio during a call are kept; when unsure, speech is kept. Removed speech never
+  coworkers (a family call, say, both sides of it). Anything with coworkers, personal chat
+  included, and system audio during a work call are kept; when unsure, speech is kept. Removed speech never
   reaches `derived/`, search, meeting detection, notes, the journal or the weekly rollup;
   the hour page shows only a neutral line such as "4 min of non-work audio removed
   (13:12–13:16)". Meetings are detected again without it, so a bystander conversation is
@@ -208,8 +208,11 @@ already-built recorder.
   (0.5–0.95, default 0.7) is how sure the filter must be to remove speech. Its decisions
   are kept per utterance in `cache/<day>/privacy.json`, so the in-progress hour's passes
   send only new speech (with up to two minutes of earlier speech as context). To decide,
-  Claude does see that speech once; its input file is deleted right after the run. If the filter
-  cannot run, nothing about the hour is written and it is retried later. Raw audio is not
+  Claude does see that speech once; its input file is deleted right after the run. Reprocess clears
+  the hour's decisions, so a wrong removal can be undone. If Claude cannot run, nothing
+  about the hour is written and it is retried later; if its answer is invalid, the hour is
+  marked needs review with its speech withheld ("Speech not shown: privacy check failed",
+  no summary) until you reprocess it. Raw audio is not
   changed; it is deleted with the rest of `raw/<day>/` after `retention_days`.
 - Voice profiles (`voices/`) never leave the machine and are never passed to Claude
   (see [Speaker identification](#speaker-identification)).

@@ -55,6 +55,7 @@ type hourPage struct {
 	Categories                 []string
 	DocNote                    string
 	Removed                    []string // one neutral line per removed span
+	Withheld                   bool     // the privacy check failed: no speech shown
 	Rev                        string
 }
 
@@ -112,7 +113,7 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 			p.Transcript = append(p.Transcript, utterRow{Offset: off, Clock: u.Start.Local().Format("15:04:05"),
 				Speaker: u.Speaker, Track: u.Track, Text: u.Text})
 		}
-		p.Removed = removedLines(doc.Removed)
+		p.Removed, p.Withheld = removedLines(doc.Removed), doc.SpeechWithheld
 		for _, sc := range doc.Screens {
 			p.Screens = append(p.Screens, screenRow{File: filepath.Base(sc.File), Clock: sc.Time.Local().Format("15:04:05")})
 		}
@@ -143,16 +144,27 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 	render(w, "hour", p)
 }
 
-// removedLines describes each span the privacy filter removed, without
-// its reason or content: "4 min of non-work audio removed (13:12–13:16)".
+// removedLines describes the spans the privacy filter removed, without
+// reason or content: "4 min of non-work audio removed (13:12–13:16)". Spans
+// less than a minute apart read as one.
 func removedLines(spans []process.RemovedSpan) []string {
-	var out []string
+	var merged []process.RemovedSpan
 	for _, r := range spans {
+		if n := len(merged); n > 0 && r.Start.Sub(merged[n-1].End) < time.Minute {
+			if r.End.After(merged[n-1].End) {
+				merged[n-1].End = r.End
+			}
+			continue
+		}
+		merged = append(merged, r)
+	}
+	var out []string
+	for _, r := range merged {
 		span := r.Start.Local().Format("15:04") + "–" + r.End.Local().Format("15:04")
-		if m := int(math.Round(r.End.Sub(r.Start).Minutes())); m >= 1 {
-			out = append(out, fmt.Sprintf("%d min of non-work audio removed (%s)", m, span))
-		} else {
+		if d := r.End.Sub(r.Start); d < time.Minute {
 			out = append(out, "Under a minute of non-work audio removed ("+span+")")
+		} else {
+			out = append(out, fmt.Sprintf("%d min of non-work audio removed (%s)", int(math.Round(d.Minutes())), span))
 		}
 	}
 	return out

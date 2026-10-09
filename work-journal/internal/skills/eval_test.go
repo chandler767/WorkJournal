@@ -149,6 +149,8 @@ func check(t *testing.T, name string, out any) {
 		if !strings.Contains(got, "[redacted]") || strings.Contains(got, "4417") || strings.Contains(got, "021000021") {
 			t.Errorf("line 1 redacted as %q", got)
 		}
+	case "privacy-filter/06": // a FaceTime call with Mom about dinner: both tracks; line 0 is context
+		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4, 5, 6, 7}, "personal_non_work")
 	case "privacy-filter/05": // ambiguous: kept
 		checkDrops(t, out.(*PrivacyResult), nil, "")
 	case "summarize-meeting/02": // no name cues

@@ -122,7 +122,8 @@ func (p *Pipeline) processHour(ctx context.Context, h HourKey) error {
 // Transcribe builds the hour's HourDoc from raw data, writes the derived
 // JSON, indexes transcript and OCR text, upserts meetings and segments, and
 // sets the hour's status: `transcribed` (keeping a partial hour's summary so
-// far), or `done` with summary "{}" when the
+// far), `needs_review` without a summary when the privacy filter's output
+// was invalid (speech withheld), or `done` with summary "{}" when the
 // hour has no speech, no screen text, no active time and ends no meeting. On error nothing
 // about the hour's status changes.
 func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourDoc, error) {
@@ -131,7 +132,9 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 		return nil, err
 	}
 	summary := ""
-	if isEmpty(doc) {
+	if doc.SpeechWithheld {
+		// needs_review without a summary; Reprocess tries again.
+	} else if isEmpty(doc) {
 		doc.Status, summary = store.StatusDone, "{}"
 	} else if rec, ok, err := p.Store.Hour(day, hour); err != nil {
 		return nil, err
@@ -195,37 +198,26 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 		return nil, time.Time{}, err
 	}
 	p.warnDiarization(day, hour, &wavs)
-	var removed []RemovedSpan
+	h := &hearing{lab: lab, utts: utts, meetings: meetings}
 	if p.privacyOn() && len(utts) > 0 {
-		dec, err := p.decidePrivacy(ctx, day, hour, utts, meetings)
-		if err != nil {
+		in := hourAudio{day: day, hour: hour, start: start, end: end, cut: cut, events: events,
+			segs: segs, audio: audio, speech: speech, detected: detected, wavs: &wavs}
+		if h, err = p.filterHour(ctx, in, h, partial); err != nil {
 			return nil, time.Time{}, err
 		}
-		if kept, rm := p.applyPrivacy(utts, dec); len(rm) > 0 {
-			// Removed speech must not make a meeting (a bystander
-			// conversation is not an in-person meeting): detect again.
-			again, err := p.detectMeetings(day, hour, start, cut, events, p.withoutDropped(speech, dec))
-			if err != nil {
-				return nil, time.Time{}, err
-			}
-			if !sameMeetings(again, detected) {
-				if lab, utts, meetings, err = p.labelHour(ctx, day, hour, start, end, audio, again, segs, &wavs); err != nil {
-					return nil, time.Time{}, err
-				}
-				kept, rm = p.applyPrivacy(utts, dec)
-			}
-			utts, removed = kept, rm
-		} else {
-			utts = kept
-		}
 	}
+	lab, utts, meetings = h.lab, h.utts, h.meetings
 	// Only the part of a segment inside a meeting is meeting time.
 	segs = activity.SplitAtMeetings(segs, meetings)
 
 	doc := &HourDoc{
 		Day: day, Hour: hour, Status: store.StatusTranscribed,
 		Segments: segs, Transcript: utts, Screens: screens, Meetings: meetings,
-		Removed: removed, Embeddings: lab.embs, speakers: lab.sp,
+		Removed: h.removed, SpeechWithheld: h.withheld, Embeddings: lab.embs, speakers: lab.sp,
+	}
+	if h.withheld {
+		doc.Status = store.StatusNeedsReview
+		return doc, covered, nil // no meeting summaries either
 	}
 	if partial {
 		doc.Status = store.StatusPartial

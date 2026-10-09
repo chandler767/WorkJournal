@@ -315,26 +315,158 @@ func TestPrivacyIncremental(t *testing.T) {
 	}
 }
 
-// A context line's decision in the output is ignored.
-func TestPrivacyContextDecisionsIgnored(t *testing.T) {
+// A drop range over context lines turns their earlier keep into a drop
+// (never a drop into a keep); the pass's record purges them from the
+// derived doc and the index. Redactions of context lines are ignored.
+func TestPrivacyContextUpgradedToDrop(t *testing.T) {
 	e := newEnv(t)
 	r := privacyFixture(e)
+	e.tr.utts["1300-mic"] = []fu{
+		{1, 3, "the parser needs a retry"},
+		{240, 243, "so how was it"},  // 13:04:00, ambiguous in pass 1
+		{250, 253, "it was alright"}, // 13:04:10
+	}
+	r.respond = dropping("bystander", 0.9, nil, nil) // pass 1 keeps everything
+	ctx := context.Background()
+	if _, err := e.p.Transcribe(ctx, day, 13); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := e.st.Search("alright", 10); len(hits) != 1 {
+		t.Fatalf("pass 1 should keep the ambiguous lines: %+v", hits)
+	}
+	e.file("audio/1305-mic.m4a", old)
+	e.tr.utts["1305-mic"] = []fu{{0, 3, "the kids loved the lake house"}, {5, 8, "we should all go back in june"}}
+	r.respond = func(in privacyInput) string {
+		ctxIdx := -1
+		for _, l := range in.Utterances {
+			if l.Context {
+				ctxIdx = l.Index
+			}
+		}
+		return fmt.Sprintf(`{"drop":[{"from":0,"to":%d,"reason":"bystander","confidence":0.95}],"redact":[{"index":%d,"text":"[redacted]"}]}`,
+			len(in.Utterances)-1, ctxIdx)
+	}
+	doc, err := e.p.Transcribe(ctx, day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctxLines := len(r.inputs[1].Utterances) - 2; ctxLines != 2 {
+		t.Fatalf("pass 2 sent %d context lines, want 2: %+v", ctxLines, r.inputs[1].Utterances)
+	}
+	if got := transcriptTexts(doc); !reflect.DeepEqual(got, []string{"the parser needs a retry"}) {
+		t.Fatalf("transcript = %q", got)
+	}
+	assertDerivedLacks(t, e, 13, "parser", "so how was it", "alright", "lake house", "june")
+	for _, q := range []string{"alright", "lake"} {
+		if hits, _ := e.st.Search(q, 10); len(hits) != 0 {
+			t.Errorf("search %q still finds %+v", q, hits)
+		}
+	}
+	if len(doc.Removed) != 1 || !doc.Removed[0].Start.Equal(at(13, 4, 0)) {
+		t.Errorf("removed = %+v", doc.Removed)
+	}
+}
+
+// A drop never turns back into a keep through a later context range.
+func TestPrivacyContextNeverDowngradesDrop(t *testing.T) {
+	e := newEnv(t)
+	r := privacyFixture(e) // drops the 13:01 call
 	ctx := context.Background()
 	if _, err := e.p.Transcribe(ctx, day, 13); err != nil {
 		t.Fatal(err)
 	}
 	e.file("audio/1305-mic.m4a", old)
 	e.tr.utts["1305-mic"] = []fu{{30, 33, "new line"}}
-	r.respond = func(in privacyInput) string {
-		return fmt.Sprintf(`{"drop":[{"from":0,"to":%d,"reason":"bystander","confidence":0.99}],"redact":[]}`, len(in.Utterances)-1)
-	}
+	r.respond = dropping("bystander", 0.9, nil, nil)
 	doc, err := e.p.Transcribe(ctx, day, 13)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"the parser needs a retry", "the account number is [redacted]"}
-	if got := transcriptTexts(doc); !reflect.DeepEqual(got, want) {
-		t.Fatalf("transcript = %q, want %q", got, want)
+	if slices.Contains(transcriptTexts(doc), "love you mom") {
+		t.Fatal("dropped line came back")
+	}
+}
+
+// Forgetting an hour's decisions (Reprocess) asks again, so a wrong drop
+// can be undone.
+func TestPrivacyForgetHour(t *testing.T) {
+	e := newEnv(t)
+	r := privacyFixture(e)
+	ctx := context.Background()
+	if _, err := e.p.Transcribe(ctx, day, 13); err != nil {
+		t.Fatal(err)
+	}
+	// A decision of another hour stays.
+	other := privacyKey(media.Utterance{Track: "mic", Start: at(14, 0, 1), Text: "x"})
+	c := e.p.loadPrivacyCache(day)
+	c.Lines[other] = privacyDecision{Drop: true, Reason: "bystander", Confidence: 1}
+	if err := writePrivateJSON(e.p.privacyCachePath(day), c); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.ForgetPrivacy(day, 13); err != nil {
+		t.Fatal(err)
+	}
+	c = e.p.loadPrivacyCache(day)
+	if len(c.Lines) != 1 || !c.Lines[other].Drop {
+		t.Fatalf("cache after forget = %+v", c.Lines)
+	}
+	r.respond = dropping("bystander", 0.9, nil, nil)
+	doc, err := e.p.Transcribe(ctx, day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.inputs) != 2 || len(doc.Transcript) != 4 || len(doc.Removed) != 0 {
+		t.Fatalf("after forget: %d runs, transcript %q", len(r.inputs), transcriptTexts(doc))
+	}
+	if err := e.p.ForgetPrivacy("2026-10-01", 9); err != nil {
+		t.Fatalf("forget without a cache: %v", err)
+	}
+}
+
+// Invalid filter output is not retried forever: the hour goes to
+// needs_review with its speech withheld (segments and screens kept, no
+// summary), so retention proceeds; Reprocess tries again.
+func TestPrivacyInvalidOutputWithholdsSpeech(t *testing.T) {
+	e := newEnv(t)
+	r := privacyFixture(e)
+	e.file("screens/131000.jpg", old)
+	e.ocr.texts["131000.jpg"] = "screen text"
+	r.err = fmt.Errorf("%w: privacy-filter: bad", skills.ErrInvalidOutput)
+	if err := e.p.ProcessPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := e.hourStatus(13)
+	if !ok || rec.Status != store.StatusNeedsReview || rec.SummaryJSON != "" {
+		t.Fatalf("hour = %+v %v", rec, ok)
+	}
+	if len(e.sum.calls) != 0 {
+		t.Fatal("summarized withheld speech")
+	}
+	doc, err := Load(e.paths.DerivedHour(day, 13))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !doc.SpeechWithheld || len(doc.Transcript) != 0 || len(doc.Screens) != 1 || len(doc.Segments) == 0 {
+		t.Fatalf("doc = %+v", doc)
+	}
+	assertDerivedLacks(t, e, 13, "screen text", "parser", "mom", "4417")
+	if hits, _ := e.st.Search("parser", 10); len(hits) != 0 {
+		t.Fatalf("indexed withheld speech: %+v", hits)
+	}
+	if hours, err := e.p.PendingHours(); err != nil || len(hours) != 0 {
+		t.Fatalf("pending = %v %v", hours, err)
+	}
+	// Reprocess (status pending, Transcribe again) succeeds once the filter does.
+	r.err = nil
+	if err := e.st.UpsertHour(store.HourRecord{Day: day, Hour: 13, Status: store.StatusPending}); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = e.p.Transcribe(context.Background(), day, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.SpeechWithheld || doc.Status != store.StatusTranscribed || len(doc.Transcript) != 2 {
+		t.Fatalf("after reprocess: %+v", doc)
 	}
 }
 
@@ -343,7 +475,6 @@ func TestPrivacyContextDecisionsIgnored(t *testing.T) {
 func TestPrivacyFailureWritesNothing(t *testing.T) {
 	for _, fail := range []error{
 		fmt.Errorf("%w: privacy-filter: exit 1", skills.ErrUnavailable),
-		fmt.Errorf("%w: privacy-filter: bad", skills.ErrInvalidOutput),
 	} {
 		t.Run(fail.Error(), func(t *testing.T) {
 			e := newEnv(t)
@@ -403,7 +534,7 @@ func TestPrivacyFailureSkipsPartialSummary(t *testing.T) {
 func TestPrivacyValidate(t *testing.T) {
 	ok := &checkedPrivacy{lines: 3}
 	ok.Drop = []skills.DropRange{{From: 0, To: 2, Reason: "bystander", Confidence: 0.8}}
-	ok.Redact = []skills.Redaction{{Index: 1, Text: "[redacted]"}}
+	ok.Redact = []skills.Redaction{{Index: 1, Text: "[redacted]"}, {Index: 2, Text: "PIN [REDACTED]"}}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -412,6 +543,7 @@ func TestPrivacyValidate(t *testing.T) {
 		{Drop: []skills.DropRange{{From: 0, To: 3, Reason: "bystander"}}},
 		{Drop: []skills.DropRange{{From: -1, To: 0, Reason: "bystander"}}},
 		{Redact: []skills.Redaction{{Index: 3, Text: "x"}}},
+		{Redact: []skills.Redaction{{Index: 0, Text: "account 4417"}}},
 	} {
 		v := &checkedPrivacy{PrivacyResult: c, lines: 3}
 		if v.Validate() == nil {

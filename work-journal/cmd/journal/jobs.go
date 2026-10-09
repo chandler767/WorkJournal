@@ -138,6 +138,10 @@ func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 		return err
 	}
 	p := j.pipeline()
+	// Ask the privacy filter again, so a wrong removal can be undone.
+	if err := p.ForgetPrivacy(day, hour); err != nil {
+		return err
+	}
 	if now := j.now().In(time.Local); day == config.DayKey(now) && hour == now.Hour() {
 		_, err := p.ProcessCurrent(ctx, now, time.Time{})
 		return err

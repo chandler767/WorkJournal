@@ -25,8 +25,11 @@ type HourDoc struct {
 	EndedMeetings []string           `json:"ended_meetings"`
 	// Removed lists the spans of speech the privacy filter removed (no
 	// text; see privacy.go).
-	Removed    []RemovedSpan        `json:"removed,omitempty"`
-	Embeddings map[string][]float32 `json:"-"`
+	Removed []RemovedSpan `json:"removed,omitempty"`
+	// SpeechWithheld: the privacy filter gave invalid output, so the
+	// hour's speech is left out entirely (the hour is needs_review).
+	SpeechWithheld bool                 `json:"speech_withheld,omitempty"`
+	Embeddings     map[string][]float32 `json:"-"`
 
 	// speakers is the clustering the doc was labelled with (nil for a
 	// loaded doc); record applies its meeting labels to earlier hours.

@@ -664,3 +664,32 @@ func TestReprocessInProgressHourSkipsOpenChunk(t *testing.T) {
 		t.Errorf("hour 10 = %+v %v %v, want partial", h, ok, err)
 	}
 }
+
+// Reprocess forgets the hour's privacy decisions, so a wrong removal can be
+// undone from the dashboard; other hours' decisions stay.
+func TestReprocessForgetsPrivacyDecisions(t *testing.T) {
+	j, _, _ := newJobs(t)
+	fk := &closeSkills{}
+	withActivity(t, j, fk, "2026-10-07", 9, time.Date(2026, 10, 7, 12, 0, 0, 0, time.Local))
+	key := func(h int) string {
+		return "mic|" + time.Date(2026, 10, 7, h, 5, 0, 0, time.Local).UTC().Format(time.RFC3339Nano) + "|0011223344556677"
+	}
+	cache := filepath.Join(j.Paths.CacheDay("2026-10-07"), "privacy.json")
+	if err := os.MkdirAll(filepath.Dir(cache), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":1,"lines":{"` + key(9) + `":{"drop":true,"reason":"bystander","confidence":0.9},"` + key(10) + `":{"drop":true,"reason":"bystander","confidence":0.9}}}`
+	if err := os.WriteFile(cache, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.ReprocessHour(context.Background(), "2026-10-07", 9); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), key(9)) || !strings.Contains(string(b), key(10)) {
+		t.Fatalf("privacy cache after reprocess: %s", b)
+	}
+}
