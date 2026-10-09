@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,6 +54,7 @@ type hourPage struct {
 	Segments                   []segRow
 	Categories                 []string
 	DocNote                    string
+	Removed                    []string // one neutral line per removed span
 	Rev                        string
 }
 
@@ -110,6 +112,7 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 			p.Transcript = append(p.Transcript, utterRow{Offset: off, Clock: u.Start.Local().Format("15:04:05"),
 				Speaker: u.Speaker, Track: u.Track, Text: u.Text})
 		}
+		p.Removed = removedLines(doc.Removed)
 		for _, sc := range doc.Screens {
 			p.Screens = append(p.Screens, screenRow{File: filepath.Base(sc.File), Clock: sc.Time.Local().Format("15:04:05")})
 		}
@@ -138,6 +141,21 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 			App: g.App, Title: g.Title, Category: g.Category, Source: g.Source, Dur: g.End.Sub(g.Start), Color: colorOf(colors, g.Category)})
 	}
 	render(w, "hour", p)
+}
+
+// removedLines describes each span the privacy filter removed, without
+// its reason or content: "4 min of non-work audio removed (13:12–13:16)".
+func removedLines(spans []process.RemovedSpan) []string {
+	var out []string
+	for _, r := range spans {
+		span := r.Start.Local().Format("15:04") + "–" + r.End.Local().Format("15:04")
+		if m := int(math.Round(r.End.Sub(r.Start).Minutes())); m >= 1 {
+			out = append(out, fmt.Sprintf("%d min of non-work audio removed (%s)", m, span))
+		} else {
+			out = append(out, "Under a minute of non-work audio removed ("+span+")")
+		}
+	}
+	return out
 }
 
 // audioFor lists the hour's audio chunks (HHMM-<track>.m4a or HHMMSS-…).

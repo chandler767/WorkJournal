@@ -10,7 +10,7 @@ import (
 )
 
 // Names lists the skills in the work-journal plugin.
-var Names = []string{"summarize-hour", "categorize-time", "summarize-meeting", "close-day", "weekly-rollup"}
+var Names = []string{"summarize-hour", "categorize-time", "summarize-meeting", "close-day", "weekly-rollup", "privacy-filter"}
 
 //go:embed schemas/*.json
 var schemaFS embed.FS

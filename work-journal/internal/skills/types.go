@@ -56,3 +56,25 @@ type MeetingSummary struct {
 type Markdown struct {
 	Markdown string `json:"markdown"`
 }
+
+// DropRange is a privacy-filter decision to remove the input utterances
+// From..To (indexes, inclusive).
+type DropRange struct {
+	From       int     `json:"from"`
+	To         int     `json:"to"`
+	Reason     string  `json:"reason"` // "bystander" or "personal_non_work"
+	Confidence float64 `json:"confidence"`
+}
+
+// Redaction is an utterance's text with sensitive identifiers replaced by
+// "[redacted]".
+type Redaction struct {
+	Index int    `json:"index"`
+	Text  string `json:"text"`
+}
+
+// PrivacyResult is the privacy-filter output.
+type PrivacyResult struct {
+	Drop   []DropRange `json:"drop"`
+	Redact []Redaction `json:"redact"`
+}

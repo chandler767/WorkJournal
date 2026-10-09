@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/process"
 	"workjournal/internal/scheduler"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
@@ -33,7 +34,9 @@ type hourRow struct {
 	// Reprocess is offered only where it helps: needs_review, partial and
 	// transcribed (stuck before summarizing) hours.
 	Reprocess bool
-	Summary   skills.HourSummary
+	// Removed: the privacy filter removed some of the hour's speech.
+	Removed bool
+	Summary skills.HourSummary
 }
 
 type meetingRow struct {
@@ -132,6 +135,11 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		row.Empty = !row.NeedsReview && !row.Partial && !row.Pending && summaryEmpty(row.Summary)
+		if !row.Empty {
+			if doc, err := process.Load(s.Paths.DerivedHour(day, h.Hour)); err == nil {
+				row.Removed = len(doc.Removed) > 0
+			}
+		}
 		p.Hours = append(p.Hours, row)
 	}
 	// Newest first: the current hour is on top.

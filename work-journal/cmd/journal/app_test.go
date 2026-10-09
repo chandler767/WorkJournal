@@ -364,3 +364,10 @@ func TestBuildFallsBackToNoopWithoutModels(t *testing.T) {
 		t.Fatalf("diarizer = %T", a.Pipeline.Diarizer)
 	}
 }
+
+func TestBuildWiresPrivacyFilter(t *testing.T) {
+	a := newTestApp(t)
+	if a.Pipeline.Privacy == nil || a.Pipeline.Privacy != a.Runner {
+		t.Fatalf("privacy runner = %v, want the skills runner", a.Pipeline.Privacy)
+	}
+}

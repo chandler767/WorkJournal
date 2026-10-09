@@ -186,13 +186,31 @@ already-built recorder.
 - After `retention_days` (default 7), each day's whole `raw/<day>/` directory is deleted
   (screenshots, audio and `activity.jsonl`), together with its processing cache
   `cache/<day>/`, once all of that day's hours are processed.
-- `cache/` holds per-chunk transcripts, speaker turns and voice embeddings and per-screenshot
-  text. It is owner-only and kept outside `derived/`, so it is never passed to Claude.
+- `cache/` holds per-chunk transcripts, speaker turns and voice embeddings, per-screenshot
+  text and the privacy filter's per-utterance decisions. It is owner-only and kept outside `derived/`, so it is never passed to Claude.
   Transcripts, screen text, time segments, summaries and journals are kept.
 - Exclusions: while an excluded app (default: 1Password, Keychain Access) or a window
   title containing an excluded keyword (default: Private, Incognito) is in front, no
   screenshots are taken and audio is silenced. The microphone indicator stays on during
   exclusions, because audio is silenced rather than stopped.
+- Ambient audio: the microphone hears whoever is near the laptop. Before an hour is
+  written anywhere, the `privacy-filter` skill reads its speech and marks two kinds of
+  conversation for removal: bystanders talking among themselves without you (outside a
+  call or meeting), and your own personal non-work conversations with people who are not
+  coworkers (a family call, say). Anything with coworkers, personal chat included, and
+  system audio during a call are kept; when unsure, speech is kept. Removed speech never
+  reaches `derived/`, search, meeting detection, notes, the journal or the weekly rollup;
+  the hour page shows only a neutral line such as "4 min of non-work audio removed
+  (13:12–13:16)". Meetings are detected again without it, so a bystander conversation is
+  never an in-person meeting. Spoken ID, account and card numbers and passwords are
+  replaced by `[redacted]`. Settings → Privacy turns the filter (`privacy_filter`) and
+  redaction (`redact_identifiers`, which needs the filter) off; `privacy_drop_confidence`
+  (0.5–0.95, default 0.7) is how sure the filter must be to remove speech. Its decisions
+  are kept per utterance in `cache/<day>/privacy.json`, so the in-progress hour's passes
+  send only new speech (with up to two minutes of earlier speech as context). To decide,
+  Claude does see that speech once; its input file is deleted right after the run. If the filter
+  cannot run, nothing about the hour is written and it is retried later. Raw audio is not
+  changed; it is deleted with the rest of `raw/<day>/` after `retention_days`.
 - Voice profiles (`voices/`) never leave the machine and are never passed to Claude
   (see [Speaker identification](#speaker-identification)).
 - Only text (transcripts, screen text, activity summaries) goes to Claude. Each `claude -p`

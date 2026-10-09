@@ -30,6 +30,16 @@
     </label>
   </section>
   <section>
+    <h2>Privacy</h2>
+    <p class="muted">Before anything is summarized or indexed, Claude checks each hour's speech. Conversations near the laptop that you are not part of, and your personal non-work conversations with people who are not coworkers (a family call, say), are removed from transcripts, search and notes; talk with coworkers is kept. When unsure, speech is kept. Raw audio is unchanged and is deleted with the rest of the day's raw media.</p>
+    <label>Remove bystander and personal non-work conversations
+      <select name="privacy_filter"><option value="true"{{if eq .Form.PrivacyFilter "true"}} selected{{end}}>On</option><option value="false"{{if eq .Form.PrivacyFilter "false"}} selected{{end}}>Off</option></select>
+    </label>
+    <label>Redact spoken ID, account and card numbers and passwords (needs the filter above)
+      <select name="redact_identifiers"><option value="true"{{if eq .Form.RedactIdentifiers "true"}} selected{{end}}>On</option><option value="false"{{if eq .Form.RedactIdentifiers "false"}} selected{{end}}>Off</option></select>
+    </label>
+  </section>
+  <section>
     <h2>Exclusions</h2>
     <p class="muted">One per line. Exclusion changes take effect after the recorder restarts.</p>
     <label>Excluded apps <textarea name="excluded_apps" rows="4">{{.Form.ExcludedApps}}</textarea></label>

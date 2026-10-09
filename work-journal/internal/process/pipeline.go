@@ -14,6 +14,7 @@ import (
 	"workjournal/internal/config"
 	"workjournal/internal/diarize"
 	"workjournal/internal/media"
+	"workjournal/internal/skills"
 	"workjournal/internal/store"
 )
 
@@ -41,7 +42,9 @@ type Pipeline struct {
 	Run         media.Runner
 	Now         func() time.Time
 	Summarize   HourSummarizer // nil: hours stay `transcribed`
-	Logf        func(format string, args ...any)
+	// Privacy runs the privacy-filter skill (privacy.go); nil: no filter.
+	Privacy skills.Runner
+	Logf    func(format string, args ...any)
 }
 
 func (p *Pipeline) now() time.Time {
@@ -182,42 +185,47 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	meetings, err := p.detectMeetings(day, hour, start, cut, events, audibleSpeech(segs, speechOf(audio)))
+	speech := audibleSpeech(segs, speechOf(audio))
+	detected, err := p.detectMeetings(day, hour, start, cut, events, speech)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	var inPerson []activity.Meeting
-	for _, m := range meetings {
-		if m.App == activity.InPersonApp {
-			inPerson = append(inPerson, m)
-		}
-	}
-	lab, err := p.labelAudio(ctx, day, start, end, audio, meetings, &wavs)
+	lab, utts, meetings, err := p.labelHour(ctx, day, hour, start, end, audio, detected, segs, &wavs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	p.warnDiarization(day, hour, &wavs)
-	utts, embs := lab.utts, lab.embs
-	for _, m := range inPerson {
-		if p.keepInPerson(day, hour, m, lab) {
-			continue
+	var removed []RemovedSpan
+	if p.privacyOn() && len(utts) > 0 {
+		dec, err := p.decidePrivacy(ctx, day, hour, utts, meetings)
+		if err != nil {
+			return nil, time.Time{}, err
 		}
-		// One voice is dictation or a call on another device, not a meeting.
-		meetings = slices.DeleteFunc(meetings, func(x activity.Meeting) bool { return x.ID == m.ID })
-		for i, u := range utts {
-			if u.Track == "mic" && inMeetingSpan(m, u) {
-				utts[i].Speaker = "me"
+		if kept, rm := p.applyPrivacy(utts, dec); len(rm) > 0 {
+			// Removed speech must not make a meeting (a bystander
+			// conversation is not an in-person meeting): detect again.
+			again, err := p.detectMeetings(day, hour, start, cut, events, p.withoutDropped(speech, dec))
+			if err != nil {
+				return nil, time.Time{}, err
 			}
+			if !sameMeetings(again, detected) {
+				if lab, utts, meetings, err = p.labelHour(ctx, day, hour, start, end, audio, again, segs, &wavs); err != nil {
+					return nil, time.Time{}, err
+				}
+				kept, rm = p.applyPrivacy(utts, dec)
+			}
+			utts, removed = kept, rm
+		} else {
+			utts = kept
 		}
 	}
-	utts = audibleSpeech(segs, utts)
 	// Only the part of a segment inside a meeting is meeting time.
 	segs = activity.SplitAtMeetings(segs, meetings)
 
 	doc := &HourDoc{
 		Day: day, Hour: hour, Status: store.StatusTranscribed,
 		Segments: segs, Transcript: utts, Screens: screens, Meetings: meetings,
-		Embeddings: embs, speakers: lab.sp,
+		Removed: removed, Embeddings: lab.embs, speakers: lab.sp,
 	}
 	if partial {
 		doc.Status = store.StatusPartial
@@ -232,6 +240,44 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 		}
 	}
 	return doc, covered, nil
+}
+
+// labelHour labels the hour's audio for the detected meetings, drops the
+// in-person meetings with one voice (their mic speech is the user's) and
+// returns the audible labelled speech and the meetings kept.
+func (p *Pipeline) labelHour(ctx context.Context, day string, hour int, start, end time.Time, audio []audioChunk, meetings []activity.Meeting, segs []activity.Segment, wavs *wavDir) (*labelled, []media.Utterance, []activity.Meeting, error) {
+	meetings = slices.Clone(meetings)
+	var inPerson []activity.Meeting
+	for _, m := range meetings {
+		if m.App == activity.InPersonApp {
+			inPerson = append(inPerson, m)
+		}
+	}
+	lab, err := p.labelAudio(ctx, day, start, end, audio, meetings, wavs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	utts := lab.utts
+	for _, m := range inPerson {
+		if p.keepInPerson(day, hour, m, lab) {
+			continue
+		}
+		// One voice is dictation or a call on another device, not a meeting.
+		meetings = slices.DeleteFunc(meetings, func(x activity.Meeting) bool { return x.ID == m.ID })
+		for i, u := range utts {
+			if u.Track == "mic" && inMeetingSpan(m, u) {
+				utts[i].Speaker = "me"
+			}
+		}
+	}
+	return lab, audibleSpeech(segs, utts), meetings, nil
+}
+
+// sameMeetings reports whether two detections found the same meetings.
+func sameMeetings(a, b []activity.Meeting) bool {
+	return slices.EqualFunc(a, b, func(x, y activity.Meeting) bool {
+		return x.ID == y.ID && x.App == y.App && x.Start.Equal(y.Start) && x.End.Equal(y.End)
+	})
 }
 
 // record stores doc: meetings, segments, indexed text, the derived JSON,

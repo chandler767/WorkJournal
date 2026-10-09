@@ -1,6 +1,6 @@
 # work-journal skills
 
-Five skills the work-journal Go app runs headlessly with `claude -p`. The app writes an input JSON file, names it in the prompt, and expects a single JSON object back. Output schemas live in `work-journal/internal/skills/schemas/<name>.json`; each SKILL.md embeds its schema inline.
+Six skills the work-journal Go app runs headlessly with `claude -p`. The app writes an input JSON file, names it in the prompt, and expects a single JSON object back. Output schemas live in `work-journal/internal/skills/schemas/<name>.json`; each SKILL.md embeds its schema inline.
 
 | Skill | Input | Output |
 |---|---|---|
@@ -9,5 +9,6 @@ Five skills the work-journal Go app runs headlessly with `claude -p`. The app wr
 | summarize-meeting | meeting, transcript, screens | participants, summary, decisions, action_items |
 | close-day | day's hours, meetings, totals | markdown daily journal |
 | weekly-rollup | week's daily markdown, totals, prior totals | markdown weekly rollup |
+| privacy-filter | hour's utterances, meetings, known people | utterance ranges to drop (bystander, personal_non_work) and redacted texts |
 
 Fixtures in `skills/<name>/fixtures/` are sample inputs. Install with `tessl install file:./work-journal/skills/work-journal`.

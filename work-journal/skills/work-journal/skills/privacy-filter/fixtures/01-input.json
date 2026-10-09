@@ -1,0 +1,78 @@
+{
+ "day": "2026-10-07",
+ "hour": 13,
+ "meetings": [
+  {
+   "id": "2026-10-07-1310-in-person",
+   "app": "In person",
+   "start": "13:10:00",
+   "end": "13:16:00",
+   "participants": [
+    "Speaker 2",
+    "Speaker 3"
+   ]
+  }
+ ],
+ "known_people": [
+  "Priya"
+ ],
+ "user_voice_enrolled": true,
+ "utterances": [
+  {
+   "index": 0,
+   "time": "13:05:12",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Okay, so the retry has to wrap the whole fetch, not just the parse."
+  },
+  {
+   "index": 1,
+   "time": "13:10:04",
+   "track": "mic",
+   "speaker": "Speaker 2",
+   "text": "Are you two still doing the lake house this weekend?"
+  },
+  {
+   "index": 2,
+   "time": "13:10:11",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "Yeah, we leave Friday night, my sister is bringing the kayaks."
+  },
+  {
+   "index": 3,
+   "time": "13:10:20",
+   "track": "mic",
+   "speaker": "Speaker 2",
+   "text": "Nice, the forecast says sunny all Saturday."
+  },
+  {
+   "index": 4,
+   "time": "13:10:31",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "I just hope the traffic on the bridge isn't as bad as last time."
+  },
+  {
+   "index": 5,
+   "time": "13:10:45",
+   "track": "mic",
+   "speaker": "Speaker 2",
+   "text": "Leave before four, that's my trick. Did you book the restaurant by the dock?"
+  },
+  {
+   "index": 6,
+   "time": "13:11:02",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "Not yet, I'll call them tonight."
+  },
+  {
+   "index": 7,
+   "time": "13:16:40",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Now run the tests again with the race detector."
+  }
+ ]
+}

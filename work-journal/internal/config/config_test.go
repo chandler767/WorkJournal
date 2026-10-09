@@ -283,3 +283,32 @@ func TestInPersonDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("Load = %+v, %v", got, err)
 	}
 }
+
+func TestPrivacyDefaultsAndValidation(t *testing.T) {
+	c := Default()
+	if !c.PrivacyFilter || !c.RedactIdentifiers || c.PrivacyDropConfidence != 0.7 {
+		t.Fatalf("defaults: filter %v redact %v confidence %v", c.PrivacyFilter, c.RedactIdentifiers, c.PrivacyDropConfidence)
+	}
+	for _, v := range []float64{0.5, 0.95} {
+		c := Default()
+		c.PrivacyDropConfidence = v
+		if err := c.Validate(); err != nil {
+			t.Errorf("%v rejected: %v", v, err)
+		}
+	}
+	for _, v := range []float64{0.49, 0.96, 0} {
+		c := Default()
+		c.PrivacyDropConfidence = v
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "privacy_drop_confidence") {
+			t.Errorf("%v accepted (err %v)", v, err)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte("privacy_filter = false\nredact_identifiers = false\nprivacy_drop_confidence = 0.8\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil || got.PrivacyFilter || got.RedactIdentifiers || got.PrivacyDropConfidence != 0.8 {
+		t.Fatalf("Load = %+v, %v", got, err)
+	}
+}

@@ -71,6 +71,7 @@
     <label>{{.Track}} {{printf "%d:%02d" (div60 .Start) (mod60 .Start)}}
       <audio controls preload="none" data-track="{{.Track}}" data-start="{{.Start}}" src="/media/{{$.Date}}/audio/{{.Name}}"></audio></label>{{end}}</div>
   {{end}}
+  {{range .Removed}}<p class="removed muted">{{.}}</p>{{end}}
   {{range .Transcript}}
   <p class="utt"><a href="#t={{.Offset}}" data-t="{{.Offset}}" data-track="{{.Track}}">{{.Clock}}</a> <strong class="spk">{{.Speaker}}</strong> {{.Text}}</p>
   {{else}}<p class="muted">No transcript.</p>{{end}}

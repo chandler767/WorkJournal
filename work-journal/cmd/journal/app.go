@@ -283,6 +283,7 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		Voices:      a.Voices,
 		Run:         media.ExecRunner,
 		Summarize:   a.Summarizer,
+		Privacy:     a.Runner,
 		Logf:        log.Printf,
 	}
 	a.Control = capture.NewSocketControl(p.Socket())

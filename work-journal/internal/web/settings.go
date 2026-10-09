@@ -21,6 +21,7 @@ type settingsForm struct {
 	RetentionDays, CloseTime, RollupWeekday, IdleMinutes, PauseAutoResume string
 	ProcessInterval                                                       string
 	MinGap, IdleBackstop, Sensitivity, CaptureOnSwitch                    string
+	PrivacyFilter, RedactIdentifiers                                      string
 	ExcludedApps, ExcludedTitles, Categories, Rules                       string
 }
 
@@ -74,20 +75,22 @@ func formFromConfig(c config.Config) settingsForm {
 	}
 	sort.Strings(rules)
 	return settingsForm{
-		RetentionDays:   strconv.Itoa(c.RetentionDays),
-		CloseTime:       c.CloseTime,
-		RollupWeekday:   titleWeekday(c.RollupWeekday),
-		IdleMinutes:     strconv.Itoa(c.IdleMinutes),
-		PauseAutoResume: strconv.Itoa(c.PauseAutoResumeMinutes),
-		ProcessInterval: strconv.Itoa(c.ProcessIntervalMinutes),
-		MinGap:          strconv.Itoa(c.ScreenshotMinGapSec),
-		IdleBackstop:    strconv.Itoa(c.ScreenshotIdleBackstopSec),
-		Sensitivity:     c.ScreenChangeSensitivity,
-		CaptureOnSwitch: strconv.FormatBool(c.CaptureOnAppSwitch),
-		ExcludedApps:    strings.Join(c.ExcludedApps, "\n"),
-		ExcludedTitles:  strings.Join(c.ExcludedTitleKeywords, "\n"),
-		Categories:      strings.Join(c.Categories, "\n"),
-		Rules:           strings.Join(rules, "\n"),
+		RetentionDays:     strconv.Itoa(c.RetentionDays),
+		CloseTime:         c.CloseTime,
+		RollupWeekday:     titleWeekday(c.RollupWeekday),
+		IdleMinutes:       strconv.Itoa(c.IdleMinutes),
+		PauseAutoResume:   strconv.Itoa(c.PauseAutoResumeMinutes),
+		ProcessInterval:   strconv.Itoa(c.ProcessIntervalMinutes),
+		MinGap:            strconv.Itoa(c.ScreenshotMinGapSec),
+		IdleBackstop:      strconv.Itoa(c.ScreenshotIdleBackstopSec),
+		Sensitivity:       c.ScreenChangeSensitivity,
+		CaptureOnSwitch:   strconv.FormatBool(c.CaptureOnAppSwitch),
+		PrivacyFilter:     strconv.FormatBool(c.PrivacyFilter),
+		RedactIdentifiers: strconv.FormatBool(c.RedactIdentifiers),
+		ExcludedApps:      strings.Join(c.ExcludedApps, "\n"),
+		ExcludedTitles:    strings.Join(c.ExcludedTitleKeywords, "\n"),
+		Categories:        strings.Join(c.Categories, "\n"),
+		Rules:             strings.Join(rules, "\n"),
 	}
 }
 
@@ -151,12 +154,22 @@ func applyForm(base config.Config, f settingsForm) (config.Config, error) {
 	if v := strings.TrimSpace(f.Sensitivity); v != "" {
 		c.ScreenChangeSensitivity = v
 	}
-	switch v := strings.TrimSpace(f.CaptureOnSwitch); v {
-	case "":
-	case "true", "false":
-		c.CaptureOnAppSwitch = v == "true"
-	default:
-		return c, fmt.Errorf("capture_on_app_switch must be true or false, got %q", f.CaptureOnSwitch)
+	// On/off fields absent from older forms keep the current values.
+	for _, b := range []struct {
+		key, v string
+		dst    *bool
+	}{
+		{"capture_on_app_switch", f.CaptureOnSwitch, &c.CaptureOnAppSwitch},
+		{"privacy_filter", f.PrivacyFilter, &c.PrivacyFilter},
+		{"redact_identifiers", f.RedactIdentifiers, &c.RedactIdentifiers},
+	} {
+		switch v := strings.TrimSpace(b.v); v {
+		case "":
+		case "true", "false":
+			*b.dst = v == "true"
+		default:
+			return c, fmt.Errorf("%s must be true or false, got %q", b.key, b.v)
+		}
 	}
 	c.CloseTime = strings.TrimSpace(f.CloseTime)
 	c.RollupWeekday = titleWeekday(f.RollupWeekday)
@@ -238,6 +251,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		Rules: r.PostFormValue("rules"), ProcessInterval: r.PostFormValue("process_interval_minutes"),
 		MinGap: r.PostFormValue("screenshot_min_gap_sec"), IdleBackstop: r.PostFormValue("screenshot_idle_backstop_sec"),
 		Sensitivity: r.PostFormValue("screen_change_sensitivity"), CaptureOnSwitch: r.PostFormValue("capture_on_app_switch"),
+		PrivacyFilter: r.PostFormValue("privacy_filter"), RedactIdentifiers: r.PostFormValue("redact_identifiers"),
 	}
 	c, err := applyForm(s.Cfg(), f)
 	if err == nil {

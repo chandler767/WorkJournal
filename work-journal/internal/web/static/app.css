@@ -65,6 +65,7 @@ select { font: inherit; padding: .3rem; background: var(--surface); color: var(-
 .actions-h { font-size: .85rem; margin: .6rem 0 0; color: var(--muted); font-weight: 600; }
 .hour .reprocess { display: flex; justify-content: flex-end; margin-top: .2rem; }
 .hour-empty { margin: .2rem 0 .6rem; padding: 0 .9rem; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.removed-note, .removed { margin: .3rem 0; font-size: .85rem; font-variant-numeric: tabular-nums; }
 button.link { background: none; border: none; padding: .1rem .2rem; color: var(--accent); font-size: .85rem; text-decoration: underline; text-underline-offset: 2px; }
 code { font-family: var(--mono); font-size: .88em; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 .25em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .journal pre { overflow-x: auto; white-space: pre-wrap; }

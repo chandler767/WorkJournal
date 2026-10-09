@@ -36,6 +36,9 @@ type Config struct {
 	SpeakerClusterThreshold      float64           `toml:"speaker_cluster_threshold"`
 	SpeakerMinSeconds            int               `toml:"speaker_min_seconds"`
 	NameConfidenceThreshold      float64           `toml:"name_confidence_threshold"`
+	PrivacyFilter                bool              `toml:"privacy_filter"`
+	RedactIdentifiers            bool              `toml:"redact_identifiers"`
+	PrivacyDropConfidence        float64           `toml:"privacy_drop_confidence"`
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
 	MeetingMinTwoWayMinutes      int               `toml:"meeting_min_two_way_minutes"`
@@ -74,6 +77,9 @@ func Default() Config {
 		SpeakerClusterThreshold:      0.45,
 		SpeakerMinSeconds:            20,
 		NameConfidenceThreshold:      0.7,
+		PrivacyFilter:                true,
+		RedactIdentifiers:            true,
+		PrivacyDropConfidence:        0.7,
 		MinFreeGB:                    5,
 		ListenAddr:                   "127.0.0.1:4747",
 		MeetingMinTwoWayMinutes:      2,
@@ -191,6 +197,9 @@ func (c Config) Validate() error {
 	}
 	if c.NameConfidenceThreshold < 0 || c.NameConfidenceThreshold > 1 {
 		return fmt.Errorf("name_confidence_threshold must be within [0,1], got %v", c.NameConfidenceThreshold)
+	}
+	if c.PrivacyDropConfidence < 0.5 || c.PrivacyDropConfidence > 0.95 {
+		return fmt.Errorf("privacy_drop_confidence must be within [0.5,0.95], got %v", c.PrivacyDropConfidence)
 	}
 	if c.Diarization != "sherpa" && c.Diarization != "off" {
 		return fmt.Errorf(`diarization must be "sherpa" or "off", got %q`, c.Diarization)

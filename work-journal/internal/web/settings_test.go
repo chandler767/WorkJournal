@@ -335,3 +335,33 @@ func TestSettingsScreenCapture(t *testing.T) {
 		t.Fatalf("missing fields: %d, %+v", rec.Code, e.cfg)
 	}
 }
+
+func TestSettingsPrivacy(t *testing.T) {
+	e := newSettingsEnv(t)
+	body := e.get("/settings").Body.String()
+	mustContain(t, body, "<h2>Privacy</h2>", `name="privacy_filter"`, `name="redact_identifiers"`)
+	f := e.form()
+	f.Set("privacy_filter", "false")
+	f.Set("redact_identifiers", "false")
+	if rec := e.post("/settings", f, nil); rec.Code != 303 {
+		t.Fatalf("code %d %s", rec.Code, rec.Body)
+	}
+	if e.cfg.PrivacyFilter || e.cfg.RedactIdentifiers {
+		t.Fatalf("saved %+v", e.cfg)
+	}
+	body = e.get("/settings").Body.String()
+	if strings.Count(body, `<option value="false" selected>`) < 2 {
+		t.Errorf("privacy toggles not shown off:\n%s", body)
+	}
+	for _, key := range []string{"privacy_filter", "redact_identifiers"} {
+		g := e.form()
+		g.Set(key, "maybe")
+		if rec := e.post("/settings", g, nil); rec.Code != 400 || !strings.Contains(rec.Body.String(), key) {
+			t.Errorf("%s=maybe: code %d", key, rec.Code)
+		}
+	}
+	// An older form without the fields keeps the current values.
+	if rec := e.post("/settings", e.form(), nil); rec.Code != 303 || e.cfg.PrivacyFilter || e.cfg.RedactIdentifiers {
+		t.Fatalf("missing fields: %d, %+v", rec.Code, e.cfg)
+	}
+}

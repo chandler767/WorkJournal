@@ -86,6 +86,8 @@ func outputFor(skill string) any {
 		return &evalCategorization{}
 	case "summarize-meeting":
 		return &MeetingSummary{}
+	case "privacy-filter":
+		return &PrivacyResult{}
 	default:
 		return &Markdown{}
 	}
@@ -127,6 +129,28 @@ func check(t *testing.T, name string, out any) {
 		if len(priya) != 1 || priya[0].Speaker != "Remote 1" {
 			t.Errorf("want exactly one participant named Priya (Remote 1), got %+v", m.Participants)
 		}
+	case "privacy-filter/01": // bystanders' weekend chat while the user is silent
+		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4, 5, 6}, "bystander")
+	case "privacy-filter/02": // coworkers' personal chat in a meeting
+		checkDrops(t, out.(*PrivacyResult), nil, "")
+	case "privacy-filter/03": // the user's call with their mother; line 0 is context
+		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4}, "personal_non_work")
+	case "privacy-filter/04": // work chat with an account and routing number
+		p := out.(*PrivacyResult)
+		checkDrops(t, p, nil, "")
+		var got string
+		for _, r := range p.Redact {
+			if r.Index == 1 {
+				got = r.Text
+			} else {
+				t.Errorf("redacted line %d: %q", r.Index, r.Text)
+			}
+		}
+		if !strings.Contains(got, "[redacted]") || strings.Contains(got, "4417") || strings.Contains(got, "021000021") {
+			t.Errorf("line 1 redacted as %q", got)
+		}
+	case "privacy-filter/05": // ambiguous: kept
+		checkDrops(t, out.(*PrivacyResult), nil, "")
 	case "summarize-meeting/02": // no name cues
 		m := out.(*MeetingSummary)
 		for _, p := range m.Participants {
@@ -134,6 +158,28 @@ func check(t *testing.T, name string, out any) {
 				t.Errorf("participant %q named %q without a cue", p.Speaker, p.Name)
 			}
 		}
+	}
+}
+
+// checkDrops verifies the privacy-filter output drops exactly want (with
+// at least the app's default confidence 0.7 and the given reason).
+func checkDrops(t *testing.T, p *PrivacyResult, want []int, reason string) {
+	t.Helper()
+	var got []int
+	for _, d := range p.Drop {
+		if d.Confidence < 0.7 {
+			continue
+		}
+		if d.Reason != reason {
+			t.Errorf("drop %+v: reason %q, want %q", d, d.Reason, reason)
+		}
+		for i := d.From; i <= d.To; i++ {
+			got = append(got, i)
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("dropped %v, want %v (output %+v)", got, want, *p)
 	}
 }
 

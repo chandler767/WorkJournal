@@ -15,15 +15,18 @@ import (
 // HourDoc is the derived record of one hour (derived/<day>/<HH>.json).
 // Embeddings are kept only in memory; they are never serialized.
 type HourDoc struct {
-	Day           string               `json:"day"`
-	Hour          int                  `json:"hour"`
-	Status        string               `json:"status"`
-	Segments      []activity.Segment   `json:"segments"`
-	Transcript    []media.Utterance    `json:"transcript"`
-	Screens       []media.ScreenText   `json:"screens"`
-	Meetings      []activity.Meeting   `json:"meetings"`
-	EndedMeetings []string             `json:"ended_meetings"`
-	Embeddings    map[string][]float32 `json:"-"`
+	Day           string             `json:"day"`
+	Hour          int                `json:"hour"`
+	Status        string             `json:"status"`
+	Segments      []activity.Segment `json:"segments"`
+	Transcript    []media.Utterance  `json:"transcript"`
+	Screens       []media.ScreenText `json:"screens"`
+	Meetings      []activity.Meeting `json:"meetings"`
+	EndedMeetings []string           `json:"ended_meetings"`
+	// Removed lists the spans of speech the privacy filter removed (no
+	// text; see privacy.go).
+	Removed    []RemovedSpan        `json:"removed,omitempty"`
+	Embeddings map[string][]float32 `json:"-"`
 
 	// speakers is the clustering the doc was labelled with (nil for a
 	// loaded doc); record applies its meeting labels to earlier hours.

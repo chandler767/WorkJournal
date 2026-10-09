@@ -1,6 +1,6 @@
 {
   "name": "local/work-journal",
-  "version": "0.2.0",
-  "description": "Skills the work-journal app invokes headlessly via claude -p to summarize hours, categorize time, summarize meetings, close the day and roll up the week. Each replies with a single JSON object.",
+  "version": "0.3.0",
+  "description": "Skills the work-journal app invokes headlessly via claude -p to summarize hours, categorize time, summarize meetings, close the day and roll up the week, and filter bystander and personal non-work speech out of transcripts. Each replies with a single JSON object.",
   "private": true
 }
