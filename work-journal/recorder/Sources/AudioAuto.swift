@@ -53,10 +53,15 @@ func micWanted(_ gate: AudioGate) -> Bool { gate != .off }
 /// Voice activity thresholds (30 ms frames; RMS of samples in [-1, 1]).
 enum VAD {
     static let frameSeconds = 0.030
-    /// Absolute floor: quieter frames are never speech (≈ -44 dBFS).
-    static let minRMS: Float = 0.006
-    /// Speech must be this many times the tracked background level.
-    static let noiseFactor: Float = 3.0
+    /// Absolute floor: quieter frames are never speech (≈ -54 dBFS, just above the built-in
+    /// mic's quiet-room level). Tuned with `auto_debug` and real TTS over this Mac's room noise
+    /// (≈ -53 to -50 dBFS): at the old 0.006 (-44 dBFS) with 3x the background, conversation
+    /// reaching the mic at -45 dBFS was never detected.
+    static let minRMS: Float = 0.002
+    /// Speech must be this many times the tracked background level (8 dB). 2.5 detects that
+    /// -45 dBFS conversation within ~50 s while room noise alone stays under 20% speech; 2.0
+    /// let room noise alone reach 37%, too close to the 40% conversation threshold.
+    static let noiseFactor: Float = 2.5
     /// The background level is the quietest frame of the last `noiseWindowSeconds`: it drops at
     /// once to a quieter frame and follows a room that gets louder within the window. Speech
     /// has gaps between words, so talking does not raise it.
@@ -86,6 +91,9 @@ func zeroCrossingRate(_ x: UnsafeBufferPointer<Float>) -> Float {
 /// cuts arbitrary buffers into 30 ms frames (carrying the remainder over).
 struct VoiceActivityDetector {
     private(set) var noiseFloor: Float = VAD.minRMS
+    /// The last frame's RMS and zero-crossing rate (for `auto_debug`).
+    private(set) var lastRMS: Float = 0
+    private(set) var lastZCR: Float = 0
     private var pending: [Float] = []
     private var recent: [Float] = [] // frame RMS of the last noise window (ring)
     private var recentHead = 0
@@ -93,7 +101,10 @@ struct VoiceActivityDetector {
     /// Classifies one frame and updates the background level.
     mutating func isSpeech(_ frame: UnsafeBufferPointer<Float>) -> Bool {
         let rms = frameRMS(frame)
-        let speech = rms >= max(VAD.minRMS, noiseFloor * VAD.noiseFactor) && zeroCrossingRate(frame) <= VAD.maxZCR
+        let zcr = zeroCrossingRate(frame)
+        lastRMS = rms
+        lastZCR = zcr
+        let speech = rms >= max(VAD.minRMS, noiseFloor * VAD.noiseFactor) && zcr <= VAD.maxZCR
         let window = max(1, Int((VAD.noiseWindowSeconds / VAD.frameSeconds).rounded()))
         if recent.count < window {
             recent.append(rms)
@@ -183,13 +194,41 @@ final class ConversationListener {
     private var vad = VoiceActivityDetector()
     private var detector = ConversationDetector()
     private var on = false
+    /// Per-feed counts over the last 10 s, for `auto_debug`.
+    private var recentFeeds: [(at: Date, frames: Int, speech: Int, maxRMS: Float)] = []
+
+    /// Listener state for the `auto_debug` socket command.
+    struct Stats {
+        var enabled = false
+        var framesLast10s = 0
+        var speechFramesLast10s = 0
+        var maxRMSLast10s: Float = 0
+        var lastRMS: Float = 0
+        var lastZCR: Float = 0
+        var noiseFloor: Float = 0
+        var speechRatio60s = 0.0
+        var turnPauses60s = 0
+        var conversation = false
+    }
+
+    var stats: Stats {
+        lock.lock()
+        defer { lock.unlock() }
+        let cutoff = Date().addingTimeInterval(-10)
+        let recent = recentFeeds.filter { $0.at >= cutoff }
+        return Stats(enabled: on, framesLast10s: recent.reduce(0) { $0 + $1.frames },
+                     speechFramesLast10s: recent.reduce(0) { $0 + $1.speech },
+                     maxRMSLast10s: recent.map(\.maxRMS).max() ?? 0, lastRMS: vad.lastRMS, lastZCR: vad.lastZCR,
+                     noiseFloor: vad.noiseFloor, speechRatio60s: detector.speechRatio, turnPauses60s: detector.turnPauses,
+                     conversation: on && detector.isConversation)
+    }
 
     var enabled: Bool {
         get { lock.lock(); defer { lock.unlock() }; return on }
         set {
             lock.lock()
             defer { lock.unlock() }
-            if newValue != on { vad = VoiceActivityDetector(); detector.reset() }
+            if newValue != on { vad = VoiceActivityDetector(); detector.reset(); recentFeeds = [] }
             on = newValue
         }
     }
@@ -198,7 +237,13 @@ final class ConversationListener {
         lock.lock()
         defer { lock.unlock() }
         guard on else { return }
-        for s in vad.feed(samples, sampleRate: sampleRate) { detector.add(s) }
+        let decisions = vad.feed(samples, sampleRate: sampleRate)
+        for s in decisions { detector.add(s) }
+        let now = Date()
+        recentFeeds.append((now, decisions.count, decisions.filter { $0 }.count, frameRMS(samples)))
+        if let first = recentFeeds.first, now.timeIntervalSince(first.at) > 12 {
+            recentFeeds.removeAll { now.timeIntervalSince($0.at) > 10 }
+        }
     }
 
     func reset() {
@@ -225,7 +270,9 @@ enum AutoReason: String {
 /// Auto mode: listening until a call or conversation starts recording; stops `stopAfter`
 /// seconds after both signals were last seen. Stepped every 2 s by the recorder.
 struct AutoAudio {
-    static let stopAfter: TimeInterval = 180
+    static let defaultStopAfter: TimeInterval = 180
+    /// `--auto-stop-seconds` shortens it for testing.
+    var stopAfter = AutoAudio.defaultStopAfter
 
     enum Phase: Equatable { case listening, recording(AutoReason) }
     enum Action: Equatable { case start(AutoReason), stop }
@@ -251,7 +298,7 @@ struct AutoAudio {
             }
             let since = quietSince ?? now
             quietSince = since
-            guard now.timeIntervalSince(since) >= Self.stopAfter else { return nil }
+            guard now.timeIntervalSince(since) >= stopAfter else { return nil }
             reset()
             return .stop
         }
@@ -273,8 +320,9 @@ struct AudioInputProcess {
 }
 
 /// Processes whose microphone use is ours or not a call: ScreenCaptureKit's daemon runs input
-/// for our own system-audio capture.
-let ignoredInputBundles: Set<String> = ["com.apple.replayd"]
+/// for our own system-audio capture, and another recorder instance (a test run, or one being
+/// replaced) is never a call.
+let ignoredInputBundles: Set<String> = ["com.apple.replayd", "local.workjournal.recorder"]
 
 /// The first process other than us (and not an ignored helper) using audio input.
 func firstOtherInput(_ processes: [AudioInputProcess], ownPID: pid_t) -> AudioInputProcess? {

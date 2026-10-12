@@ -12,6 +12,8 @@ struct RunOptions {
     var allDisplays = false
     var degraded = false
     var audioMode = AudioMode.on
+    /// Debug: auto mode's stop delay in seconds (default 180).
+    var autoStopSeconds: Int?
     var policy = PolicyConfig()
     var shots = ShotConfig()
 
@@ -64,6 +66,7 @@ struct RunOptions {
                 o.dashboardURL = u
             case "--all-displays": o.allDisplays = true
             case "--degraded": o.degraded = true
+            case "--auto-stop-seconds": o.autoStopSeconds = try int()
             case "--audio-mode":
                 let v = try value()
                 guard let m = AudioMode(rawValue: v) else {

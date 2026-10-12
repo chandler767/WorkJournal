@@ -5,7 +5,7 @@ import CoreMedia
 /// run-tests for audio modes: VAD and turn-taking on synthetic frames, the auto state machine,
 /// the writer gate, the ring buffer and its flush into chunks.
 func audioModeChecks() -> [(String, Bool)] {
-    vadChecks() + conversationChecks() + autoMachineChecks() + gateChecks() + ringChecks() + callChecks()
+    quietRoomConversationChecks() + vadChecks() + conversationChecks() + autoMachineChecks() + gateChecks() + ringChecks() + callChecks()
         + audioModeOptionChecks() + ringFlushChecks()
 }
 
@@ -146,7 +146,7 @@ private func autoMachineChecks() -> [(String, Bool)] {
         ("auto: call wins as the reason", startBoth == .start(.call)),
         ("auto: no signal, no start", nothing == nil && idle.phase == .listening),
         ("auto: reset (pause, mode switch) returns to listening", paused.phase == .listening),
-        ("auto: stop delay is 180 s", AutoAudio.stopAfter == 180),
+        ("auto: stop delay is 180 s", AutoAudio().stopAfter == 180 && AutoAudio.defaultStopAfter == 180),
     ]
 }
 
@@ -201,6 +201,7 @@ private func callChecks() -> [(String, Bool)] {
             && CallSource(bundle: "us.zoom.xos", name: "").label == "us.zoom.xos" && CallSource(bundle: "", name: "").label == ""),
         ("call: only our own mic use", !otherInputActive([p(me, "local.workjournal.recorder", true)], ownPID: me)),
         ("call: screen capture daemon ignored", !otherInputActive([p(3, "com.apple.replayd", true)], ownPID: me)),
+        ("call: another recorder instance ignored", !otherInputActive([p(42, "local.workjournal.recorder", true)], ownPID: me)),
         ("call: idle apps ignored", !otherInputActive([p(7, "us.zoom.xos", false)], ownPID: me)),
         ("call: device fallback ignores our own engine",
          !deviceFallbackCall(runningSomewhere: true, ourEngineRunning: true)
@@ -395,4 +396,86 @@ private func ringFlushChecks() -> [(String, Bool)] {
 private func toneSample(frames: Int, at: Int64) -> CMSampleBuffer? {
     let tone = sine(frames, freq: 220, amp: 0.1)
     return tone.withUnsafeBufferPointer { makePCMSample($0, sampleRate: 48_000, pts: CMTime(value: at, timescale: 48_000)) }
+}
+
+/// Speech-like audio: voiced syllables (harmonics of a drifting pitch, ~4.5 syllables/s with
+/// dips between them and short word gaps) scaled so its active RMS is `dbfs`.
+private func syntheticUtterance(seconds: Double, pitch: Double, dbfs: Float, seed: UInt32) -> [Float] {
+    let rate = 48_000.0, n = Int(seconds * rate)
+    var x: UInt32 = seed
+    func rnd() -> Double { x = x &* 1_103_515_245 &+ 12345; return Double(x >> 8) / Double(1 << 24) }
+    var out = [Float](repeating: 0, count: n)
+    var phase = 0.0, i = 0
+    while i < n {
+        let syl = Int((0.16 + 0.1 * rnd()) * rate) // one syllable
+        let gap = rnd() < 0.25 ? Int((0.08 + 0.12 * rnd()) * rate) : 0 // word gap, under 0.3 s
+        let f0 = pitch * (0.85 + 0.3 * rnd())
+        let stress = 0.25 + 0.75 * rnd() // syllables differ by up to 12 dB, like real speech
+        for k in 0..<syl where i + k < n {
+            let env = 0.1 + 0.9 * sin(Double.pi * Double(k) / Double(syl)) // dips between syllables
+            phase += 2 * Double.pi * f0 / rate
+            out[i + k] = Float(stress * env * (sin(phase) + 0.5 * sin(2 * phase) + 0.3 * sin(3 * phase)))
+        }
+        i += syl + gap
+    }
+    let level = out.withUnsafeBufferPointer { frameRMS($0) }
+    let k = powf(10, dbfs / 20) / max(level, 1e-9)
+    return out.map { $0 * k }
+}
+
+/// Room noise like this Mac's built-in mic hears it: low-passed rumble whose level drifts by
+/// about ±2.5 dB over ~11 s (fan, HVAC); RMS `dbfs`.
+private func roomNoise(count: Int, dbfs: Float) -> [Float] {
+    var x: UInt32 = 777
+    var y: Float = 0
+    var out = [Float](repeating: 0, count: count)
+    for i in 0..<count {
+        x = x &* 1_103_515_245 &+ 12345
+        y = 0.97 * y + 0.03 * (Float(x >> 8) / Float(1 << 24) * 2 - 1)
+        let drift = 1 + 0.3 * sin(2 * Float.pi * Float(i) / (48_000 * 11)) // 0.7x–1.3x
+        out[i] = y * drift
+    }
+    let level = out.withUnsafeBufferPointer { frameRMS($0) }
+    let k = powf(10, dbfs / 20) / max(level, 1e-9)
+    return out.map { $0 * k }
+}
+
+/// Seconds until `ConversationDetector` reports a conversation for `signal` fed through the VAD in
+/// 4096-sample buffers like the mic tap; nil when it never does.
+private func secondsToConversation(_ signal: [Float]) -> Double? {
+    var vad = VoiceActivityDetector()
+    var det = ConversationDetector()
+    var t = 0
+    while t + 4096 <= signal.count {
+        for s in signal[t..<t + 4096].withUnsafeBufferPointer({ vad.feed($0, sampleRate: 48_000) }) { det.add(s) }
+        t += 4096
+        if det.isConversation { return Double(t) / 48_000 }
+    }
+    return nil
+}
+
+/// Faint conversation: two voices heard by the built-in mic at about -45 dBFS over this room's
+/// noise (about -50 dBFS, drifting; measured with `auto_debug`). With the old thresholds (an
+/// absolute 0.006 / -44 dBFS floor and 3x the background) too few frames counted as speech.
+private func quietRoomConversationChecks() -> [(String, Bool)] {
+    func conversation(speech dbfs: Float, noise: Float) -> [Float] {
+        var talk: [Float] = []
+        for turn in 0..<14 { // ~75 s: 5–6 s turns, 0.6 / 0.8 s gaps
+            talk += syntheticUtterance(seconds: turn % 2 == 0 ? 5.6 : 4.8, pitch: turn % 2 == 0 ? 210 : 120,
+                                       dbfs: dbfs, seed: UInt32(turn + 1))
+            talk += [Float](repeating: 0, count: Int((turn % 2 == 0 ? 0.6 : 0.8) * 48_000))
+        }
+        let room = roomNoise(count: talk.count, dbfs: noise)
+        return zip(talk, room).map { $0 + $1 }
+    }
+    let at35 = secondsToConversation(conversation(speech: -35, noise: -50))
+    let at45 = secondsToConversation(conversation(speech: -45, noise: -50))
+    let roomOnly = secondsToConversation(roomNoise(count: 48_000 * 75, dbfs: -50))
+    let loudRoomOnly = secondsToConversation(roomNoise(count: 48_000 * 75, dbfs: -40))
+    return [
+        ("quiet room: -35 dBFS conversation detected within 60 s", at35.map { $0 <= 60 } == true),
+        ("quiet room: -45 dBFS conversation detected within 75 s", at45.map { $0 <= 75 } == true),
+        ("quiet room: room noise alone is no conversation", roomOnly == nil),
+        ("quiet room: loud steady noise alone is no conversation", loudRoomOnly == nil),
+    ]
 }

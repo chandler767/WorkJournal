@@ -44,6 +44,7 @@ final class Recorder {
         mic = MicRecorder(writer: micWriter)
         monitor = ActivityMonitor(log: log, policy: options.policy, idleMinutes: options.idleMinutes)
         audioMode = options.audioMode
+        if let s = options.autoStopSeconds { auto.stopAfter = TimeInterval(s) }
         let listener = self.listener
         mic.onPCM = { listener.feed($0, sampleRate: $1) }
     }
@@ -112,7 +113,9 @@ final class Recorder {
         pendingFlush = false
         systemWriter.setGate(g, flush: flush)
         micWriter.setGate(g, flush: flush)
-        listener.enabled = audioMode == .auto && g != .off
+        let listen = audioMode == .auto && g != .off
+        if listen != listener.enabled { eprint("recorder: auto listener \(listen ? "started" : "stopped")") }
+        listener.enabled = listen
         if micWanted(g) { mic.start() } else { mic.stop() }
         monitor.logsApps = !paused
         updateMenu()
@@ -193,6 +196,7 @@ final class Recorder {
         case "normal": setDisk(.normal)
         case "rotate": rotate()
         case "status": return (statusJSON(), nil)
+        case "auto_debug": return (autoDebugJSON(), nil)
         case "quit": return ("ok", { [unowned self] in quit() })
         default: return ("error: unknown command \"\(command)\"", nil)
         }
@@ -231,6 +235,28 @@ final class Recorder {
         disk = d
         log.append(d.rawValue)
         apply()
+    }
+
+    /// `auto_debug`: listener and call-signal state, to see which stage of auto mode fails.
+    private func autoDebugJSON() -> String {
+        let st = listener.stats
+        let front = monitor.frontmostApp
+        let other = InputUsage.otherProcessRecording(ourEngineRunning: mic.isRunning)
+        let inputs = (InputUsage.processes() ?? []).filter(\.runningInput).map { "\($0.bundle)#\($0.pid)" }
+        let obj: [String: Any] = [
+            "audio_mode": audioMode.rawValue, "gate": "\(gate)", "mic_running": mic.isRunning,
+            "listener_enabled": st.enabled, "frames_last_10s": st.framesLast10s,
+            "speech_frames_last_10s": st.speechFramesLast10s, "max_rms_last_10s": Double(st.maxRMSLast10s),
+            "frame_rms": Double(st.lastRMS), "frame_zcr": Double(st.lastZCR), "noise_floor": Double(st.noiseFloor),
+            "speech_ratio_60s": st.speechRatio60s, "turn_pauses_60s": st.turnPauses60s, "conversation": st.conversation,
+            "meeting_frontmost": monitor.meeting, "frontmost_bundle": front.bundle,
+            "call_other_process": other.map { "\($0.bundle) (\($0.name))" } ?? "", "input_processes": inputs,
+            "auto_phase": "\(auto.phase)", "stop_after_s": auto.stopAfter,
+            "thresholds": ["min_rms": Double(VAD.minRMS), "noise_factor": Double(VAD.noiseFactor), "max_zcr": Double(VAD.maxZCR),
+                           "min_speech_ratio": Conversation.minSpeechRatio, "min_turn_pauses": Conversation.minTurnPauses],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func statusJSON() -> String {
