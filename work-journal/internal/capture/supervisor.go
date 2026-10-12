@@ -27,6 +27,7 @@ func RecorderArgs(c config.Config, p config.Paths) []string {
 		"--idle-minutes", strconv.Itoa(c.IdleMinutes),
 		"--pause-auto-resume", strconv.Itoa(c.PauseAutoResumeMinutes),
 		"--dashboard-url", "http://" + c.ListenAddr,
+		"--audio-mode", c.AudioMode,
 	}
 	if c.AllDisplays {
 		args = append(args, "--all-displays")

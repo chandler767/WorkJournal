@@ -9,8 +9,11 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
+
+	"workjournal/internal/config"
 )
 
 // Status is the recorder's reply to the "status" command.
@@ -20,6 +23,12 @@ type Status struct {
 	Meeting bool      `json:"meeting"`
 	Screens bool      `json:"screens"`
 	Audio   bool      `json:"audio"`
+	// AudioMode is "on", "off" or "auto" ("" from an older recorder).
+	AudioMode string `json:"audio_mode"`
+	// AudioActive reports whether audio is being written right now.
+	AudioActive bool `json:"audio_active"`
+	// AudioReason is why auto mode is recording: "call" or "in_person".
+	AudioReason string `json:"audio_reason"`
 }
 
 // Control sends commands to a running recorder.
@@ -32,6 +41,8 @@ type Control interface {
 	// Rotate finishes the current audio chunks (both tracks) and starts new
 	// ones; it returns once the finished files are fully written.
 	Rotate() error
+	// SetAudioMode switches the recorder's audio mode ("on", "off", "auto").
+	SetAudioMode(mode string) error
 }
 
 // commandTimeout bounds dialing and answering an ordinary command;
@@ -125,4 +136,33 @@ func QuitRunning(sock string, probe, gone time.Duration) (found bool, err error)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// SetAudioMode sends "audio_mode <mode>"; an unknown mode is refused
+// without contacting the recorder.
+func (c socketControl) SetAudioMode(mode string) error {
+	if !slices.Contains(config.AudioModes, mode) {
+		return fmt.Errorf("audio mode must be one of %v, got %q", config.AudioModes, mode)
+	}
+	return c.Send("audio_mode " + mode)
+}
+
+// SyncAudioMode copies the recorder's audio mode into the config when they
+// differ (the user picked a mode in the recorder's menu bar), so the recorder
+// starts in that mode next time. A recorder that is down, or too old to
+// report a mode, leaves the config alone. changed reports whether it saved.
+func SyncAudioMode(ctl Control, cfg func() config.Config, save func(config.Config) error) (changed bool, err error) {
+	st, err := ctl.Status()
+	if err != nil || !slices.Contains(config.AudioModes, st.AudioMode) {
+		return false, nil
+	}
+	c := cfg()
+	if c.AudioMode == st.AudioMode {
+		return false, nil
+	}
+	c.AudioMode = st.AudioMode
+	if err := save(c); err != nil {
+		return false, fmt.Errorf("save audio_mode %s: %w", st.AudioMode, err)
+	}
+	return true, nil
 }

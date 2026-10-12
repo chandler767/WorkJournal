@@ -312,3 +312,41 @@ func TestPrivacyDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("Load = %+v, %v", got, err)
 	}
 }
+
+func TestAudioModeDefaultAndValidation(t *testing.T) {
+	if got := Default().AudioMode; got != "on" {
+		t.Fatalf("default audio_mode = %q, want on", got)
+	}
+	for _, v := range []string{"on", "off", "auto"} {
+		c := Default()
+		c.AudioMode = v
+		if err := c.Validate(); err != nil {
+			t.Errorf("%q rejected: %v", v, err)
+		}
+	}
+	for _, v := range []string{"", "On", "sometimes"} {
+		c := Default()
+		c.AudioMode = v
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "audio_mode") {
+			t.Errorf("%q accepted (err %v)", v, err)
+		}
+	}
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old.toml")
+	if err := os.WriteFile(old, []byte("retention_days = 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(old); err != nil || got.AudioMode != "on" {
+		t.Fatalf("older file: audio_mode %q, %v; want on", got.AudioMode, err)
+	}
+	p := filepath.Join(dir, "config.toml")
+	c := Default()
+	c.DataDir = dir
+	c.AudioMode = "auto"
+	if err := Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(p); err != nil || got.AudioMode != "auto" {
+		t.Fatalf("round trip: audio_mode %q, %v", got.AudioMode, err)
+	}
+}

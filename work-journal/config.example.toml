@@ -14,6 +14,7 @@ capture_on_app_switch = true          # screenshot right away when the frontmost
 meeting_screenshot_interval_sec = 5   # backstop during meetings (the min gap still applies)
 screenshot_interval_sec = 10          # unused: replaced by screenshot_idle_backstop_sec; kept so older files load
 audio_chunk_minutes = 5
+audio_mode = "on"           # "on" (always record mic and system audio), "off" (never) or "auto" (calls and conversations only)
 screenshot_width = 1440     # per display: with all_displays the image is this × displays wide
 all_displays = false        # all displays side by side (left to right) instead of the main one
 whisper_model = "base.en"

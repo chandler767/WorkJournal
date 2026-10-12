@@ -30,6 +30,7 @@ type Config struct {
 	AudioChunkMinutes            int               `toml:"audio_chunk_minutes"`
 	ScreenshotWidth              int               `toml:"screenshot_width"`
 	AllDisplays                  bool              `toml:"all_displays"`
+	AudioMode                    string            `toml:"audio_mode"`
 	WhisperModel                 string            `toml:"whisper_model"`
 	Diarization                  string            `toml:"diarization"`
 	VoiceMatchThreshold          float64           `toml:"voice_match_threshold"`
@@ -71,6 +72,7 @@ func Default() Config {
 		MeetingScreenshotIntervalSec: 5,
 		AudioChunkMinutes:            5,
 		ScreenshotWidth:              1440,
+		AudioMode:                    "on",
 		WhisperModel:                 "base.en",
 		Diarization:                  "sherpa",
 		VoiceMatchThreshold:          0.60,
@@ -168,6 +170,9 @@ func (c Config) Validate() error {
 	if !slices.Contains(ChangeSensitivities, c.ScreenChangeSensitivity) {
 		return fmt.Errorf("screen_change_sensitivity must be one of %v, got %q", ChangeSensitivities, c.ScreenChangeSensitivity)
 	}
+	if !slices.Contains(AudioModes, c.AudioMode) {
+		return fmt.Errorf("audio_mode must be one of %v, got %q", AudioModes, c.AudioMode)
+	}
 	if c.InPersonMinMinutes < 1 || c.InPersonMinMinutes > 120 {
 		return fmt.Errorf("in_person_min_minutes must be within 1–120, got %d", c.InPersonMinMinutes)
 	}
@@ -226,6 +231,12 @@ var ProcessIntervals = []int{5, 10, 15, 20, 30, 60}
 // ChangeSensitivities are the allowed screen_change_sensitivity values: how much
 // the screen must change before the recorder takes a screenshot.
 var ChangeSensitivities = []string{"low", "medium", "high"}
+
+// AudioModes are the allowed audio_mode values: "on" always records the
+// microphone and system audio, "off" never does, and "auto" records only
+// while a call or an in-person conversation is detected (screenshots are
+// unaffected by the mode).
+var AudioModes = []string{"on", "off", "auto"}
 
 var weekdays = map[string]bool{
 	"monday": true, "tuesday": true, "wednesday": true, "thursday": true,

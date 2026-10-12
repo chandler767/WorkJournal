@@ -22,7 +22,7 @@ func runPolicyTests() -> Int32 {
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
-    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + [
+    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + audioModeChecks() + [
         ("excluded app 1Password", isExcluded(app: "1Password", title: "", c)),
         ("excluded app case-insensitive", isExcluded(app: "1password", title: "", c)),
         ("excluded title Private Browsing", isExcluded(app: "Safari", title: "Private Browsing — x", c)),

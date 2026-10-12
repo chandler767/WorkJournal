@@ -36,6 +36,7 @@ type Jobs struct {
 	Summarizer *process.SkillSummarizer
 	Runner     skills.Runner
 	Control    capture.Control
+	SaveCfg    func(config.Config) error
 	FreeGB     func(path string) (float64, error)
 	Now        func() time.Time // nil: time.Now
 	Logf       func(string, ...any)
@@ -264,6 +265,19 @@ func (j *Jobs) EnrollSpeaker(ctx context.Context, meetingID, speaker, name strin
 	err = p.EnrollSpeaker(ctx, m, speaker, name)
 	if errors.Is(err, process.ErrNoRawAudio) {
 		return scheduler.ErrMediaExpired
+	}
+	return err
+}
+
+// SyncAudioMode persists an audio mode the user picked in the recorder's
+// menu bar (capture.SyncAudioMode). Nothing happens without SaveCfg.
+func (j *Jobs) SyncAudioMode(ctx context.Context) error {
+	if j.SaveCfg == nil {
+		return nil
+	}
+	changed, err := capture.SyncAudioMode(j.Control, j.Cfg, j.SaveCfg)
+	if changed {
+		j.Logf("audio mode set to %s in the recorder; saved to the config", j.Cfg().AudioMode)
 	}
 	return err
 }

@@ -30,6 +30,13 @@
     </label>
   </section>
   <section>
+    <h2>Audio</h2>
+    <label>Audio recording
+      <select name="audio_mode">{{range .AudioModes}}<option value="{{.}}"{{if eq . $.Form.AudioMode}} selected{{end}}>{{if eq . "on"}}On (always record){{else if eq . "off"}}Off (never record){{else}}Auto (calls and in-person conversations){{end}}</option>{{end}}</select>
+    </label>
+    <p class="muted">Auto keeps the last two minutes of audio in memory only and starts recording, from the start of that buffer, when another app uses the microphone, a meeting app is in front, or a back-and-forth conversation is heard nearby. It stops three minutes after the call or conversation ends. Screenshots are not affected. The menu bar and the day page switch modes too.</p>
+  </section>
+  <section>
     <h2>Privacy</h2>
     <p class="muted">Before anything is summarized or indexed, Claude checks each hour's speech. Conversations near the laptop that you are not part of, and your personal non-work conversations with people who are not coworkers (a family call, say), are removed from transcripts, search and notes; talk with coworkers is kept. When unsure, speech is kept. Raw audio is unchanged and is deleted with the rest of the day's raw media.</p>
     <label>Remove bystander and personal non-work conversations

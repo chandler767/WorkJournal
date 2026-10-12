@@ -23,6 +23,8 @@ func chunkFinishDelay(now: Date, end: Date) -> TimeInterval { max(0, end.timeInt
 /// Writes one audio track as AAC mono 32 kbps chunks `raw/<day>/audio/HHMM-<track>.m4a`
 /// (`HHMMSS-…` when that name is taken), rotated on `chunkMinutes` wall-clock boundaries.
 /// While muted (exclusion) samples are written as silence with their original timing.
+/// The gate (`setGate`) drops samples, writes them, or keeps the last `AudioRing.seconds` in
+/// memory (auto mode listening) until a start flushes them into chunks.
 /// Thread-safe; samples may come from any thread.
 final class AudioChunkWriter {
     let track: String
@@ -32,7 +34,9 @@ final class AudioChunkWriter {
     private var writer: AVAssetWriter?
     private var input: AVAssetWriterInput?
     private var end = Date.distantPast
-    private var enabled = true
+    private var gate = AudioGate.write
+    private var ring = AudioRing()
+    private var reportedRingFormat = false
     private var muted = false
     private var reportedFailure = false
 
@@ -44,16 +48,34 @@ final class AudioChunkWriter {
     }
 
     func append(_ sample: CMSampleBuffer) {
-        queue.async { self.appendOnQueue(sample) }
+        // Wall-clock start of the sample (it has just been captured), for buffered audio.
+        let duration = CMTimeGetSeconds(CMSampleBufferGetDuration(sample))
+        let wall = Date().addingTimeInterval(duration.isFinite ? -duration : 0)
+        queue.async { self.appendOnQueue(sample, wall: wall) }
     }
 
-    /// Disabling finishes the current chunk (pause, sleep, quit, disk guard); enabling
-    /// lets the next sample open a chunk named for that time.
-    func setEnabled(_ on: Bool) {
-        queue.sync {
-            enabled = on
-            if !on { finishOnQueue() }
+    /// `.off` finishes the current chunk and clears the buffer (pause, sleep, quit, disk guard,
+    /// audio off); `.buffer` finishes the current chunk and starts an empty buffer; `.write`
+    /// lets the next sample open a chunk named for that time. With `flush` (an auto start), a
+    /// change from `.buffer` to `.write` first writes the buffered audio into chunks named
+    /// HHMMSS for its start; without it the buffer is dropped. Blocks until done, except a
+    /// flush: it is queued (the writer queue is serial, so later samples follow it) and runs
+    /// without holding up the caller while up to two minutes of audio are encoded.
+    func setGate(_ g: AudioGate, flush: Bool) {
+        let work = { [self] in
+            guard g != gate else { return }
+            let buffered = gate == .buffer ? ring.drain() : []
+            ring.clear()
+            finishOnQueue() // only `.write` has a chunk open
+            gate = g
+            if g == .write && flush { flushOnQueue(buffered) }
         }
+        if g == .write && flush { queue.async(execute: work) } else { queue.sync(execute: work) }
+    }
+
+    /// Waits until every sample appended so far has been handled.
+    func sync() {
+        queue.sync {}
     }
 
     /// Muted samples are replaced by silence before writing; the chunk stays open.
@@ -73,8 +95,9 @@ final class AudioChunkWriter {
         queue.sync { finishOnQueue() }
     }
 
-    private func appendOnQueue(_ original: CMSampleBuffer) {
-        guard enabled, CMSampleBufferDataIsReady(original), CMSampleBufferGetNumSamples(original) > 0 else { return }
+    private func appendOnQueue(_ original: CMSampleBuffer, wall: Date) {
+        guard gate != .off, CMSampleBufferDataIsReady(original), CMSampleBufferGetNumSamples(original) > 0 else { return }
+        if gate == .buffer { return bufferOnQueue(original, wall: wall) }
         guard let sample = muted ? silenced(original) : original else {
             return fail("cannot build silent sample")
         }
@@ -93,10 +116,48 @@ final class AudioChunkWriter {
         }
     }
 
-    private func open(at start: Date, sample: CMSampleBuffer) -> Bool {
+    /// Keeps the sample in the ring (silence while muted); nothing is written.
+    private func bufferOnQueue(_ sample: CMSampleBuffer, wall: Date) {
+        guard let pcm = monoFloats(sample) else {
+            if !reportedRingFormat { eprint("audio \(track): cannot buffer this sample format") }
+            reportedRingFormat = true
+            return
+        }
+        let samples = pcm.samples.withUnsafeBufferPointer { int16Samples($0, muted: muted) }
+        ring.append(RingEntry(wall: wall, pts: CMSampleBufferGetPresentationTimeStamp(sample),
+                              sampleRate: pcm.sampleRate, samples: samples))
+    }
+
+    /// Writes buffered entries into chunks split at chunk boundaries, each named HHMMSS for its
+    /// first entry; the last chunk stays open for the live samples that follow.
+    private func flushOnQueue(_ entries: [RingEntry]) {
+        for group in ringFlushGroups(walls: entries.map(\.wall), chunkMinutes: chunkMinutes) {
+            finishOnQueue()
+            let samples = entries[group].compactMap(sampleBuffer(from:))
+            guard let first = samples.first, open(at: entries[group.lowerBound].wall, sample: first, exactName: true),
+                  let input = input else { return }
+            for s in samples {
+                // Written faster than real time: wait for the encoder instead of dropping.
+                var waited = 0
+                while !input.isReadyForMoreMediaData && waited < 2000 {
+                    usleep(1000)
+                    waited += 1
+                }
+                guard input.append(s) else {
+                    fail("flush append failed: \(writer?.error?.localizedDescription ?? "unknown error")")
+                    writer?.cancelWriting()
+                    writer = nil
+                    self.input = nil
+                    return
+                }
+            }
+        }
+    }
+
+    private func open(at start: Date, sample: CMSampleBuffer, exactName: Bool = false) -> Bool {
         let dir = rawDayDir(dataDir, start).appendingPathComponent("audio")
         // Same-minute pause/resume: HHMM is taken, so use the exact start second.
-        let name = chunkFileName(start: start, track: track) {
+        let name = exactName ? exactChunkName(start: start, track: track) : chunkFileName(start: start, track: track) {
             FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
         }
         let url = dir.appendingPathComponent(name)

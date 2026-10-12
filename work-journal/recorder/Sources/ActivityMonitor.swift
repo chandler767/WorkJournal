@@ -10,6 +10,8 @@ final class ActivityLog {
         let app: String?
         let bundle: String?
         let title: String?
+        let mode: String?
+        let reason: String?
     }
 
     private let dataDir: URL
@@ -22,13 +24,16 @@ final class ActivityLog {
 
     init(dataDir: URL) { self.dataDir = dataDir }
 
-    /// `app`/`bundle`/`title` are only passed for `app` events.
-    func append(_ type: String, app: String? = nil, bundle: String? = nil, title: String? = nil) {
+    /// `app`/`bundle`/`title` are only passed for `app` events, `mode` for `audio_mode` and
+    /// `reason` for `audio_auto_start`.
+    func append(_ type: String, app: String? = nil, bundle: String? = nil, title: String? = nil,
+                mode: String? = nil, reason: String? = nil) {
         let now = Date()
         lock.lock()
         defer { lock.unlock() }
         do {
-            var line = try encoder.encode(Event(ts: rfc3339(now), type: type, app: app, bundle: bundle, title: title))
+            var line = try encoder.encode(Event(ts: rfc3339(now), type: type, app: app, bundle: bundle, title: title,
+                                                     mode: mode, reason: reason))
             line.append(0x0A)
             let dir = rawDayDir(dataDir, now)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

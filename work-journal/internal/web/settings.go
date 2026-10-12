@@ -22,6 +22,7 @@ type settingsForm struct {
 	ProcessInterval                                                       string
 	MinGap, IdleBackstop, Sensitivity, CaptureOnSwitch                    string
 	PrivacyFilter, RedactIdentifiers                                      string
+	AudioMode                                                             string
 	ExcludedApps, ExcludedTitles, Categories, Rules                       string
 }
 
@@ -33,6 +34,7 @@ type settingsPage struct {
 	Weekdays    []string
 	Intervals   []string
 	Sensitivity []string
+	AudioModes  []string
 	Suggestions []Suggestion
 	Voices      []string
 	ShowVoices  bool
@@ -87,6 +89,7 @@ func formFromConfig(c config.Config) settingsForm {
 		CaptureOnSwitch:   strconv.FormatBool(c.CaptureOnAppSwitch),
 		PrivacyFilter:     strconv.FormatBool(c.PrivacyFilter),
 		RedactIdentifiers: strconv.FormatBool(c.RedactIdentifiers),
+		AudioMode:         c.AudioMode,
 		ExcludedApps:      strings.Join(c.ExcludedApps, "\n"),
 		ExcludedTitles:    strings.Join(c.ExcludedTitleKeywords, "\n"),
 		Categories:        strings.Join(c.Categories, "\n"),
@@ -154,6 +157,9 @@ func applyForm(base config.Config, f settingsForm) (config.Config, error) {
 	if v := strings.TrimSpace(f.Sensitivity); v != "" {
 		c.ScreenChangeSensitivity = v
 	}
+	if v := strings.TrimSpace(f.AudioMode); v != "" { // absent from older forms: keep
+		c.AudioMode = v
+	}
 	// On/off fields absent from older forms keep the current values.
 	for _, b := range []struct {
 		key, v string
@@ -213,7 +219,7 @@ func (s *Server) saveSuggestions(list []Suggestion) error {
 func (s *Server) renderSettings(w http.ResponseWriter, form settingsForm, errMsg, notice string, code int) {
 	cfg := s.Cfg()
 	p := settingsPage{Title: "Settings", Form: form, Error: errMsg, Notice: notice,
-		Weekdays: weekdayNames, Intervals: intervalChoices(), Sensitivity: config.ChangeSensitivities, ShowVoices: cfg.Diarization != "off" && s.Voices != nil}
+		Weekdays: weekdayNames, Intervals: intervalChoices(), Sensitivity: config.ChangeSensitivities, AudioModes: config.AudioModes, ShowVoices: cfg.Diarization != "off" && s.Voices != nil}
 	var err error
 	if p.Suggestions, err = s.loadSuggestions(); err != nil {
 		log.Printf("web: %v", err)
@@ -252,6 +258,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		MinGap: r.PostFormValue("screenshot_min_gap_sec"), IdleBackstop: r.PostFormValue("screenshot_idle_backstop_sec"),
 		Sensitivity: r.PostFormValue("screen_change_sensitivity"), CaptureOnSwitch: r.PostFormValue("capture_on_app_switch"),
 		PrivacyFilter: r.PostFormValue("privacy_filter"), RedactIdentifiers: r.PostFormValue("redact_identifiers"),
+		AudioMode: r.PostFormValue("audio_mode"),
 	}
 	c, err := applyForm(s.Cfg(), f)
 	if err == nil {
@@ -260,6 +267,14 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.renderSettings(w, f, err.Error(), "", http.StatusBadRequest)
 		return
+	}
+	// A new audio mode applies to the running recorder right away; otherwise
+	// the audio-mode sync would copy the recorder's old mode back. A recorder
+	// that is down starts in the saved mode.
+	if c.AudioMode != s.Cfg().AudioMode {
+		if err := s.Control.SetAudioMode(c.AudioMode); err != nil {
+			log.Printf("web: audio mode %s: %v", c.AudioMode, err)
+		}
 	}
 	if err := s.SaveCfg(c); err != nil {
 		s.renderSettings(w, f, err.Error(), "", http.StatusBadRequest)

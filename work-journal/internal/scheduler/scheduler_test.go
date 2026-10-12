@@ -46,8 +46,9 @@ func (f *fakeJobs) Rollup(_ context.Context, w string) error {
 	}
 	return nil
 }
-func (f *fakeJobs) Retain(context.Context) error    { return f.rec("retain") }
-func (f *fakeJobs) DiskCheck(context.Context) error { return f.rec("disk") }
+func (f *fakeJobs) Retain(context.Context) error        { return f.rec("retain") }
+func (f *fakeJobs) DiskCheck(context.Context) error     { return f.rec("disk") }
+func (f *fakeJobs) SyncAudioMode(context.Context) error { return f.rec("audio") }
 func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, s, n string) error {
 	return f.rec("enroll " + m + s + n)
 }
@@ -84,7 +85,7 @@ func newSchedJ(t *testing.T) (*Scheduler, *fakeJobs, *store.Store, journals) {
 func (f *fakeJobs) without() []string {
 	var out []string
 	for _, c := range f.calls {
-		if c != "disk" {
+		if c != "disk" && c != "audio" {
 			out = append(out, c)
 		}
 	}
@@ -163,6 +164,21 @@ func TestTickDiskCheckEveryTick(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("disk checks = %d", n)
+	}
+}
+
+func TestTickSyncsAudioModeEveryTick(t *testing.T) {
+	s, j, _ := newSched(t)
+	s.Tick(context.Background(), at("2026-10-07", 9, 0))
+	s.Tick(context.Background(), at("2026-10-07", 9, 1))
+	n := 0
+	for _, c := range j.calls {
+		if c == "audio" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("audio mode syncs = %d", n)
 	}
 }
 

@@ -30,7 +30,16 @@ section { margin-bottom: 1rem; }
 .daynav .short { display: none; }
 .daynav a { white-space: nowrap; }
 .status { display: flex; align-items: center; gap: .6rem; padding: .6rem .8rem; margin: 1rem 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.status { flex-wrap: wrap; }
 .status form { margin-left: auto; }
+.status .audio-mode ~ form { margin-left: 0; }
+.audio-text { color: var(--muted); }
+.audio-mode { display: inline-flex; }
+.audio-mode button { background: transparent; color: var(--accent); border-radius: 0; padding: .35rem .65rem; }
+.audio-mode button + button { border-left-width: 0; }
+.audio-mode button:first-child { border-radius: 6px 0 0 6px; }
+.audio-mode button:last-child { border-radius: 0 6px 6px 0; }
+.audio-mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 .dot { width: .7rem; height: .7rem; border-radius: 50%; background: var(--muted); }
 .status.up .dot { background: var(--ok); }
 .status.down .dot { background: var(--bad-text); }

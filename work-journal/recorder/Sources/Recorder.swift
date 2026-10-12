@@ -3,7 +3,7 @@ import AppKit
 import ApplicationServices
 
 /// Owns capture, mic, activity, socket and menu bar, and turns pause / exclusion / sleep /
-/// disk-guard state into which writers run. Main thread only.
+/// disk-guard state and the audio mode (on / off / auto) into which writers run. Main thread only.
 final class Recorder {
     private enum Disk: String { case normal, screens_off, audio_off }
 
@@ -26,6 +26,12 @@ final class Recorder {
     private var captureError: String?
     private var micError: String?
     private var stopping = false
+    private var audioMode: AudioMode
+    private var auto = AutoAudio()
+    private var autoTimer: Timer?
+    /// Set by an auto start: the next `apply` flushes the buffered audio into the new chunks.
+    private var pendingFlush = false
+    private let listener = ConversationListener()
 
     init(options: RunOptions) {
         self.options = options
@@ -35,14 +41,22 @@ final class Recorder {
         capture = Capture(options: options, systemWriter: systemWriter)
         mic = MicRecorder(writer: micWriter)
         monitor = ActivityMonitor(log: log, policy: options.policy, idleMinutes: options.idleMinutes)
+        audioMode = options.audioMode
+        let listener = self.listener
+        mic.onPCM = { listener.feed($0, sampleRate: $1) }
     }
 
     private var state: String { paused ? "paused" : monitor.excluded ? "excluded" : "recording" }
     private var recordingAllowed: Bool { !paused && !sleeping }
     private var screensOn: Bool { recordingAllowed && !monitor.excluded && disk == .normal }
-    /// Audio writers and mic run; during exclusion they stay open but store silence so the
-    /// chunk timeline is intact.
-    private var audioOn: Bool { recordingAllowed && disk != .audio_off }
+    /// Audio may run at all (the mode decides whether it does); during exclusion the writers
+    /// stay open but store silence so the chunk timeline is intact.
+    private var audioAllowed: Bool { recordingAllowed && disk != .audio_off }
+    private var gate: AudioGate { audioGate(mode: audioMode, allowed: audioAllowed, autoRecording: auto.recording) }
+    private var autoReason: AutoReason? {
+        if case .recording(let r) = auto.phase { return r }
+        return nil
+    }
 
     /// `interactive` adds the menu bar and control socket (`run`); the selftest omits them.
     func start(interactive: Bool) throws {
@@ -52,6 +66,7 @@ final class Recorder {
             server = s
             menuBar = MenuBar(dashboardURL: options.dashboardURL,
                               onTogglePause: { [unowned self] in _ = paused ? resume() : pause() },
+                              onAudioMode: { [unowned self] in setAudioMode($0) },
                               onQuit: { [unowned self] in quit() })
         }
         log.append("start")
@@ -71,6 +86,7 @@ final class Recorder {
         }
         monitor.start()
         capture.start()
+        autoTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [unowned self] _ in autoTick() }
         apply()
     }
 
@@ -83,16 +99,59 @@ final class Recorder {
         capture.screensEnabled = screensOn
         systemWriter.setMuted(monitor.excluded)
         micWriter.setMuted(monitor.excluded)
-        systemWriter.setEnabled(audioOn)
-        micWriter.setEnabled(audioOn)
-        if audioOn { mic.start() } else { mic.stop() }
+        // Pause, sleep, the disk guard or leaving auto end an auto recording and clear the buffer.
+        if (!audioAllowed || audioMode != .auto) && auto.recording {
+            auto.reset()
+            if audioMode == .auto { log.append("audio_auto_stop") }
+        }
+        let g = gate
+        let flush = pendingFlush && g == .write
+        pendingFlush = false
+        systemWriter.setGate(g, flush: flush)
+        micWriter.setGate(g, flush: flush)
+        listener.enabled = audioMode == .auto && g != .off
+        if micWanted(g) { mic.start() } else { mic.stop() }
         monitor.logsApps = !paused
         updateMenu()
     }
 
+    /// Auto mode, every 2 s: a call (another process records from the microphone, or a meeting
+    /// app/title is in front) or a conversation heard by the mic starts recording, flushing the
+    /// last 120 s; 180 s after both end it stops and listens again.
+    private func autoTick() {
+        guard audioMode == .auto, audioAllowed, !stopping else { return }
+        let call = monitor.meeting || InputUsage.otherProcessRecording(ourEngineRunning: mic.isRunning)
+        switch auto.step(now: Date(), call: call, conversation: listener.conversation) {
+        case .start(let reason)?:
+            log.append("audio_auto_start", reason: reason.rawValue)
+            pendingFlush = true
+            apply()
+        case .stop?:
+            log.append("audio_auto_stop")
+            apply()
+        case nil:
+            if autoReason != lastMenuReason { updateMenu() }
+        }
+    }
+
+    private var lastMenuReason: AutoReason?
+
+    /// Switches the audio mode (socket or menu bar). Go reads the new mode from `status` and
+    /// saves it as the default.
+    private func setAudioMode(_ m: AudioMode) {
+        guard m != audioMode else { return }
+        if auto.recording && m != .on { log.append("audio_auto_stop") }
+        auto.reset()
+        listener.reset()
+        audioMode = m
+        log.append("audio_mode", mode: m.rawValue)
+        apply()
+    }
+
     private func updateMenu() {
         let degraded = options.degraded ? "Recorder restarted after errors" : nil
-        menuBar?.update(paused: paused, error: captureError ?? micError ?? degraded)
+        lastMenuReason = autoReason
+        menuBar?.update(paused: paused, error: captureError ?? micError ?? degraded, audioMode: audioMode, autoReason: autoReason)
     }
 
     private func report(_ message: String) {
@@ -103,6 +162,13 @@ final class Recorder {
     // MARK: Commands
 
     private func handle(_ command: String) -> (reply: String, then: (() -> Void)?) {
+        if command.hasPrefix("audio_mode") {
+            guard let m = parseAudioModeCommand(command) else {
+                return ("error: audio_mode must be on, off or auto", nil)
+            }
+            setAudioMode(m)
+            return ("ok", nil)
+        }
         switch command {
         case "pause": pause()
         case "resume": resume()
@@ -136,7 +202,8 @@ final class Recorder {
     }
 
     /// Finishes the open chunk of both tracks (blocks until written, so `ok` means the files
-    /// are playable); the next samples open new chunks. Nothing to do while audio is off.
+    /// are playable); the next samples open new chunks. Nothing to do while audio is off or
+    /// only buffered.
     private func rotate() {
         systemWriter.rotate()
         micWriter.rotate()
@@ -151,8 +218,10 @@ final class Recorder {
     }
 
     private func statusJSON() -> String {
+        let active = gate == .write && !monitor.excluded
         let obj: [String: Any] = ["state": state, "since": rfc3339(since), "meeting": monitor.meeting,
-                                  "screens": screensOn, "audio": audioOn && !monitor.excluded]
+                                  "screens": screensOn, "audio": active, "audio_mode": audioMode.rawValue,
+                                  "audio_active": active, "audio_reason": autoReason?.rawValue ?? ""]
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -164,8 +233,9 @@ final class Recorder {
         guard !stopping else { return }
         stopping = true
         autoResume?.invalidate()
-        systemWriter.setEnabled(false)
-        micWriter.setEnabled(false)
+        autoTimer?.invalidate()
+        systemWriter.setGate(.off, flush: false)
+        micWriter.setGate(.off, flush: false)
         mic.stop()
         monitor.stop()
         server?.stop()

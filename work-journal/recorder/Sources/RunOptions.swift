@@ -11,6 +11,7 @@ struct RunOptions {
     var dashboardURL = URL(string: "http://127.0.0.1:4747")!
     var allDisplays = false
     var degraded = false
+    var audioMode = AudioMode.on
     var policy = PolicyConfig()
     var shots = ShotConfig()
 
@@ -63,6 +64,12 @@ struct RunOptions {
                 o.dashboardURL = u
             case "--all-displays": o.allDisplays = true
             case "--degraded": o.degraded = true
+            case "--audio-mode":
+                let v = try value()
+                guard let m = AudioMode(rawValue: v) else {
+                    throw RunOptionsError("--audio-mode must be on, off or auto, got \(v)")
+                }
+                o.audioMode = m
             case "--exclude-app": o.policy.excludeApps.append(try value())
             case "--exclude-title": o.policy.excludeTitles.append(try value())
             case "--meeting-app": o.policy.meetingApps.append(try value())

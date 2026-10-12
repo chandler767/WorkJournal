@@ -13,6 +13,8 @@
 <section class="status {{if .RecorderUp}}up{{else}}down{{end}}">
   <span class="dot" aria-hidden="true"></span>
   <span class="status-text">{{.StatusText}}</span>
+  {{if .AudioText}}<span class="audio-text">{{.AudioText}}</span>{{end}}
+  {{with .AudioModes}}<form method="post" action="/audio-mode" class="audio-mode" role="group" aria-label="Audio recording mode">{{range .}}<button type="submit" name="mode" value="{{.Value}}" aria-pressed="{{if .Current}}true{{else}}false{{end}}" title="{{if eq .Value "auto"}}Record audio only during calls and in-person conversations{{else if eq .Value "off"}}Never record audio{{else}}Always record audio{{end}}">{{.Label}}</button>{{end}}</form>{{end}}
   {{if .RecorderUp}}
   <form method="post" action="{{if .Paused}}/resume{{else}}/pause{{end}}"><button type="submit">{{if .Paused}}Resume{{else}}Pause{{end}}</button></form>
   {{end}}

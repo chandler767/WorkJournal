@@ -29,6 +29,9 @@ type Jobs interface {
 	Rollup(ctx context.Context, week string) error
 	Retain(ctx context.Context) error
 	DiskCheck(ctx context.Context) error
+	// SyncAudioMode copies an audio mode changed in the recorder's menu bar
+	// into the config.
+	SyncAudioMode(ctx context.Context) error
 	EnrollSpeaker(ctx context.Context, meetingID, speaker, name string) error
 }
 
@@ -99,6 +102,7 @@ func (s *Scheduler) Run(ctx context.Context, every time.Duration) {
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	cfg := s.Cfg()
 	s.step("disk check", s.Jobs.DiskCheck(ctx))
+	s.step("audio mode", s.Jobs.SyncAudioMode(ctx))
 	s.process(ctx, now)
 	s.partial(ctx, now, cfg)
 	s.closeDays(ctx, now, cfg)

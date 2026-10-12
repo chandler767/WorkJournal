@@ -27,14 +27,19 @@ type fakeControl struct {
 	mu      sync.Mutex
 	sent    []string
 	sendErr error
+	status  *capture.Status // nil: the recorder is not running
 }
 
 func (f *fakeControl) Pause() error  { return f.Send("pause") }
 func (f *fakeControl) Resume() error { return f.Send("resume") }
 func (f *fakeControl) Rotate() error { return f.Send("rotate") }
 func (f *fakeControl) Status() (capture.Status, error) {
-	return capture.Status{}, errors.New("no recorder")
+	if f.status == nil {
+		return capture.Status{}, errors.New("no recorder")
+	}
+	return *f.status, nil
 }
+func (f *fakeControl) SetAudioMode(m string) error { return f.Send("audio_mode " + m) }
 func (f *fakeControl) Send(c string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -691,5 +696,32 @@ func TestReprocessForgetsPrivacyDecisions(t *testing.T) {
 	}
 	if strings.Contains(string(b), key(9)) || !strings.Contains(string(b), key(10)) {
 		t.Fatalf("privacy cache after reprocess: %s", b)
+	}
+}
+
+// A mode picked in the recorder's menu bar is written to the config, so the
+// recorder keeps it after a restart.
+func TestSyncAudioModePersistsMenuBarChange(t *testing.T) {
+	j, ctl, _ := newJobs(t)
+	cfg := j.Cfg()
+	j.Cfg = func() config.Config { return cfg }
+	var saves int
+	j.SaveCfg = func(c config.Config) error { saves++; cfg = c; return nil }
+	ctx := context.Background()
+
+	if err := j.SyncAudioMode(ctx); err != nil || saves != 0 {
+		t.Fatalf("recorder down: err %v saves %d", err, saves)
+	}
+	ctl.status = &capture.Status{State: "recording", AudioMode: "auto"}
+	if err := j.SyncAudioMode(ctx); err != nil || saves != 1 || cfg.AudioMode != "auto" {
+		t.Fatalf("menu change: err %v saves %d mode %q", err, saves, cfg.AudioMode)
+	}
+	if err := j.SyncAudioMode(ctx); err != nil || saves != 1 {
+		t.Fatalf("in sync: err %v saves %d", err, saves)
+	}
+	j.SaveCfg = nil // not wired: nothing to do
+	ctl.status.AudioMode = "off"
+	if err := j.SyncAudioMode(ctx); err != nil {
+		t.Fatal(err)
 	}
 }

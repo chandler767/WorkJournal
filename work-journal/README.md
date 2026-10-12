@@ -89,6 +89,29 @@ started in a terminal first. The PATH captured when you run `autostart on` is us
 `whisper-cli` and `claude`, so run it from a normal terminal. Use the menu-bar Pause to stop
 recording temporarily; quitting the recorder from its menu only restarts it.
 
+## Audio modes
+
+Audio (microphone and system audio) has three modes; screenshots are not affected, and Pause
+still stops everything:
+
+- **On** (the default): audio is always recorded.
+- **Off**: no audio is recorded and the microphone is not used.
+- **Auto**: the microphone listens but nothing is written. The last two minutes of both
+  tracks are kept in memory only. Recording starts when a call is detected (another app is
+  using the microphone, or a meeting app or window is in front) or when the microphone hears
+  a back-and-forth conversation (speech in at least 40% of the last minute, with at least
+  four pauses of 0.3–2 seconds between turns). The two buffered minutes are written first,
+  so the start of the conversation is kept, in chunks named `HHMMSS-…` for their start.
+  Recording stops three minutes after the call or conversation ends. Buffered audio is never
+  written unless recording starts, and pausing clears it. In Auto the microphone indicator
+  stays on, because the microphone is listening.
+
+Switch modes from the recorder's menu bar (Audio: On / Off / Auto), from the On / Off / Auto
+control next to Pause on today's page, or set the default on the Settings page
+(`audio_mode`). A mode picked in the menu bar is saved to the config within a minute, so it
+survives a restart. The recorder logs `audio_mode`, `audio_auto_start` (with the reason,
+`call` or `in_person`) and `audio_auto_stop` events to `activity.jsonl`.
+
 ## Meetings
 
 A meeting is time in a meeting app or window (`meeting_apps`, `meeting_title_keywords`), a

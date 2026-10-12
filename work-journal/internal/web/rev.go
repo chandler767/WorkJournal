@@ -37,7 +37,7 @@ func (s *Server) dayRev(day string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, _, state := s.recorderState()
+	state := s.recorder().rev
 	disk, _, _ := s.Store.GetKV("disk_state")
 	closeFail, _, _ := s.Store.GetKV(scheduler.CloseFailuresKey(day))
 	return shortHash(db, fileStamp(s.Paths.DailyJournal(day)), state, disk, boolStr(s.SkillsMissing),

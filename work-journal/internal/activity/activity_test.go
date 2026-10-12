@@ -3,6 +3,7 @@ package activity
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"testing"
 	"time"
 
@@ -376,4 +377,29 @@ func TestInPersonSplitAroundShortCall(t *testing.T) {
 	if len(ms) != 1 || ms[0].App != "call" {
 		t.Fatalf("got %+v", ms)
 	}
+}
+
+// Audio-mode events from the recorder carry extra fields and change nothing
+// about the activity segments.
+func TestAudioModeEventsIgnoredBySegments(t *testing.T) {
+	p := t.TempDir() + "/activity.jsonl"
+	lines := `{"ts":"2026-10-07T14:00:00-07:00","type":"start"}
+{"ts":"2026-10-07T14:00:00-07:00","type":"app","app":"A","title":"a"}
+{"mode":"auto","ts":"2026-10-07T14:05:00-07:00","type":"audio_mode"}
+{"reason":"in_person","ts":"2026-10-07T14:10:00-07:00","type":"audio_auto_start"}
+{"ts":"2026-10-07T14:20:00-07:00","type":"app","app":"B","title":"b"}
+{"ts":"2026-10-07T14:40:00-07:00","type":"audio_auto_stop"}
+`
+	if err := os.WriteFile(p, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evs, skipped, err := ReadEvents(p)
+	if err != nil || skipped != 0 || len(evs) != 6 {
+		t.Fatalf("ReadEvents: %d events, %d skipped, %v", len(evs), skipped, err)
+	}
+	got := Segments(evs, at(14, 0), at(15, 0))
+	check(t, got, []Segment{
+		{at(14, 0), at(14, 20), "A", "a", KindActive},
+		{at(14, 20), at(15, 0), "B", "b", KindActive},
+	})
 }

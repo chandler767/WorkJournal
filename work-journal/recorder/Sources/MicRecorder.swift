@@ -3,8 +3,8 @@ import AVFoundation
 import CoreMedia
 
 /// Microphone → `AudioChunkWriter(track: "mic")` via an `AVAudioEngine` input tap, converted
-/// to mono Float32 48 kHz. The engine only runs while recording, so the mic indicator is off
-/// during pause and sleep
+/// to mono Float32 48 kHz. The engine only runs while audio is wanted (written, or buffered in
+/// auto mode), so the mic indicator is off during pause, sleep and audio mode off
 /// (during exclusion it keeps running and the writer stores silence). Call from the main thread.
 /// A mic error is reported only when it differs from the last one reported (cleared when the
 /// microphone runs).
@@ -19,6 +19,11 @@ final class MicRecorder {
     private var framesWritten: Int64 = 0
     private var configObserver: NSObjectProtocol?
     var onError: ((String) -> Void)?
+    /// Each converted mono 48 kHz buffer, on the tap thread (the auto-mode conversation
+    /// listener). Set before the engine starts.
+    var onPCM: ((UnsafeBufferPointer<Float>, Double) -> Void)?
+    /// Whether our engine is running the input device.
+    var isRunning: Bool { running }
     /// Called when the microphone starts recording, clearing any earlier error.
     var onRunning: (() -> Void)?
     private var lastError: String?
@@ -113,7 +118,11 @@ final class MicRecorder {
             status.pointee = .haveData
             return buffer
         }
-        guard error == nil, out.frameLength > 0, let sample = makeSampleBuffer(out) else { return }
+        guard error == nil, out.frameLength > 0 else { return }
+        if let onPCM = onPCM, let data = out.floatChannelData?[0] {
+            onPCM(UnsafeBufferPointer(start: data, count: Int(out.frameLength)), format.sampleRate)
+        }
+        guard let sample = makeSampleBuffer(out) else { return }
         writer.append(sample)
     }
 

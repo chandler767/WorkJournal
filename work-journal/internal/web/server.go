@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/voice/{name}/delete", s.sameOrigin(s.handleVoiceDelete))
 	mux.HandleFunc("POST /pause", s.sameOrigin(s.handlePause))
 	mux.HandleFunc("POST /resume", s.sameOrigin(s.handleResume))
+	mux.HandleFunc("POST /audio-mode", s.sameOrigin(s.handleAudioMode))
 	mux.HandleFunc("POST /close-day/{date}", s.sameOrigin(s.handleCloseDay))
 	mux.HandleFunc("POST /process-now", s.sameOrigin(s.handleProcessNow))
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
@@ -183,6 +185,31 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	if err := s.Control.Resume(); err != nil {
 		http.Error(w, "resume: "+err.Error(), http.StatusBadGateway)
 		return
+	}
+	redirectBack(w, r, "/day/"+config.DayKey(time.Now()))
+}
+
+// handleAudioMode switches the recorder's audio mode (on, off, auto) and
+// saves it as the default, so the recorder keeps it after a restart.
+func (s *Server) handleAudioMode(w http.ResponseWriter, r *http.Request) {
+	mode := r.PostFormValue("mode")
+	if !slices.Contains(config.AudioModes, mode) {
+		http.Error(w, fmt.Sprintf("mode must be one of %v", config.AudioModes), http.StatusBadRequest)
+		return
+	}
+	if err := s.Control.SetAudioMode(mode); err != nil {
+		http.Error(w, "audio mode: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if s.SaveCfg != nil {
+		c := s.Cfg()
+		if c.AudioMode != mode {
+			c.AudioMode = mode
+			if err := s.SaveCfg(c); err != nil {
+				http.Error(w, "save audio mode: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 	}
 	redirectBack(w, r, "/day/"+config.DayKey(time.Now()))
 }

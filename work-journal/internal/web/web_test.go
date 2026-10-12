@@ -23,6 +23,11 @@ type fakeControl struct {
 	sent      []string
 	sendErr   error
 	state     string // recorder state; "recording" when empty
+	// audio mode as the recorder reports it; modeErr fails SetAudioMode.
+	audioMode   string
+	audioActive bool
+	audioReason string
+	modeErr     error
 }
 
 func (f *fakeControl) Pause() error  { f.calls = append(f.calls, "pause"); return nil }
@@ -35,7 +40,16 @@ func (f *fakeControl) Status() (capture.Status, error) {
 	if st == "" {
 		st = "recording"
 	}
-	return capture.Status{State: st, Screens: true, Audio: true}, nil
+	return capture.Status{State: st, Screens: true, Audio: true,
+		AudioMode: f.audioMode, AudioActive: f.audioActive, AudioReason: f.audioReason}, nil
+}
+func (f *fakeControl) SetAudioMode(m string) error {
+	f.calls = append(f.calls, "audio_mode "+m)
+	if f.modeErr != nil {
+		return f.modeErr
+	}
+	f.audioMode = m
+	return nil
 }
 func (f *fakeControl) Send(c string) error { f.sent = append(f.sent, c); return f.sendErr }
 func (f *fakeControl) Rotate() error       { return f.Send("rotate") }
@@ -70,8 +84,9 @@ func (f *fakeJobs) Rollup(_ context.Context, w string) error {
 	f.rolled = append(f.rolled, w)
 	return nil
 }
-func (f *fakeJobs) Retain(context.Context) error    { return nil }
-func (f *fakeJobs) DiskCheck(context.Context) error { return nil }
+func (f *fakeJobs) Retain(context.Context) error        { return nil }
+func (f *fakeJobs) DiskCheck(context.Context) error     { return nil }
+func (f *fakeJobs) SyncAudioMode(context.Context) error { return nil }
 func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, sp, n string) error {
 	f.enrolled = append(f.enrolled, [3]string{m, sp, n})
 	if f.enrollSaw != nil {

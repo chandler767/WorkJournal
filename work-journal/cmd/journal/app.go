@@ -295,6 +295,7 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		Summarizer: a.Summarizer,
 		Runner:     a.Runner,
 		Control:    a.Control,
+		SaveCfg:    a.SaveCfg,
 		FreeGB:     retention.FreeGB,
 		Logf:       log.Printf,
 	}

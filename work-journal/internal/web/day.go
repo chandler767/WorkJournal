@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"workjournal/internal/config"
@@ -65,6 +66,8 @@ type dayPage struct {
 	RecorderUp              bool
 	Paused                  bool
 	StatusText              string
+	AudioText               string        // "Audio: Auto · listening"; "" from an older recorder
+	AudioModes              []audioChoice // the On / Off / Auto control; nil hides it
 	DiskWarn                string
 	SkillsMissing           bool
 	CloseFailed             bool
@@ -100,7 +103,11 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	}
 	p.Rev = rev
 	p.Notice = dayNotice(r.URL.Query())
-	p.RecorderUp, p.Paused, p.StatusText = s.recorderState()
+	rv := s.recorder()
+	p.RecorderUp, p.Paused, p.StatusText, p.AudioText = rv.Up, rv.Paused, rv.Text, rv.AudioText
+	if rv.Up && rv.AudioMode != "" {
+		p.AudioModes = audioChoices(rv.AudioMode)
+	}
 	if v, _, err := s.Store.GetKV("disk_state"); err == nil && v != "" && v != "normal" {
 		p.DiskWarn = v
 	}
@@ -176,13 +183,62 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	render(w, "day", p)
 }
 
-// recorderState asks the recorder; failure is shown, not fatal.
-func (s *Server) recorderState() (up, paused bool, text string) {
+// recorderView is what the day page shows about the recorder.
+type recorderView struct {
+	Up, Paused bool
+	Text       string // recorder state, or "Recorder not running"
+	AudioMode  string // "on", "off", "auto"; "" from an older recorder
+	AudioText  string
+	// rev fingerprints everything above plus whether audio is active.
+	rev string
+}
+
+// recorder asks the recorder for its state; failure is shown, not fatal.
+func (s *Server) recorder() recorderView {
 	st, err := s.Control.Status()
 	if err != nil {
-		return false, false, "Recorder not running"
+		return recorderView{Text: "Recorder not running", rev: "down"}
 	}
-	return true, st.State == "paused", st.State
+	return recorderView{Up: true, Paused: st.State == "paused", Text: st.State, AudioMode: st.AudioMode,
+		AudioText: audioText(st.AudioMode, st.AudioActive, st.AudioReason),
+		rev:       strings.Join([]string{st.State, st.AudioMode, boolStr(st.AudioActive), st.AudioReason}, "/")}
+}
+
+// audioText is the status line for the recorder's audio mode: "Audio: On",
+// "Audio: Off", "Audio: Auto · listening" or "Audio: Auto · recording (call)".
+func audioText(mode string, active bool, reason string) string {
+	switch mode {
+	case "on":
+		return "Audio: On"
+	case "off":
+		return "Audio: Off"
+	case "auto":
+		if !active {
+			return "Audio: Auto · listening"
+		}
+		switch reason {
+		case "call":
+			return "Audio: Auto · recording (call)"
+		case "in_person":
+			return "Audio: Auto · recording (in person)"
+		}
+		return "Audio: Auto · recording"
+	}
+	return ""
+}
+
+// audioChoice is one button of the On / Off / Auto control.
+type audioChoice struct {
+	Value, Label string
+	Current      bool
+}
+
+func audioChoices(current string) []audioChoice {
+	out := make([]audioChoice, 0, len(config.AudioModes))
+	for _, m := range config.AudioModes {
+		out = append(out, audioChoice{Value: m, Label: strings.ToUpper(m[:1]) + m[1:], Current: m == current})
+	}
+	return out
 }
 
 func summaryEmpty(h skills.HourSummary) bool {

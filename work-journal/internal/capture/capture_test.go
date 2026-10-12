@@ -571,3 +571,110 @@ func TestSocketControlRotateReportsError(t *testing.T) {
 		t.Errorf("Rotate err = %v, want the recorder's error", err)
 	}
 }
+
+func TestRecorderArgsAudioMode(t *testing.T) {
+	c := config.Default()
+	p := config.Paths{Root: "/data"}
+	if args := RecorderArgs(c, p); !hasPair(args, "--audio-mode", "on") {
+		t.Errorf("default: missing --audio-mode on in %v", args)
+	}
+	c.AudioMode = "auto"
+	if args := RecorderArgs(c, p); !hasPair(args, "--audio-mode", "auto") {
+		t.Errorf("missing --audio-mode auto in %v", args)
+	}
+}
+
+// audioRecorder serves "status" with the given JSON and answers "ok" to
+// everything else, recording the commands.
+func audioRecorder(t *testing.T, status string) (sock string, cmds func() []string) {
+	t.Helper()
+	sock = filepath.Join(shortSockDir(t), "r.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var mu sync.Mutex
+	var got []string
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 64)
+			n, _ := c.Read(buf)
+			cmd := strings.TrimSpace(string(buf[:n]))
+			mu.Lock()
+			got = append(got, cmd)
+			mu.Unlock()
+			if cmd == "status" {
+				c.Write([]byte(status + "\n"))
+			} else {
+				c.Write([]byte("ok\n"))
+			}
+			c.Close()
+		}
+	}()
+	return sock, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), got...)
+	}
+}
+
+func TestSocketControlAudioMode(t *testing.T) {
+	sock, cmds := audioRecorder(t, `{"state":"recording","since":"2026-10-07T09:30:00Z","audio_mode":"auto","audio_active":true,"audio_reason":"call"}`)
+	ctl := NewSocketControl(sock)
+	st, err := ctl.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.AudioMode != "auto" || !st.AudioActive || st.AudioReason != "call" {
+		t.Errorf("status = %+v", st)
+	}
+	if err := ctl.SetAudioMode("off"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl.SetAudioMode("loud"); err == nil {
+		t.Error("invalid mode accepted")
+	}
+	if got := cmds(); !slices.Equal(got, []string{"status", "audio_mode off"}) {
+		t.Errorf("cmds = %v (an invalid mode must not reach the recorder)", got)
+	}
+}
+
+type modeControl struct {
+	Control
+	st  Status
+	err error
+}
+
+func (m modeControl) Status() (Status, error) { return m.st, m.err }
+
+func TestSyncAudioModePersistsRecorderChange(t *testing.T) {
+	cfg := config.Default()
+	var saved []config.Config
+	save := func(c config.Config) error { saved = append(saved, c); cfg = c; return nil }
+	get := func() config.Config { return cfg }
+
+	// Menu-bar change: the recorder reports auto while the config says on.
+	changed, err := SyncAudioMode(modeControl{st: Status{AudioMode: "auto"}}, get, save)
+	if err != nil || !changed || len(saved) != 1 || saved[0].AudioMode != "auto" {
+		t.Fatalf("changed %v err %v saved %+v", changed, err, saved)
+	}
+	// Same mode: nothing to save.
+	if changed, err := SyncAudioMode(modeControl{st: Status{AudioMode: "auto"}}, get, save); err != nil || changed || len(saved) != 1 {
+		t.Fatalf("same mode: changed %v err %v saves %d", changed, err, len(saved))
+	}
+	// Recorder down, or an older recorder that reports no mode, or nonsense: no change, no error.
+	for _, ctl := range []Control{
+		modeControl{err: os.ErrNotExist},
+		modeControl{st: Status{}},
+		modeControl{st: Status{AudioMode: "loud"}},
+	} {
+		if changed, err := SyncAudioMode(ctl, get, save); err != nil || changed || len(saved) != 1 {
+			t.Fatalf("%+v: changed %v err %v saves %d", ctl, changed, err, len(saved))
+		}
+	}
+}
