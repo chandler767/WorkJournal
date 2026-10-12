@@ -624,13 +624,13 @@ func audioRecorder(t *testing.T, status string) (sock string, cmds func() []stri
 }
 
 func TestSocketControlAudioMode(t *testing.T) {
-	sock, cmds := audioRecorder(t, `{"state":"recording","since":"2026-10-07T09:30:00Z","audio_mode":"auto","audio_active":true,"audio_reason":"call"}`)
+	sock, cmds := audioRecorder(t, `{"state":"recording","since":"2026-10-07T09:30:00Z","audio_mode":"auto","audio_active":true,"audio_reason":"call","audio_app":"Zoom"}`)
 	ctl := NewSocketControl(sock)
 	st, err := ctl.Status()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.AudioMode != "auto" || !st.AudioActive || st.AudioReason != "call" {
+	if st.AudioMode != "auto" || !st.AudioActive || st.AudioReason != "call" || st.AudioApp != "Zoom" {
 		t.Errorf("status = %+v", st)
 	}
 	if err := ctl.SetAudioMode("off"); err != nil {

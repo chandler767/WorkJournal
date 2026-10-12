@@ -27,6 +27,7 @@ type fakeControl struct {
 	audioMode   string
 	audioActive bool
 	audioReason string
+	audioApp    string
 	modeErr     error
 }
 
@@ -41,7 +42,8 @@ func (f *fakeControl) Status() (capture.Status, error) {
 		st = "recording"
 	}
 	return capture.Status{State: st, Screens: true, Audio: true,
-		AudioMode: f.audioMode, AudioActive: f.audioActive, AudioReason: f.audioReason}, nil
+		AudioMode: f.audioMode, AudioActive: f.audioActive, AudioReason: f.audioReason,
+		AudioApp: f.audioApp}, nil
 }
 func (f *fakeControl) SetAudioMode(m string) error {
 	f.calls = append(f.calls, "audio_mode "+m)

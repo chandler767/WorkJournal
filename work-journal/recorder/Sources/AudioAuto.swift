@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import AVFoundation
 import CoreAudio
 import CoreMedia
@@ -56,9 +57,12 @@ enum VAD {
     static let minRMS: Float = 0.006
     /// Speech must be this many times the tracked background level.
     static let noiseFactor: Float = 3.0
-    /// Per-frame rise of the tracked background level (≈ ×2.7 per minute), so it follows a
-    /// room that gets louder; it drops at once to any quieter frame.
-    static let noiseFloorRise: Float = 1.0005
+    /// The background level is the quietest frame of the last `noiseWindowSeconds`: it drops at
+    /// once to a quieter frame and follows a room that gets louder within the window. Speech
+    /// has gaps between words, so talking does not raise it.
+    static let noiseWindowSeconds = 5.0
+    /// Lowest background level, so digital silence (RMS 0) cannot pin it at zero.
+    static let noiseFloorEpsilon: Float = 1e-4
     /// Zero-crossing rate (crossings per sample) above which a frame is hiss or noise rather
     /// than voiced speech (a voice is typically under 0.15; white noise is about 0.5).
     static let maxZCR: Float = 0.35
@@ -83,12 +87,21 @@ func zeroCrossingRate(_ x: UnsafeBufferPointer<Float>) -> Float {
 struct VoiceActivityDetector {
     private(set) var noiseFloor: Float = VAD.minRMS
     private var pending: [Float] = []
+    private var recent: [Float] = [] // frame RMS of the last noise window (ring)
+    private var recentHead = 0
 
     /// Classifies one frame and updates the background level.
     mutating func isSpeech(_ frame: UnsafeBufferPointer<Float>) -> Bool {
         let rms = frameRMS(frame)
         let speech = rms >= max(VAD.minRMS, noiseFloor * VAD.noiseFactor) && zeroCrossingRate(frame) <= VAD.maxZCR
-        noiseFloor = rms < noiseFloor ? rms : noiseFloor * VAD.noiseFloorRise
+        let window = max(1, Int((VAD.noiseWindowSeconds / VAD.frameSeconds).rounded()))
+        if recent.count < window {
+            recent.append(rms)
+        } else {
+            recent[recentHead] = rms
+            recentHead = (recentHead + 1) % window
+        }
+        noiseFloor = max(VAD.noiseFloorEpsilon, recent.min() ?? rms)
         return speech
     }
 
@@ -263,9 +276,24 @@ struct AudioInputProcess {
 /// for our own system-audio capture.
 let ignoredInputBundles: Set<String> = ["com.apple.replayd"]
 
+/// The first process other than us (and not an ignored helper) using audio input.
+func firstOtherInput(_ processes: [AudioInputProcess], ownPID: pid_t) -> AudioInputProcess? {
+    processes.first { $0.runningInput && $0.pid != ownPID && !ignoredInputBundles.contains($0.bundle) }
+}
+
 /// True when a process other than us (and not an ignored helper) is using audio input.
 func otherInputActive(_ processes: [AudioInputProcess], ownPID: pid_t) -> Bool {
-    processes.contains { $0.runningInput && $0.pid != ownPID && !ignoredInputBundles.contains($0.bundle) }
+    firstOtherInput(processes, ownPID: ownPID) != nil
+}
+
+/// The app behind a call: its bundle id (logged with `audio_auto_start`) and the name the
+/// dashboard shows ("Zoom"). Both are "" when only the device-level fallback saw the call.
+struct CallSource: Equatable {
+    let bundle: String
+    let name: String
+
+    /// Name for the status line: the app name, else the bundle id, else "" (shown as "call").
+    var label: String { name.isEmpty ? bundle : name }
 }
 
 /// Fallback without the per-process list: the default input device runs somewhere, and not
@@ -317,10 +345,14 @@ enum InputUsage {
         return (u32(AudioObjectID(dev), kAudioDevicePropertyDeviceIsRunningSomewhere) ?? 0) != 0
     }
 
-    /// The call signal from microphone use: another process is recording.
-    static func otherProcessRecording(ourEngineRunning: Bool) -> Bool {
-        if let list = processes() { return otherInputActive(list, ownPID: getpid()) }
-        return deviceFallbackCall(runningSomewhere: defaultInputRunningSomewhere(), ourEngineRunning: ourEngineRunning)
+    /// The call signal from microphone use: the other process recording, or nil.
+    static func otherProcessRecording(ourEngineRunning: Bool) -> CallSource? {
+        if let list = processes() {
+            guard let p = firstOtherInput(list, ownPID: getpid()) else { return nil }
+            return CallSource(bundle: p.bundle, name: NSRunningApplication(processIdentifier: p.pid)?.localizedName ?? "")
+        }
+        let call = deviceFallbackCall(runningSomewhere: defaultInputRunningSomewhere(), ourEngineRunning: ourEngineRunning)
+        return call ? CallSource(bundle: "", name: "") : nil
     }
 }
 

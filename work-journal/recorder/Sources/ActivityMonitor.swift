@@ -79,6 +79,8 @@ final class ActivityMonitor {
     private var idle = false
     private var lastLogged: Frontmost?
     private var lastSeen: Frontmost?
+    /// Bundle id and name of the frontmost app at the last poll.
+    var frontmostApp: (bundle: String, name: String) { (lastSeen?.bundle ?? "", lastSeen?.app ?? "") }
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
 

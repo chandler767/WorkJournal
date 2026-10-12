@@ -52,19 +52,20 @@ func TestAudioModePostRecorderErrorNotSaved(t *testing.T) {
 
 func TestDayPageShowsAudioModeControl(t *testing.T) {
 	cases := []struct {
-		mode, reason string
-		active       bool
-		want         string
+		mode, reason, app string
+		active            bool
+		want              string
 	}{
-		{"on", "", true, "Audio: On"},
-		{"off", "", false, "Audio: Off"},
-		{"auto", "", false, "Audio: Auto · listening"},
-		{"auto", "call", true, "Audio: Auto · recording (call)"},
-		{"auto", "in_person", true, "Audio: Auto · recording (in person)"},
+		{"on", "", "", true, "Audio: On"},
+		{"off", "", "", false, "Audio: Off"},
+		{"auto", "", "", false, "Audio: Auto · listening"},
+		{"auto", "call", "", true, "Audio: Auto · recording (call)"},
+		{"auto", "call", "Zoom", true, "Audio: Auto · recording (Zoom)"},
+		{"auto", "in_person", "", true, "Audio: Auto · recording (in person)"},
 	}
 	for _, c := range cases {
 		e := newEnv(t)
-		e.ctl.audioMode, e.ctl.audioReason, e.ctl.audioActive = c.mode, c.reason, c.active
+		e.ctl.audioMode, e.ctl.audioReason, e.ctl.audioActive, e.ctl.audioApp = c.mode, c.reason, c.active, c.app
 		body := e.get("/day/" + seedDay).Body.String()
 		mustContain(t, body, c.want, `action="/audio-mode"`,
 			`name="mode" value="on"`, `name="mode" value="off"`, `name="mode" value="auto"`)
@@ -91,8 +92,13 @@ func TestDayRevChangesWithAudioMode(t *testing.T) {
 	if active == base {
 		t.Error("rev unchanged when auto started recording")
 	}
-	e.ctl.audioMode, e.ctl.audioActive, e.ctl.audioReason = "off", false, ""
-	if revOf(t, e, day) == active {
+	e.ctl.audioApp = "Zoom"
+	withApp := revOf(t, e, day)
+	if withApp == active {
+		t.Error("rev unchanged when the call app became known")
+	}
+	e.ctl.audioMode, e.ctl.audioActive, e.ctl.audioReason, e.ctl.audioApp = "off", false, "", ""
+	if revOf(t, e, day) == withApp {
 		t.Error("rev unchanged when the mode changed")
 	}
 }

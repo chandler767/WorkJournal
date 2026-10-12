@@ -109,8 +109,10 @@ still stops everything:
 Switch modes from the recorder's menu bar (Audio: On / Off / Auto), from the On / Off / Auto
 control next to Pause on today's page, or set the default on the Settings page
 (`audio_mode`). A mode picked in the menu bar is saved to the config within a minute, so it
-survives a restart. The recorder logs `audio_mode`, `audio_auto_start` (with the reason,
-`call` or `in_person`) and `audio_auto_stop` events to `activity.jsonl`.
+survives a restart. While Auto records a call, today's page names the app using the
+microphone ("Audio: Auto · recording (Zoom)"). The recorder logs `audio_mode`,
+`audio_auto_start` (with the reason, `call` or `in_person`, and for a call the bundle id of
+the app that triggered it) and `audio_auto_stop` events to `activity.jsonl`.
 
 ## Meetings
 

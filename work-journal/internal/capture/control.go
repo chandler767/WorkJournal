@@ -29,6 +29,8 @@ type Status struct {
 	AudioActive bool `json:"audio_active"`
 	// AudioReason is why auto mode is recording: "call" or "in_person".
 	AudioReason string `json:"audio_reason"`
+	// AudioApp names the app behind a "call" recording ("Zoom"); "" when unknown.
+	AudioApp string `json:"audio_app"`
 }
 
 // Control sends commands to a running recorder.

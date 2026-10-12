@@ -32,6 +32,8 @@ final class Recorder {
     /// Set by an auto start: the next `apply` flushes the buffered audio into the new chunks.
     private var pendingFlush = false
     private let listener = ConversationListener()
+    /// The app behind an auto recording started (or continued) by a call.
+    private var autoApp: CallSource?
 
     init(options: RunOptions) {
         self.options = options
@@ -102,6 +104,7 @@ final class Recorder {
         // Pause, sleep, the disk guard or leaving auto end an auto recording and clear the buffer.
         if (!audioAllowed || audioMode != .auto) && auto.recording {
             auto.reset()
+            autoApp = nil
             if audioMode == .auto { log.append("audio_auto_stop") }
         }
         let g = gate
@@ -120,21 +123,31 @@ final class Recorder {
     /// last 120 s; 180 s after both end it stops and listens again.
     private func autoTick() {
         guard audioMode == .auto, audioAllowed, !stopping else { return }
-        let call = monitor.meeting || InputUsage.otherProcessRecording(ourEngineRunning: mic.isRunning)
-        switch auto.step(now: Date(), call: call, conversation: listener.conversation) {
+        let front = monitor.frontmostApp
+        let source = InputUsage.otherProcessRecording(ourEngineRunning: mic.isRunning)
+            ?? (monitor.meeting ? CallSource(bundle: front.bundle, name: front.name) : nil)
+        let action = auto.step(now: Date(), call: source != nil, conversation: listener.conversation)
+        if autoReason == .call {
+            if let s = source { autoApp = s }
+        } else {
+            autoApp = nil
+        }
+        switch action {
         case .start(let reason)?:
-            log.append("audio_auto_start", reason: reason.rawValue)
+            let bundle = reason == .call ? autoApp?.bundle : nil
+            log.append("audio_auto_start", bundle: bundle?.isEmpty == false ? bundle : nil, reason: reason.rawValue)
             pendingFlush = true
             apply()
         case .stop?:
             log.append("audio_auto_stop")
             apply()
         case nil:
-            if autoReason != lastMenuReason { updateMenu() }
+            if autoReason != lastMenuReason || autoApp != lastMenuApp { updateMenu() }
         }
     }
 
     private var lastMenuReason: AutoReason?
+    private var lastMenuApp: CallSource?
 
     /// Switches the audio mode (socket or menu bar). Go reads the new mode from `status` and
     /// saves it as the default.
@@ -142,6 +155,7 @@ final class Recorder {
         guard m != audioMode else { return }
         if auto.recording && m != .on { log.append("audio_auto_stop") }
         auto.reset()
+        autoApp = nil
         listener.reset()
         audioMode = m
         log.append("audio_mode", mode: m.rawValue)
@@ -151,7 +165,9 @@ final class Recorder {
     private func updateMenu() {
         let degraded = options.degraded ? "Recorder restarted after errors" : nil
         lastMenuReason = autoReason
-        menuBar?.update(paused: paused, error: captureError ?? micError ?? degraded, audioMode: audioMode, autoReason: autoReason)
+        lastMenuApp = autoApp
+        menuBar?.update(paused: paused, error: captureError ?? micError ?? degraded, audioMode: audioMode,
+                        autoReason: autoReason, autoApp: autoApp?.label ?? "")
     }
 
     private func report(_ message: String) {
@@ -221,7 +237,8 @@ final class Recorder {
         let active = gate == .write && !monitor.excluded
         let obj: [String: Any] = ["state": state, "since": rfc3339(since), "meeting": monitor.meeting,
                                   "screens": screensOn, "audio": active, "audio_mode": audioMode.rawValue,
-                                  "audio_active": active, "audio_reason": autoReason?.rawValue ?? ""]
+                                  "audio_active": active, "audio_reason": autoReason?.rawValue ?? "",
+                                  "audio_app": autoReason == .call ? autoApp?.label ?? "" : ""]
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -234,8 +251,8 @@ final class Recorder {
         stopping = true
         autoResume?.invalidate()
         autoTimer?.invalidate()
-        systemWriter.setGate(.off, flush: false)
-        micWriter.setGate(.off, flush: false)
+        systemWriter.close()
+        micWriter.close()
         mic.stop()
         monitor.stop()
         server?.stop()

@@ -37,13 +37,27 @@ private func vadChecks() -> [(String, Bool)] {
     let hum = sine(frame * 100, freq: 120, amp: 0.004)
     _ = hum.withUnsafeBufferPointer { room.feed($0, sampleRate: 48_000) }
     let voiceOverRoom = sine(frame * 2, freq: 180, amp: 0.05).withUnsafeBufferPointer { room.feed($0, sampleRate: 48_000) }
+    // Digital silence, then a steady room hum louder than the absolute floor, then a voice:
+    // the background level must climb out of zero to the hum, so the hum is not speech.
+    var after = VoiceActivityDetector()
+    _ = [Float](repeating: 0, count: frame * 20).withUnsafeBufferPointer { after.feed($0, sampleRate: 48_000) }
+    let floorAfterSilence = after.noiseFloor
+    let humDecisions = sine(frame * 400, freq: 120, amp: 0.02).withUnsafeBufferPointer { after.feed($0, sampleRate: 48_000) }
+    let speechAfterHum = sine(frame * 3, freq: 200, amp: 0.15).withUnsafeBufferPointer { after.feed($0, sampleRate: 48_000) }
     return [
         ("vad frame is 30 ms", frame == 1440),
+        ("vad: silence leaves the floor at the epsilon, not 0", floorAfterSilence == VAD.noiseFloorEpsilon),
+        ("vad: after silence, room hum stops counting as speech", humDecisions.suffix(100).allSatisfy { !$0 }),
+        ("vad: after silence and hum, a voice is speech", speechAfterHum == [true, true, true]),
         ("vad: digital silence is not speech", !speech([Float](repeating: 0, count: frame))),
         ("vad: voiced tone is speech", speech(sine(frame, freq: 200, amp: 0.1))),
         ("vad: faint tone below the floor is not speech", !speech(sine(frame, freq: 200, amp: 0.002))),
         ("vad: loud hiss (high zero-crossing rate) is not speech", !speech(noise(frame, amp: 0.2))),
-        ("vad: frames split across buffers", first.isEmpty && second == [true, true]),
+        ("vad: frames split across buffers", first.isEmpty && second.count == 2 && second == {
+            var whole = VoiceActivityDetector()
+            return (a + b).withUnsafeBufferPointer { whole.feed($0, sampleRate: 48_000) }
+        }()),
+        ("vad: a steady tone becomes background after the first frame", second == [true, false]),
         ("vad: steady room noise is not speech", room.noiseFloor < 0.006),
         ("vad: voice over room noise is speech", voiceOverRoom == [true, true]),
     ]
@@ -180,6 +194,11 @@ private func callChecks() -> [(String, Bool)] {
     }
     return [
         ("call: another app using the mic", otherInputActive([p(me, "local.workjournal.recorder", true), p(7, "us.zoom.xos", true)], ownPID: me)),
+        ("call: the triggering app is reported",
+         firstOtherInput([p(me, "local.workjournal.recorder", true), p(3, "com.apple.replayd", true), p(9, "com.apple.Safari", false),
+                          p(7, "us.zoom.xos", true)], ownPID: me)?.bundle == "us.zoom.xos"),
+        ("call: label prefers the app name", CallSource(bundle: "us.zoom.xos", name: "zoom.us").label == "zoom.us"
+            && CallSource(bundle: "us.zoom.xos", name: "").label == "us.zoom.xos" && CallSource(bundle: "", name: "").label == ""),
         ("call: only our own mic use", !otherInputActive([p(me, "local.workjournal.recorder", true)], ownPID: me)),
         ("call: screen capture daemon ignored", !otherInputActive([p(3, "com.apple.replayd", true)], ownPID: me)),
         ("call: idle apps ignored", !otherInputActive([p(7, "us.zoom.xos", false)], ownPID: me)),
@@ -274,7 +293,31 @@ private func ringFlushChecks() -> [(String, Bool)] {
     feed(d, 10)
     d.finish()
 
+    // A flush never holds up the caller: gate and mute changes are queued, a repeat is free,
+    // and rotate waits for at most one flush slice. Nothing buffered is lost.
+    let e = AudioChunkWriter(track: "slices", dataDir: dir, chunkMinutes: 60)
+    e.setGate(.buffer, flush: false)
+    feed(e, 600) // 60 s buffered
+    e.sync()
+    let t0 = Date()
+    e.setGate(.write, flush: true)
+    e.setMuted(true)
+    e.setMuted(false)
+    e.setGate(.write, flush: false) // repeat: no-op
+    let callerBlocked = Date().timeIntervalSince(t0)
+    let r0 = Date()
+    e.rotate()
+    let rotateWait = Date().timeIntervalSince(r0)
+    feed(e, 10) // 1 s live, queued behind the flush
+    e.finish()
+    let sliced = chunks("slices")
+    let slicedFrames = sliced.reduce(Int64(0)) { $0 + frames($1) }
+
     return pure + [
+        ("flush: gate and mute changes do not block the caller", callerBlocked < 0.05),
+        ("flush: rotate waits at most about one slice", rotateWait < 0.4),
+        ("flush: all 61 s written across the rotated chunks",
+         slicedFrames >= 48_000 * 59 && slicedFrames <= 48_000 * 63 && !sliced.isEmpty),
         ("listening writes nothing to disk", nothingWhileListening),
         ("start flushes the buffer into one chunk", flushed.count == 1),
         ("flushed chunk named HHMMSS for the buffer start", nameOK),

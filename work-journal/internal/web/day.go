@@ -200,13 +200,14 @@ func (s *Server) recorder() recorderView {
 		return recorderView{Text: "Recorder not running", rev: "down"}
 	}
 	return recorderView{Up: true, Paused: st.State == "paused", Text: st.State, AudioMode: st.AudioMode,
-		AudioText: audioText(st.AudioMode, st.AudioActive, st.AudioReason),
-		rev:       strings.Join([]string{st.State, st.AudioMode, boolStr(st.AudioActive), st.AudioReason}, "/")}
+		AudioText: audioText(st.AudioMode, st.AudioActive, st.AudioReason, st.AudioApp),
+		rev:       strings.Join([]string{st.State, st.AudioMode, boolStr(st.AudioActive), st.AudioReason, st.AudioApp}, "/")}
 }
 
 // audioText is the status line for the recorder's audio mode: "Audio: On",
-// "Audio: Off", "Audio: Auto · listening" or "Audio: Auto · recording (call)".
-func audioText(mode string, active bool, reason string) string {
+// "Audio: Off", "Audio: Auto · listening" or "Audio: Auto · recording (call)"; a call
+// whose app is known names it: "Audio: Auto · recording (Zoom)".
+func audioText(mode string, active bool, reason, app string) string {
 	switch mode {
 	case "on":
 		return "Audio: On"
@@ -218,6 +219,9 @@ func audioText(mode string, active bool, reason string) string {
 		}
 		switch reason {
 		case "call":
+			if app != "" {
+				return "Audio: Auto · recording (" + app + ")"
+			}
 			return "Audio: Auto · recording (call)"
 		case "in_person":
 			return "Audio: Auto · recording (in person)"

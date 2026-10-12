@@ -48,15 +48,16 @@ final class MenuBar: NSObject {
     }
 
     /// `error` is a short message shown as a disabled item; nil hides it.
-    /// `autoReason` is set while auto mode is recording.
-    func update(paused: Bool, error: String?, audioMode: AudioMode, autoReason: AutoReason?) {
+    /// `autoReason` is set while auto mode is recording; `autoApp` names the call's app ("" if unknown).
+    func update(paused: Bool, error: String?, audioMode: AudioMode, autoReason: AutoReason?, autoApp: String) {
         for (m, item) in audioItems {
             item.state = m == audioMode ? .on : .off
             switch m {
             case .on: item.title = "Audio: On"
             case .off: item.title = "Audio: Off"
             case .auto:
-                let detail = autoReason.map { $0 == .call ? " (recording: call)" : " (recording: in person)" }
+                let call = autoApp.isEmpty ? "call" : autoApp
+                let detail = autoReason.map { $0 == .call ? " (recording: \(call))" : " (recording: in person)" }
                     ?? (audioMode == .auto ? " (listening)" : "")
                 item.title = "Audio: Auto" + detail
             }

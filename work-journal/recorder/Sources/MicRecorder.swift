@@ -59,10 +59,11 @@ final class MicRecorder {
         }
     }
 
+    /// Stops the engine. The recorder finishes the mic chunk through the writer's gate, which
+    /// never blocks the main thread behind a flush.
     func stop() {
         wanted = false
         stopEngine()
-        writer.finish()
     }
 
     private func startEngine() {
