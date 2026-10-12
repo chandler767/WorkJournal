@@ -280,7 +280,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             self.stream = nil
             self.shotTimer?.invalidate()
             self.shotTimer = nil
-            self.systemWriter.rotate() // finish the open chunk; never waits out a whole flush
+            self.systemWriter.endChunkSoon() // never waits on the main thread
             self.recoverAfterFailure(.streamStopped, "capture stopped: \(error.localizedDescription)")
         }
     }

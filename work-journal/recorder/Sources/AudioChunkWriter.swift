@@ -30,12 +30,18 @@ final class AudioChunkWriter {
     /// Longest stretch a flush keeps the writer queue busy before yielding, so a synchronous
     /// call (rotate, from the main thread) waits at most about this long behind it.
     static let flushSlice: TimeInterval = 0.15
+    /// Longest `rotate` spends writing out a flush in progress (per track; the recorder rotates
+    /// both, so ≤ 30 s in all, under the 35 s Go allows for `rotate`).
+    static let rotateFlushLimit: TimeInterval = 15
+    /// Longest `finish`/`close` spend writing out a flush in progress.
+    static let closeFlushLimit: TimeInterval = 30
 
     /// A sample waiting to be written in order after a start: buffered audio, then the live
     /// samples that arrived while it was being written.
     private enum Pending {
         case ring(RingEntry)
         case live(CMSampleBuffer, wall: Date)
+        case ready(CMSampleBuffer, wall: Date, exact: Bool) // converted, waiting for the encoder
         case written // released once written
     }
 
@@ -61,8 +67,13 @@ final class AudioChunkWriter {
     private var requestedGate = AudioGate.write
     private var requestedMuted = false
 
-    init(track: String, dataDir: URL, chunkMinutes: Int) {
+    /// This writer's flush slice (`flushSlice`; run-tests shorten it to force a flush across
+    /// many slices).
+    private let slice: TimeInterval
+
+    init(track: String, dataDir: URL, chunkMinutes: Int, flushSlice: TimeInterval = AudioChunkWriter.flushSlice) {
         self.track = track
+        slice = flushSlice
         self.dataDir = dataDir
         self.chunkMinutes = chunkMinutes
         queue = DispatchQueue(label: "workjournal.audio.\(track)")
@@ -104,18 +115,31 @@ final class AudioChunkWriter {
 
     /// Finishes the current chunk (playable `.m4a`, blocks until written) and leaves the writer
     /// enabled, so the next sample opens a new chunk named for that time (`HHMMSS` when `HHMM`
-    /// is taken). A no-op when no chunk is open (disabled, buffering, or no sample yet). During
-    /// a flush it waits for at most one slice; the rest of the flush goes to a new chunk.
+    /// is taken). A no-op when no chunk is open (disabled, buffering, or no sample yet). A flush
+    /// in progress is written out first (at most `rotateFlushLimit`, else abandoned and
+    /// logged), so every chunk started before the rotate is complete when it returns and live
+    /// audio continues in a chunk opened after it.
     func rotate() {
-        queue.sync { finishOnQueue() }
+        queue.sync {
+            flushStep(generation: flushGeneration, run: .complete(limit: Self.rotateFlushLimit))
+            finishOnQueue()
+        }
     }
 
     /// Writes whatever a flush still holds, then finishes the current chunk so the `.m4a` is
     /// playable. Blocks until written.
     func finish() {
         queue.sync {
-            flushStep(generation: flushGeneration, budget: nil)
+            flushStep(generation: flushGeneration, run: .complete(limit: Self.closeFlushLimit))
             finishOnQueue()
+        }
+    }
+
+    /// Finishes the open chunk without waiting (the capture stream stopped); during a flush the
+    /// flush keeps the chunk and finishes it in order.
+    func endChunkSoon() {
+        queue.async {
+            if !self.flushing { self.finishOnQueue() }
         }
     }
 
@@ -123,7 +147,7 @@ final class AudioChunkWriter {
     func close() {
         requestedGate = .off
         queue.sync {
-            flushStep(generation: flushGeneration, budget: nil)
+            flushStep(generation: flushGeneration, run: .complete(limit: Self.closeFlushLimit))
             gateOnQueue(.off, flush: false)
         }
     }
@@ -139,7 +163,7 @@ final class AudioChunkWriter {
         gate = g
         if g == .write && flush && !buffered.isEmpty {
             pending = buffered.map { .ring($0) }
-            flushStep(generation: flushGeneration, budget: Self.flushSlice)
+            flushStep(generation: flushGeneration, run: .slice)
         }
     }
 
@@ -177,31 +201,44 @@ final class AudioChunkWriter {
                               sampleRate: pcm.sampleRate, samples: samples))
     }
 
-    /// Writes pending samples in order for up to `budget` seconds (nil: all of them), then
-    /// queues the next slice. Buffered audio goes into chunks named HHMMSS for their first
-    /// sample, split at chunk boundaries (`ringFlushGroups`); live samples follow. Each entry
-    /// is converted only when written. A stale slice (the gate changed) does nothing.
-    private func flushStep(generation: Int, budget: TimeInterval?) {
+    /// How a flush step ends: after one slice (then the next slice is queued), or only when
+    /// everything pending is written, giving up (logged) after `limit` seconds.
+    private enum FlushRun {
+        case slice
+        case complete(limit: TimeInterval)
+    }
+
+    /// Writes pending samples in order. Each one goes into the open chunk unless it starts at
+    /// or after that chunk's end (the same split as `ringFlushGroups`): buffered audio then
+    /// opens a chunk named HHMMSS for its own time, a live sample one named for its time. An
+    /// entry is converted once, just before its first write attempt, and released once
+    /// written. A stale step (the gate changed since) does nothing.
+    private func flushStep(generation: Int, run: FlushRun) {
         guard generation == flushGeneration else { return }
-        let started = Date()
-        let deadline = budget.map { started.addingTimeInterval($0) } ?? started.addingTimeInterval(30)
+        let deadline: Date
+        switch run {
+        case .slice: deadline = Date().addingTimeInterval(slice)
+        case .complete(let limit): deadline = Date().addingTimeInterval(limit)
+        }
         while flushing {
-            let wall: Date, exact: Bool, sample: CMSampleBuffer?
+            let s: CMSampleBuffer, wall: Date, exact: Bool
             switch pending[pendingIndex] {
-            case .ring(let e): (wall, exact, sample) = (e.wall, true, sampleBuffer(from: e))
-            case .live(let s, let w): (wall, exact, sample) = (w, false, s)
-            case .written: pendingIndex += 1; continue
+            case .written:
+                pendingIndex += 1
+                continue
+            case .ring(let e):
+                guard let converted = sampleBuffer(from: e) else { pendingIndex += 1; continue }
+                pending[pendingIndex] = .ready(converted, wall: e.wall, exact: true) // drops the 16-bit copy
+                continue
+            case .live(let sample, let w): (s, wall, exact) = (sample, w, false)
+            case .ready(let sample, let w, let x): (s, wall, exact) = (sample, w, x)
             }
-            guard let s = sample else { pendingIndex += 1; continue }
             if writer != nil && wall >= end { finishOnQueue() }
             if writer == nil && !open(at: wall, sample: s, exactName: exact) { return abandonFlush() }
             guard let input = input else { return abandonFlush() }
-            if !input.isReadyForMoreMediaData {
-                // Written faster than real time: wait for the encoder, but never past the slice.
-                if Date() >= deadline { break }
-                usleep(1000)
-                continue
-            }
+            // Written faster than real time: wait for the encoder, never past the deadline.
+            while !input.isReadyForMoreMediaData && Date() < deadline { usleep(1000) }
+            if !input.isReadyForMoreMediaData { break }
             if !input.append(s) {
                 fail("flush append failed: \(writer?.error?.localizedDescription ?? "unknown error")")
                 writer?.cancelWriting()
@@ -213,17 +250,19 @@ final class AudioChunkWriter {
             pendingIndex += 1
             if Date() >= deadline { break }
         }
-        if flushing {
-            if budget == nil { return abandonFlush() } // encoder stuck for 30 s
-            queue.async { self.flushStep(generation: generation, budget: budget) }
+        guard flushing else {
+            pending = []
+            pendingIndex = 0
             return
         }
-        pending = []
-        pendingIndex = 0
+        switch run {
+        case .slice: queue.async { self.flushStep(generation: generation, run: run) }
+        case .complete(let limit): abandonFlush(reason: "not written within \(Int(limit)) s")
+        }
     }
 
-    private func abandonFlush() {
-        if flushing { fail("flush abandoned with \(pending.count - pendingIndex) samples unwritten") }
+    private func abandonFlush(reason: String = "write failed") {
+        if flushing { eprint("audio \(track): flush abandoned (\(reason)) with \(pending.count - pendingIndex) samples unwritten") }
         pending = []
         pendingIndex = 0
         flushGeneration += 1
@@ -231,12 +270,21 @@ final class AudioChunkWriter {
 
     private func open(at start: Date, sample: CMSampleBuffer, exactName: Bool = false) -> Bool {
         let dir = rawDayDir(dataDir, start).appendingPathComponent("audio")
-        // Same-minute pause/resume: HHMM is taken, so use the exact start second.
-        let name = exactName ? exactChunkName(start: start, track: track) : chunkFileName(start: start, track: track) {
+        // Same-minute pause/resume: HHMM is taken, so use the exact start second (then a suffix).
+        guard let name = uniqueChunkName(start: start, track: track, exact: exactName, exists: {
             FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
+        }) else {
+            fail("no free chunk name for \(exactChunkName(start: start, track: track))")
+            return false
         }
         let url = dir.appendingPathComponent(name)
+        // Never touch a file this call did not create (another chunk, or one that appeared).
+        var mayRemove = false
         do {
+            guard !FileManager.default.fileExists(atPath: url.path) else {
+                throw RunOptionsError("\(name) already exists")
+            }
+            mayRemove = true
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let w = try AVAssetWriter(outputURL: url, fileType: .m4a)
             let settings: [String: Any] = [
@@ -260,7 +308,7 @@ final class AudioChunkWriter {
             return true
         } catch {
             fail("cannot open \(url.lastPathComponent): \(error.localizedDescription)")
-            try? FileManager.default.removeItem(at: url)
+            if mayRemove { try? FileManager.default.removeItem(at: url) }
             return false
         }
     }
@@ -283,7 +331,7 @@ final class AudioChunkWriter {
     }
 
     private func scheduleBoundaryFinishLater(for w: AVAssetWriter) {
-        queue.asyncAfter(deadline: .now() + Self.flushSlice) { [weak self] in
+        queue.asyncAfter(deadline: .now() + slice) { [weak self] in
             guard let self = self, self.writer === w else { return }
             self.scheduleBoundaryFinish(for: w)
         }

@@ -423,6 +423,24 @@ func ringFlushGroups(walls: [Date], chunkMinutes: Int) -> [Range<Int>] {
     return out
 }
 
+/// A free chunk file name for a chunk starting at `start`: `HHMM-<track>.m4a` (unless `exact`),
+/// else `HHMMSS-<track>.m4a`, else `HHMMSS-<n>-<track>.m4a` for n = 1…999; nil when all are
+/// taken. `exists` is asked about bare file names.
+func uniqueChunkName(start: Date, track: String, exact: Bool, exists: (String) -> Bool) -> String? {
+    if !exact {
+        let short = chunkName(start: start, track: track)
+        if !exists(short) { return short }
+    }
+    let full = exactChunkName(start: start, track: track)
+    if !exists(full) { return full }
+    let stem = String(full.dropLast("-\(track).m4a".count))
+    for n in 1...999 {
+        let name = "\(stem)-\(n)-\(track).m4a"
+        if !exists(name) { return name }
+    }
+    return nil
+}
+
 /// "HHMMSS-<track>.m4a": flushed chunks start mid-minute, so the name keeps the second.
 func exactChunkName(start: Date, track: String) -> String {
     let f = DateFormatter()

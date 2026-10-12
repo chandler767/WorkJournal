@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -133,5 +134,21 @@ func TestSettingsAudioMode(t *testing.T) {
 	f.Set("audio_mode", "loud")
 	if rec := e.post("/settings", f, nil); rec.Code != 400 || !strings.Contains(rec.Body.String(), "audio_mode") {
 		t.Errorf("bad mode: code %d", rec.Code)
+	}
+}
+
+// The hour page lists collision-suffixed chunks (HHMMSS-N-<track>.m4a) too.
+func TestHourListsSuffixedChunks(t *testing.T) {
+	e := newEnv(t)
+	writeFile(t, filepath.Join(e.p.Audio(seedDay), "090507-1-mic.m4a"), "audio")
+	rows := e.srv.audioFor(seedDay, "09")
+	found := false
+	for _, r := range rows {
+		if r.Name == "090507-1-mic.m4a" && r.Track == "mic" && r.Start == 5*60+7 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("suffixed chunk not listed: %+v", rows)
 	}
 }

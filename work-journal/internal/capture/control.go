@@ -48,10 +48,12 @@ type Control interface {
 }
 
 // commandTimeout bounds dialing and answering an ordinary command;
-// rotateTimeout allows for the recorder finishing its audio files.
+// rotateTimeout allows for the recorder finishing its audio files, including
+// an auto-mode flush in progress (the recorder gives each of its two tracks at
+// most 15 s, AudioChunkWriter.rotateFlushLimit).
 var (
 	commandTimeout = 3 * time.Second
-	rotateTimeout  = 10 * time.Second
+	rotateTimeout  = 35 * time.Second
 )
 
 type socketControl struct{ sock string }

@@ -59,7 +59,7 @@ type hourPage struct {
 	Rev                        string
 }
 
-var audioNameRE = regexp.MustCompile(`^(\d{2})(\d{2})(\d{2})?-(mic|system)\.m4a$`)
+var audioNameRE = regexp.MustCompile(`^(\d{2})(\d{2})(?:(\d{2})(?:-\d{1,3})?)?-(mic|system)\.m4a$`)
 
 func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 	day, _, ok := parseDate(r.PathValue("date"))
@@ -170,7 +170,7 @@ func removedLines(spans []process.RemovedSpan) []string {
 	return out
 }
 
-// audioFor lists the hour's audio chunks (HHMM-<track>.m4a or HHMMSS-…).
+// audioFor lists the hour's audio chunks (HHMM-<track>.m4a, HHMMSS-… or HHMMSS-<n>-…).
 func (s *Server) audioFor(day, hh string) []audioRow {
 	entries, err := os.ReadDir(s.Paths.Audio(day))
 	if err != nil {

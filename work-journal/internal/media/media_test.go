@@ -193,6 +193,13 @@ func TestParseChunkName(t *testing.T) {
 		{"905-mic.m4a", 0, 0, 0, "", false},
 		{"090561-mic.m4a", 0, 0, 0, "", false},
 		{"ab05-mic.m4a", 0, 0, 0, "", false},
+		// Collision suffix (the recorder's third choice when HHMM and HHMMSS are taken).
+		{"090507-1-mic.m4a", 9, 5, 7, "mic", true},
+		{"090507-12-system.m4a", 9, 5, 7, "system", true},
+		{"0905-1-mic.m4a", 0, 0, 0, "", false},
+		{"090507--mic.m4a", 0, 0, 0, "", false},
+		{"090507-x-mic.m4a", 0, 0, 0, "", false},
+		{"090507-1234-mic.m4a", 0, 0, 0, "", false},
 	}
 	for _, c := range cases {
 		hh, mm, ss, tr, ok := ParseChunkName(c.name)

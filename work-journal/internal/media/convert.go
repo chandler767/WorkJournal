@@ -26,15 +26,25 @@ func ConvertToWav16k(ctx context.Context, run Runner, in, out string) error {
 	return err
 }
 
-// ParseChunkName parses HHMM-<track>.m4a or HHMMSS-<track>.m4a where track is
-// "system" or "mic". ss is 0 for the 4-digit form.
+// ParseChunkName parses HHMM-<track>.m4a, HHMMSS-<track>.m4a or, when the
+// recorder found both names taken, HHMMSS-<n>-<track>.m4a (n of 1–3 digits),
+// where track is "system" or "mic". ss is 0 for the 4-digit form.
 func ParseChunkName(name string) (hh, mm, ss int, track string, ok bool) {
 	base, found := strings.CutSuffix(name, ".m4a")
 	if !found {
 		return 0, 0, 0, "", false
 	}
 	prefix, track, found := strings.Cut(base, "-")
-	if !found || (track != "system" && track != "mic") {
+	if !found {
+		return 0, 0, 0, "", false
+	}
+	if n, rest, suffixed := strings.Cut(track, "-"); suffixed {
+		if len(prefix) != 6 || len(n) < 1 || len(n) > 3 || strings.Trim(n, "0123456789") != "" {
+			return 0, 0, 0, "", false
+		}
+		track = rest
+	}
+	if track != "system" && track != "mic" {
 		return 0, 0, 0, "", false
 	}
 	if len(prefix) != 4 && len(prefix) != 6 {

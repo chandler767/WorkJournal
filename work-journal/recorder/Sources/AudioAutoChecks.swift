@@ -232,6 +232,16 @@ private func ringFlushChecks() -> [(String, Bool)] {
         ("flush of one chunk", ringFlushGroups(walls: Array(walls.prefix(10)), chunkMinutes: 5) == [0..<10]),
         ("flush of nothing", ringFlushGroups(walls: [], chunkMinutes: 5).isEmpty),
         ("exact chunk name HHMMSS", exactChunkName(start: t, track: "mic") == "140327-mic.m4a"),
+        ("unique name: HHMM when free", uniqueChunkName(start: t, track: "mic", exact: false, exists: { _ in false }) == "1403-mic.m4a"),
+        ("unique name: HHMMSS when HHMM is taken",
+         uniqueChunkName(start: t, track: "mic", exact: false, exists: { $0 == "1403-mic.m4a" }) == "140327-mic.m4a"),
+        ("unique name: suffix when both are taken",
+         uniqueChunkName(start: t, track: "mic", exact: false, exists: { ["1403-mic.m4a", "140327-mic.m4a"].contains($0) })
+            == "140327-1-mic.m4a"),
+        ("unique name: exact skips HHMM and counts up",
+         uniqueChunkName(start: t, track: "mic", exact: true, exists: { ["140327-mic.m4a", "140327-1-mic.m4a"].contains($0) })
+            == "140327-2-mic.m4a"),
+        ("unique name: nil when every name is taken", uniqueChunkName(start: t, track: "mic", exact: true, exists: { _ in true }) == nil),
     ]
 
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wjring-\(getpid())")
@@ -313,7 +323,60 @@ private func ringFlushChecks() -> [(String, Bool)] {
     let sliced = chunks("slices")
     let slicedFrames = sliced.reduce(Int64(0)) { $0 + frames($1) }
 
+    // Rotate during a flush (Go's ProcessNow contract): when rotate returns, every chunk named
+    // before the rotate is complete and playable, and no chunk opened afterwards is named
+    // earlier than the rotate. Nothing is lost.
+    let r = AudioChunkWriter(track: "rot", dataDir: dir, chunkMinutes: 60, flushSlice: 0.0005) // many slices
+    r.setGate(.buffer, flush: false)
+    feed(r, 1200) // a full 120 s ring
+    r.sync()
+    r.setGate(.write, flush: true)
+    usleep(20_000) // a few slices in
+    let midFlush = chunks("rot").count == 1 // the first chunk is open, not yet finished
+    r.rotate()
+    let rotatedAt = Date()
+    let atRotate = chunks("rot")
+    let allComplete = !atRotate.isEmpty && atRotate.allSatisfy { frames($0) > 0 }
+    let framesAtRotate = atRotate.reduce(Int64(0)) { $0 + frames($1) }
+    let names0 = Set(atRotate.map(\.lastPathComponent))
+    usleep(1_100_000) // the live chunk opens in a later second than the rotate
+    feed(r, 10)
+    r.finish()
+    let after = chunks("rot").filter { !names0.contains($0.lastPathComponent) }
+    let rotSecond = Calendar.current.dateComponents([.hour, .minute, .second], from: rotatedAt)
+    let rotKey = (rotSecond.hour ?? 0) * 3600 + (rotSecond.minute ?? 0) * 60 + (rotSecond.second ?? 0)
+    func nameKey(_ u: URL) -> Int? {
+        let digits = u.lastPathComponent.prefix { $0.isNumber }
+        guard digits.count == 4 || digits.count == 6, let n = Int(digits) else { return nil }
+        return digits.count == 6 ? n / 10000 * 3600 + n / 100 % 100 * 60 + n % 100 : n / 100 * 3600 + n % 100 * 60
+    }
+    // An HHMM name stands for its whole minute: it is not "earlier" when the rotate is in that minute.
+    let laterNames = after.allSatisfy { u in
+        guard let k = nameKey(u) else { return false }
+        return u.lastPathComponent.prefix { $0.isNumber }.count == 4 ? k + 59 >= rotKey : k >= rotKey
+    }
+    let rotTotal = chunks("rot").reduce(Int64(0)) { $0 + frames($1) }
+
+    // Existing files are never overwritten or deleted: the next free name is used.
+    let g = AudioChunkWriter(track: "guard", dataDir: dir, chunkMinutes: 60)
+    try? FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+    let now = Date()
+    var sentinels: [URL] = [audio.appendingPathComponent(chunkName(start: now, track: "guard"))]
+    for k in 0..<3 { sentinels.append(audio.appendingPathComponent(exactChunkName(start: now.addingTimeInterval(Double(k)), track: "guard"))) }
+    for u in sentinels { try? Data("keep".utf8).write(to: u) }
+    feed(g, 10)
+    g.finish()
+    let sentinelsKept = sentinels.allSatisfy { (try? Data(contentsOf: $0)) == Data("keep".utf8) }
+    let guardNew = chunks("guard").filter { !sentinels.map(\.lastPathComponent).contains($0.lastPathComponent) }
+
     return pure + [
+        ("rotate mid-flush: every earlier chunk is complete when rotate returns", allComplete),
+        ("rotate mid-flush: rotate really ran during the flush", midFlush),
+        ("rotate mid-flush: the whole buffer is written before rotate returns", framesAtRotate >= 48_000 * 119),
+        ("rotate mid-flush: no later chunk is named before the rotate", !after.isEmpty && laterNames),
+        ("rotate mid-flush: all 121 s written", rotTotal >= 48_000 * 119 && rotTotal <= 48_000 * 124),
+        ("existing chunk files are never overwritten or deleted", sentinelsKept),
+        ("a taken name gets the next free one", guardNew.count == 1 && guardNew.allSatisfy { frames($0) > 0 }),
         ("flush: gate and mute changes do not block the caller", callerBlocked < 0.05),
         ("flush: rotate waits at most about one slice", rotateWait < 0.4),
         ("flush: all 61 s written across the rotated chunks",
