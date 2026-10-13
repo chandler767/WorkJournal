@@ -28,6 +28,13 @@ func TestParseUsageLimit(t *testing.T) {
 		{"Credit balance is too low", true, time.Time{}},
 		{"You are out of credits", true, time.Time{}},
 		{"Quota exceeded for this organization", true, time.Time{}},
+		// A time zone after the time is ignored: the time is read as local.
+		{"You've hit your limit · resets 3pm (America/New_York)", true, today(15, 0)},
+		// A date-qualified reset is not parsed: the pause falls back to an hour.
+		{"Weekly limit reached · resets Oct 20, 9am", true, time.Time{}},
+		// "resets" alone is not a usage limit.
+		{"Your session resets 3pm", false, time.Time{}},
+		{"Counter resets at 15:00 every day", false, time.Time{}},
 		{"Invalid API key · Please run /login", false, time.Time{}},
 		{"claude: exit status 1: something went wrong (pid 14290)", false, time.Time{}},
 		{"", false, time.Time{}},
@@ -193,5 +200,36 @@ func TestClearPause(t *testing.T) {
 	}
 	if st, _ := ReadPause(kv, now); st.Active || !st.Until.IsZero() {
 		t.Fatalf("pause not cleared: %+v", st)
+	}
+}
+
+func TestUnparseablePauseIsClearedAndLoggedOnce(t *testing.T) {
+	now := time.Date(2026, 10, 13, 10, 0, 0, 0, time.Local)
+	kv := memKV{KVPausedUntil: "soon-ish", KVPauseReason: "x"}
+	var logs []string
+	inner := &stubRunner{}
+	g := &PausingRunner{Runner: inner, KV: kv, Now: func() time.Time { return now }, Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
+	for i := 0; i < 2; i++ {
+		if err := g.Run(context.Background(), "close-day", "/in.json", nil); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+	if inner.calls != 2 {
+		t.Fatalf("claude ran %d times, want 2 (not paused)", inner.calls)
+	}
+	if kv[KVPausedUntil] != "" {
+		t.Fatalf("bad pause not cleared: %q", kv[KVPausedUntil])
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0], "soon-ish") {
+		t.Fatalf("logs = %q, want one line naming the bad value", logs)
+	}
+
+	kv[KVPausedUntil] = "garbage"
+	st, err := ReadPause(kv, now)
+	if !errors.Is(err, ErrBadPause) || st.Active || kv[KVPausedUntil] != "" {
+		t.Fatalf("ReadPause = %+v, %v; key %q", st, err, kv[KVPausedUntil])
+	}
+	if _, err := ReadPause(kv, now); err != nil {
+		t.Fatalf("second read: %v", err)
 	}
 }

@@ -68,10 +68,13 @@ unchanged in-progress hour is not summarized again.
 ## Claude usage limits
 
 When Claude reports a usage or rate limit, work-journal stops asking Claude until the limit
-resets (the time Claude gives, else about an hour, at most 24 hours). Recording,
-transcription, speaker separation and OCR go on; hours wait as transcribed rather than being
-marked needs review, and the day's journal and weekly rollup wait too. Once the limit resets,
-the waiting hours are summarized oldest first. Meanwhile the day and hour pages say
+resets (the time Claude gives, else about an hour, at most 24 hours; a reset time with a
+date, such as "resets Oct 20, 9am", counts as unknown, and a clock time is read as local
+time). Recording, transcription, speaker separation and OCR go on, and their results are
+cached locally, so nothing is lost. Hours with speech stay pending until Claude resumes
+(their speech must pass the privacy filter first); hours without speech wait as transcribed.
+None are marked needs review, and the day's journal and weekly rollup wait too. Once the
+limit resets, the waiting hours are processed oldest first. Meanwhile the day and hour pages say
 "Claude usage limit reached — summaries paused until 3:00 PM" with a **Run now anyway**
 button, which tries straight away (and pauses again if Claude is still limited).
 `journal doctor` reports the limit and its reset time. Settings → Claude usage

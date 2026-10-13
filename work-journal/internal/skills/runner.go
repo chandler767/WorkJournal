@@ -283,7 +283,7 @@ func (r *ClaudeRunner) exec(ctx context.Context, skill, inputPath string) ([]byt
 // args makes only Skill (needed to load the skill) and Read available,
 // pre-approves Read, loads no MCP servers and never bypasses permissions.
 func (r *ClaudeRunner) args(skill, inputPath string) []string {
-	prompt := fmt.Sprintf("Use the %s%s skill. Input file: %s (one record per line; if it is too large to read at once, read it in parts with offset and limit). Reply with only the JSON object.", installedPrefix, skill, inputPath)
+	prompt := fmt.Sprintf("Use the %s%s skill. Input file: %s (one record per line). If the file is long, read it in parts (offset/limit) until you have read all of it, then answer. Reply with only the JSON object.", installedPrefix, skill, inputPath)
 	return []string{"-p", prompt, "--output-format", "json",
 		"--tools", "Skill,Read", // the only tools that exist in the session
 		"--allowedTools", "Read", // pre-approved, so headless reads work

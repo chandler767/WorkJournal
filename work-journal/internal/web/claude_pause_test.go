@@ -81,7 +81,7 @@ func TestClaudeResumeClearsPauseAndRunsNow(t *testing.T) {
 	if rec.Code != 303 || loc != "/day/2026-10-07?notice=claude-still-limited" {
 		t.Fatalf("still limited: %d %q", rec.Code, loc)
 	}
-	mustContain(t, e.get(loc).Body.String(), "Claude is still at its usage limit")
+	mustContain(t, e.get(loc).Body.String(), "Claude is still at its usage limit", "hours with speech stay pending until Claude resumes", "nothing is lost")
 }
 
 func TestClaudeResumeCrossOriginRefused(t *testing.T) {

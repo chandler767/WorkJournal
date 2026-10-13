@@ -22,8 +22,8 @@ type (
 		PriorTotals map[string]int `json:"prior_totals"`
 	}
 	rollupDay struct {
-		Day      string `json:"day"`
-		Markdown string `json:"markdown"`
+		Day      string   `json:"day"`
+		Markdown []string `json:"markdown_lines"` // skills.TextLines
 	}
 )
 
@@ -44,7 +44,7 @@ func Rollup(ctx context.Context, r skills.Runner, st *store.Store, p config.Path
 		if err != nil {
 			return err
 		}
-		in.Days = append(in.Days, rollupDay{Day: d, Markdown: string(b)})
+		in.Days = append(in.Days, rollupDay{Day: d, Markdown: skills.TextLines(string(b))})
 	}
 	if len(in.Days) == 0 {
 		return nil

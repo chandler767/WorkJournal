@@ -35,8 +35,13 @@ func (e ErrUsageLimited) Error() string {
 func (e ErrUsageLimited) Is(target error) bool { return target == ErrUnavailable }
 
 // usageLimitRE matches what claude says when a usage, rate or credit limit
-// stops it.
-var usageLimitRE = regexp.MustCompile(`(?i)usage limit|rate[ _]limit|credit balance|out of credits|quota|\b429\b|limit reached|\bresets\b`)
+// stops it. A bare "resets" counts only alongside a limit word
+// (limitWordRE), so "your session resets" is not a usage limit.
+var (
+	usageLimitRE = regexp.MustCompile(`(?i)usage limit|rate[ _]limit|credit balance|out of credits|quota|\b429\b|limit reached`)
+	resetsRE     = regexp.MustCompile(`(?i)\bresets\b`)
+	limitWordRE  = regexp.MustCompile(`(?i)limit|quota|credit|\b429\b`)
+)
 
 var (
 	resetEpochRE = regexp.MustCompile(`\|\s*(\d{10})\b`)
@@ -45,11 +50,14 @@ var (
 
 // ParseUsageLimit reports whether msg (claude's error result, stderr or exit
 // error) says a usage limit was reached, and when it resets: a Unix time
-// after "|" ("…limit reached|1760400000"), or a local clock time after
-// "resets", "reset at" or "try again at" (3pm, 15:00, 9:30 PM; a time
-// already past today is tomorrow).
+// after "|" ("…limit reached|1760400000"), or a clock time after "resets",
+// "reset at" or "try again at" (3pm, 15:00, 9:30 PM; a time already past
+// today is tomorrow). The clock time is read as local time: a time zone
+// after it ("resets 3pm (Europe/London)") is ignored. A reset with a date
+// ("resets Oct 20, 9am") is not parsed; ResetAt stays zero, so the pause
+// falls back to DefaultPause.
 func ParseUsageLimit(msg string, now time.Time) (ErrUsageLimited, bool) {
-	if !usageLimitRE.MatchString(msg) {
+	if !usageLimitRE.MatchString(msg) && !(resetsRE.MatchString(msg) && limitWordRE.MatchString(msg)) {
 		return ErrUsageLimited{}, false
 	}
 	ul := ErrUsageLimited{Message: snippet(msg, resultSnippetMax)}
@@ -116,15 +124,25 @@ type PauseState struct {
 	Active     bool
 }
 
-// ReadPause returns the stored pause as of now.
+// ErrBadPause is returned (wrapped) by ReadPause for a stored pause end it
+// could not parse; the pause has then been cleared and counts as none.
+var ErrBadPause = errors.New("unparseable claude pause")
+
+// ReadPause returns the stored pause as of now. An unparseable pause end is
+// cleared and read as no pause, with an ErrBadPause error to log (once:
+// the next read finds nothing).
 func ReadPause(kv KV, now time.Time) (PauseState, error) {
 	v, _, err := kv.GetKV(KVPausedUntil)
 	if err != nil || v == "" {
 		return PauseState{}, err
 	}
-	until, err := time.Parse(time.RFC3339, v)
-	if err != nil {
-		return PauseState{}, fmt.Errorf("%s %q: %w", KVPausedUntil, v, err)
+	until, perr := time.Parse(time.RFC3339, v)
+	if perr != nil {
+		bad := fmt.Errorf("%w: %s %q: %v; cleared", ErrBadPause, KVPausedUntil, v, perr)
+		if err := ClearPause(kv); err != nil {
+			return PauseState{}, errors.Join(bad, err)
+		}
+		return PauseState{}, bad
 	}
 	reason, _, err := kv.GetKV(KVPauseReason)
 	if err != nil {
@@ -193,7 +211,11 @@ func (g *PausingRunner) Run(ctx context.Context, skill, inputPath string, out an
 	}
 	now := g.now()
 	st, err := ReadPause(g.KV, now)
-	if err != nil {
+	if errors.Is(err, ErrBadPause) {
+		if g.Logf != nil {
+			g.Logf("skills: %v", err)
+		}
+	} else if err != nil {
 		return fmt.Errorf("skill %s: read claude pause: %w", skill, err)
 	}
 	if st.Active {

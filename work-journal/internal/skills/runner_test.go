@@ -196,7 +196,7 @@ func TestRunnerArgs(t *testing.T) {
 	if slices.Contains(args, "--mcp-config") {
 		t.Errorf("--mcp-config must not be passed: %q", args)
 	}
-	want := "Use the tessl__summarize-hour skill. Input file: /data/derived/in.json (one record per line; if it is too large to read at once, read it in parts with offset and limit). Reply with only the JSON object."
+	want := "Use the tessl__summarize-hour skill. Input file: /data/derived/in.json (one record per line). If the file is long, read it in parts (offset/limit) until you have read all of it, then answer. Reply with only the JSON object."
 	if !pair("-p", want) {
 		t.Errorf("missing -p prompt %q: %q", want, args)
 	}
@@ -451,5 +451,18 @@ func TestMarshalInputOneRecordPerLineNoHTMLEscapes(t *testing.T) {
 	var back map[string]any
 	if err := json.Unmarshal(b, &back); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Every skill tells Claude to read the whole input before answering.
+func TestSkillDocsRequireReadingWholeInput(t *testing.T) {
+	for _, name := range Names {
+		b, err := os.ReadFile(filepath.Join("..", "..", "skills", "work-journal", "skills", name, "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), "If the file is long, read it in parts (offset/limit) until you have read all of it, then answer.") {
+			t.Errorf("%s SKILL.md lacks the read-it-all rule", name)
+		}
 	}
 }

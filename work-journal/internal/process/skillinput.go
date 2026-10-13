@@ -3,7 +3,6 @@ package process
 import (
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"workjournal/internal/media"
 	"workjournal/internal/skills"
@@ -24,7 +23,7 @@ const (
 	// ocrEntryMax bounds one OCR (or transcript) text in bytes; longer texts
 	// are split into several entries. JSON escaping can at most double it,
 	// which keeps every input line under maxInputLine.
-	ocrEntryMax = 900
+	ocrEntryMax = skills.LineMax
 	// maxInputLine is the longest line a skill input should have: Claude's
 	// Read tool cuts lines over 2000 characters.
 	maxInputLine = 2000
@@ -103,7 +102,7 @@ func capOCR(texts []string, limit int) []string {
 	if limit <= 0 {
 		return []string{}
 	}
-	return []string{cutUTF8(texts[0], limit)}
+	return []string{skills.CutUTF8(texts[0], limit)}
 }
 
 // evenIndexes returns k indexes spread evenly over 0..n-1 (k ≥ 2), first
@@ -124,41 +123,9 @@ func evenIndexes(n, k int) []int {
 func splitEntries(texts []string, max int) []string {
 	out := []string{}
 	for _, t := range texts {
-		out = append(out, splitText(t, max)...)
+		out = append(out, skills.SplitText(t, max)...)
 	}
 	return out
-}
-
-func splitText(t string, max int) []string {
-	var out []string
-	for len(t) > max {
-		cut := cutUTF8(t, max)
-		if i := strings.LastIndexByte(cut, '\n'); i > 0 {
-			cut = cut[:i]
-		} else if i := strings.LastIndexByte(cut, ' '); i > 0 {
-			cut = cut[:i]
-		}
-		if c := strings.TrimSpace(cut); c != "" {
-			out = append(out, c)
-		}
-		t = strings.TrimLeft(t[len(cut):], "\n ")
-	}
-	if t = strings.TrimSpace(t); t != "" {
-		out = append(out, t)
-	}
-	return out
-}
-
-// cutUTF8 is the longest prefix of s of at most n bytes that ends on a rune
-// boundary.
-func cutUTF8(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
 }
 
 // splitLines splits transcript lines whose text is over ocrEntryMax into
@@ -166,7 +133,7 @@ func cutUTF8(s string, n int) string {
 func splitLines(ls []lineInput) []lineInput {
 	out := make([]lineInput, 0, len(ls))
 	for _, l := range ls {
-		for _, t := range splitText(l.Text, ocrEntryMax) {
+		for _, t := range skills.SplitText(l.Text, ocrEntryMax) {
 			out = append(out, lineInput{T: l.T, Speaker: l.Speaker, Text: t})
 		}
 	}

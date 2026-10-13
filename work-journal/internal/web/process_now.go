@@ -55,7 +55,7 @@ func dayNotice(q url.Values) string {
 	case "process-failed":
 		return "Processing failed — see the log. Anything that finished was kept."
 	case "claude-still-limited":
-		return "Claude is still at its usage limit, so summaries stay paused. Recordings were transcribed; summaries follow once the limit resets."
+		return "Claude is still at its usage limit, so summaries stay paused. Audio is transcribed and cached locally, so nothing is lost; hours with speech stay pending until Claude resumes."
 	case "reprocess-not-ready":
 		return "That hour's audio is still being recorded — try again in a few minutes."
 	case "reprocess-expired":

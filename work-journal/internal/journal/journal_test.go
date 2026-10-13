@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,7 +148,7 @@ func TestCloseDayInputHasTotals(t *testing.T) {
 		Day   string `json:"day"`
 		Hours []struct {
 			Hour        int      `json:"hour"`
-			Narrative   string   `json:"narrative"`
+			Narrative   []string `json:"narrative_lines"`
 			Notes       []string `json:"notes"`
 			MainFocus   string   `json:"main_focus"`
 			ActionItems []struct {
@@ -159,7 +161,7 @@ func TestCloseDayInputHasTotals(t *testing.T) {
 			Start        string   `json:"start"`
 			End          string   `json:"end"`
 			Participants []string `json:"participants"`
-			Summary      string   `json:"summary"`
+			Summary      []string `json:"summary_lines"`
 			Decisions    []string `json:"decisions"`
 		} `json:"meetings"`
 		Totals map[string]int `json:"totals"`
@@ -170,11 +172,11 @@ func TestCloseDayInputHasTotals(t *testing.T) {
 	if want := map[string]int{"Deep work": 40, "Communication": 10}; !reflect.DeepEqual(in.Totals, want) {
 		t.Errorf("totals = %v, want %v", in.Totals, want)
 	}
-	if in.Day != "2026-10-07" || len(in.Hours) != 1 || in.Hours[0].Hour != 9 || in.Hours[0].MainFocus != "Scheduler" || in.Hours[0].Notes[0] != "Refactored" || in.Hours[0].Narrative != "Reworked the scheduler loop." || in.Hours[0].ActionItems[0].Text != "Send notes" {
+	if in.Day != "2026-10-07" || len(in.Hours) != 1 || in.Hours[0].Hour != 9 || in.Hours[0].MainFocus != "Scheduler" || in.Hours[0].Notes[0] != "Refactored" || !reflect.DeepEqual(in.Hours[0].Narrative, []string{"Reworked the scheduler loop."}) || in.Hours[0].ActionItems[0].Text != "Send notes" {
 		t.Errorf("hours = %+v", in.Hours)
 	}
 	if len(in.Meetings) != 1 || in.Meetings[0].Title != "Standup" || in.Meetings[0].Start != "09:10" || in.Meetings[0].End != "09:30" ||
-		!reflect.DeepEqual(in.Meetings[0].Participants, []string{"Priya"}) || in.Meetings[0].Summary != "Ship Friday" {
+		!reflect.DeepEqual(in.Meetings[0].Participants, []string{"Priya"}) || !reflect.DeepEqual(in.Meetings[0].Summary, []string{"Ship Friday"}) {
 		t.Errorf("meetings = %+v", in.Meetings)
 	}
 	if want := filepath.Join(p.Root, "derived", "2026-10-07", ".inputs", "close-day.json"); r.path != want {
@@ -222,8 +224,8 @@ func TestRollupUsesPriorWeekTotals(t *testing.T) {
 	var in struct {
 		Week string `json:"week"`
 		Days []struct {
-			Day      string `json:"day"`
-			Markdown string `json:"markdown"`
+			Day      string   `json:"day"`
+			Markdown []string `json:"markdown_lines"`
 		} `json:"days"`
 		Totals      map[string]int `json:"totals"`
 		PriorTotals map[string]int `json:"prior_totals"`
@@ -231,7 +233,7 @@ func TestRollupUsesPriorWeekTotals(t *testing.T) {
 	if err := json.Unmarshal(r.input, &in); err != nil {
 		t.Fatal(err)
 	}
-	if r.skill != "weekly-rollup" || in.Week != "2026-W41" || len(in.Days) != 2 || in.Days[0].Day != "2026-10-06" || in.Days[1].Markdown != "## Summary\n2026-10-07\n" {
+	if r.skill != "weekly-rollup" || in.Week != "2026-W41" || len(in.Days) != 2 || in.Days[0].Day != "2026-10-06" || !reflect.DeepEqual(in.Days[1].Markdown, []string{"## Summary", "2026-10-07"}) {
 		t.Errorf("skill %q input %+v", r.skill, in)
 	}
 	want := map[string]int{"Deep work": 40, "Communication": 10}
@@ -284,5 +286,77 @@ func TestCloseDayIncludesHoursWithoutSummary(t *testing.T) {
 	}
 	if len(in.Hours) != 2 || in.Hours[1].Hour != 11 || !reflect.DeepEqual(in.Hours[1].Notes, []string{"(summary unavailable — needs review)"}) {
 		t.Fatalf("hours = %+v", in.Hours)
+	}
+}
+
+// Long texts reach the skills as lines of at most 900 bytes, so no input
+// line is over the 2000 characters Claude's Read tool shows.
+func TestJournalInputsSplitLongTexts(t *testing.T) {
+	st, p := setup(t)
+	day := "2026-10-07"
+	long := strings.Repeat("Reworked the scheduler loop and its tests. ", 120) // ~5 KB, one paragraph
+	sum, _ := json.Marshal(map[string]any{"narrative": long, "timeline": []any{}, "notes": []string{"n"}, "main_focus": "f", "action_items": []any{}})
+	if err := st.UpsertHour(store.HourRecord{Day: day, Hour: 9, Status: store.StatusDone, UpdatedAt: time.Now(), SummaryJSON: string(sum)}); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := json.Marshal(map[string]any{"participants": []any{}, "summary": long, "decisions": []string{}, "action_items": []any{}})
+	if err := st.UpsertMeeting(store.MeetingRecord{ID: "m1", Day: day, Start: at(day, 9, 10), End: at(day, 9, 30), App: "zoom", Title: "Standup", SummaryJSON: string(ms)}); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{md: "ok"}
+	if err := CloseDay(context.Background(), r, st, p, day, nil); err != nil {
+		t.Fatal(err)
+	}
+	checkLines := func(name string, b []byte) {
+		t.Helper()
+		for i, l := range strings.Split(string(b), "\n") {
+			if len(l) > 2000 {
+				t.Errorf("%s line %d is %d bytes", name, i+1, len(l))
+			}
+		}
+	}
+	checkLines("close-day", r.input)
+	var in struct {
+		Hours []struct {
+			Narrative []string `json:"narrative_lines"`
+		} `json:"hours"`
+		Meetings []struct {
+			Summary []string `json:"summary_lines"`
+		} `json:"meetings"`
+	}
+	if err := json.Unmarshal(r.input, &in); err != nil {
+		t.Fatal(err)
+	}
+	for _, ls := range [][]string{in.Hours[0].Narrative, in.Meetings[0].Summary} {
+		if len(ls) < 5 || strings.Join(ls, " ") != strings.TrimSpace(long) {
+			t.Errorf("%d lines do not rejoin to the text", len(ls))
+		}
+		for _, l := range ls {
+			if len(l) > 900 {
+				t.Errorf("line of %d bytes", len(l))
+			}
+		}
+	}
+
+	md := "## Summary\n" + long + "\n\n## Timeline\n- 09:00 work\n"
+	if err := os.WriteFile(p.DailyJournal(day), []byte(md), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = &fakeRunner{md: "## Themes\nx\n"}
+	if err := Rollup(context.Background(), r, st, p, "2026-W41"); err != nil {
+		t.Fatal(err)
+	}
+	checkLines("weekly-rollup", r.input)
+	var rin struct {
+		Days []struct {
+			Markdown []string `json:"markdown_lines"`
+		} `json:"days"`
+	}
+	if err := json.Unmarshal(r.input, &rin); err != nil {
+		t.Fatal(err)
+	}
+	ls := rin.Days[0].Markdown
+	if ls[0] != "## Summary" || ls[len(ls)-1] != "- 09:00 work" || !slices.Contains(ls, "## Timeline") || !slices.Contains(ls, "") {
+		t.Errorf("markdown lines lost structure: first %q last %q", ls[0], ls[len(ls)-1])
 	}
 }

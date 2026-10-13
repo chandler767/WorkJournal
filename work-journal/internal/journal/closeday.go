@@ -17,6 +17,9 @@ import (
 )
 
 // Skill input shapes; each matches the "Input" section of its SKILL.md.
+// Free text that can run long (narratives, meeting summaries, daily
+// Markdown) is sent as lines of at most skills.LineMax bytes, so Claude's
+// Read tool, which cuts lines over 2000 characters, sees all of it.
 type (
 	closeDayInput struct {
 		Day      string         `json:"day"`
@@ -26,7 +29,7 @@ type (
 	}
 	hourInput struct {
 		Hour        int                 `json:"hour"`
-		Narrative   string              `json:"narrative"`
+		Narrative   []string            `json:"narrative_lines"` // skills.TextLines
 		Notes       []string            `json:"notes"`
 		MainFocus   string              `json:"main_focus"`
 		ActionItems []skills.ActionItem `json:"action_items"`
@@ -37,7 +40,7 @@ type (
 		Start        string              `json:"start"`
 		End          string              `json:"end"`
 		Participants []string            `json:"participants"`
-		Summary      string              `json:"summary"`
+		Summary      []string            `json:"summary_lines"` // skills.TextLines
 		Decisions    []string            `json:"decisions"`
 		ActionItems  []skills.ActionItem `json:"action_items"`
 	}
@@ -66,14 +69,14 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 	in := closeDayInput{Day: day, Hours: []hourInput{}, Meetings: []meetingInput{}}
 	for _, h := range hours {
 		if h.SummaryJSON == "" {
-			in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Notes: []string{summaryUnavailable}, ActionItems: []skills.ActionItem{}})
+			in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Narrative: []string{}, Notes: []string{summaryUnavailable}, ActionItems: []skills.ActionItem{}})
 			continue
 		}
 		var s skills.HourSummary
 		if err := json.Unmarshal([]byte(h.SummaryJSON), &s); err != nil {
 			return fmt.Errorf("journal: hour %s %02d summary: %w", day, h.Hour, err)
 		}
-		in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Narrative: s.Narrative, Notes: nonNil(s.Notes), MainFocus: s.MainFocus, ActionItems: nonNilItems(s.ActionItems)})
+		in.Hours = append(in.Hours, hourInput{Hour: h.Hour, Narrative: skills.TextLines(s.Narrative), Notes: nonNil(s.Notes), MainFocus: s.MainFocus, ActionItems: nonNilItems(s.ActionItems)})
 	}
 	meetings, err := st.MeetingsOn(day)
 	if err != nil {
@@ -88,7 +91,7 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 				return fmt.Errorf("journal: meeting %s summary: %w", m.ID, err)
 			}
 		}
-		mi.Summary, mi.Decisions, mi.ActionItems = ms.Summary, nonNil(ms.Decisions), nonNilItems(ms.ActionItems)
+		mi.Summary, mi.Decisions, mi.ActionItems = skills.TextLines(ms.Summary), nonNil(ms.Decisions), nonNilItems(ms.ActionItems)
 		parts, err := st.Participants(m.ID)
 		if err != nil {
 			return err

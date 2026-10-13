@@ -10,6 +10,7 @@ Headless skill for the work-journal app. The prompt names one input file. The ap
 ## Rules
 
 - Read only the input file named in the prompt. Read nothing else and run no commands.
+- The input has one record per line. If the file is long, read it in parts (offset/limit) until you have read all of it, then answer.
 - Reply with ONLY one JSON object matching the schema below. No prose, no code fences.
 - Never invent utterances, people, or indexes that the input does not contain.
 - Empty input gives `{"drop":[],"redact":[]}`.
