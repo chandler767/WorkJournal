@@ -350,3 +350,31 @@ func TestAudioModeDefaultAndValidation(t *testing.T) {
 		t.Fatalf("round trip: audio_mode %q, %v", got.AudioMode, err)
 	}
 }
+
+func TestSkillInputSizeDefaultsAndValidation(t *testing.T) {
+	c := Default()
+	if c.OCRCharsPerHour != 30000 || c.InputMaxBytes != 70000 {
+		t.Fatalf("defaults: ocr_chars_per_hour %d input_max_bytes %d", c.OCRCharsPerHour, c.InputMaxBytes)
+	}
+	for _, v := range []int{5000, 200000} {
+		c := Default()
+		c.OCRCharsPerHour = v
+		if err := c.Validate(); err != nil {
+			t.Errorf("ocr_chars_per_hour %d rejected: %v", v, err)
+		}
+	}
+	for _, v := range []int{4999, 200001, 0} {
+		c := Default()
+		c.OCRCharsPerHour = v
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "ocr_chars_per_hour") {
+			t.Errorf("ocr_chars_per_hour %d accepted (err %v)", v, err)
+		}
+	}
+	for _, v := range []int{9999, 0} {
+		c := Default()
+		c.InputMaxBytes = v
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "input_max_bytes") {
+			t.Errorf("input_max_bytes %d accepted (err %v)", v, err)
+		}
+	}
+}

@@ -162,7 +162,7 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 	}
 	invalid := false
 	// run runs one skill; invalid output is recorded rather than returned.
-	run := func(skill, suffix string, in, out any) (bool, error) {
+	run := func(skill, suffix string, in []byte, out any) (bool, error) {
 		path, err := s.writeInput(doc, skill, suffix, in)
 		if err != nil {
 			return false, err
@@ -192,7 +192,14 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 	sum := skills.HourSummary{Timeline: []skills.TimelineEntry{}, Notes: []string{}, ActionItems: []skills.ActionItem{}}
 	summaryJSON := ""
 	checked := &checkedHour{hour: doc.Hour}
-	ok, err := run("summarize-hour", "", s.hourInput(doc, cats), checked)
+	hourIn, over, err := s.hourInput(doc, cats)
+	if err != nil {
+		return err
+	}
+	if over {
+		s.logOversized(doc, "summarize-hour", hourIn)
+	}
+	ok, err := run("summarize-hour", "", hourIn, checked)
 	if err != nil {
 		return err
 	}
@@ -213,7 +220,11 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 			in.Segments = append(in.Segments, segInput(i, doc.Segments[i], nil))
 		}
 		out := &checkedCategorization{allowed: s.Cfg.Categories, want: unmatched}
-		ok, err := run("categorize-time", "", in, out)
+		b, err := skills.MarshalInput(in)
+		if err != nil {
+			return err
+		}
+		ok, err := run("categorize-time", "", b, out)
 		if err != nil {
 			return err
 		}
@@ -245,9 +256,15 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 			continue
 		}
 		m := doc.Meetings[i]
-		in := s.meetingInput(doc, m)
+		in, b, over, err := s.meetingInput(doc, m)
+		if err != nil {
+			return err
+		}
+		if over {
+			s.logOversized(doc, "summarize-meeting", b)
+		}
 		var ms skills.MeetingSummary
-		ok, err := run("summarize-meeting", "-"+m.ID, in, &ms)
+		ok, err := run("summarize-meeting", "-"+m.ID, b, &ms)
 		if err != nil {
 			return err
 		}
@@ -302,21 +319,32 @@ func (s *SkillSummarizer) InputHash(doc *HourDoc) (string, error) {
 	for _, i := range unmatched {
 		segs = append(segs, segInput(i, doc.Segments[i], nil))
 	}
-	var meetings []meetingInput
+	var meetings []json.RawMessage
 	for _, id := range doc.EndedMeetings {
 		if i := slices.IndexFunc(doc.Meetings, func(m activity.Meeting) bool { return m.ID == id }); i >= 0 {
-			meetings = append(meetings, s.meetingInput(doc, doc.Meetings[i]))
+			_, b, _, err := s.meetingInput(doc, doc.Meetings[i])
+			if err != nil {
+				return "", err
+			}
+			meetings = append(meetings, b)
 		}
 	}
-	return hashJSON(s.hourInput(doc, cats), s.Cfg.Categories, segs, meetings)
-}
-
-// writeInput writes a skill input to derived/<day>/.inputs/HH-<skill><suffix>.json.
-func (s *SkillSummarizer) writeInput(doc *HourDoc, skill, suffix string, in any) (string, error) {
-	b, err := json.Marshal(in)
+	hourIn, _, err := s.hourInput(doc, cats)
 	if err != nil {
 		return "", err
 	}
+	return hashJSON(json.RawMessage(hourIn), s.Cfg.Categories, segs, meetings)
+}
+
+// logOversized notes an input still over input_max_bytes with no OCR left;
+// it is sent anyway, since Claude can page through it by line.
+func (s *SkillSummarizer) logOversized(doc *HourDoc, skill string, b []byte) {
+	s.logf("process: hour %s %02d: %s input is %d bytes (input_max_bytes %d) with no on-screen text left; sending it as is",
+		doc.Day, doc.Hour, skill, len(b), s.inputMax())
+}
+
+// writeInput writes a skill input to derived/<day>/.inputs/HH-<skill><suffix>.json.
+func (s *SkillSummarizer) writeInput(doc *HourDoc, skill, suffix string, b []byte) (string, error) {
 	dir := filepath.Join(filepath.Dir(s.Paths.DerivedHour(doc.Day, doc.Hour)), ".inputs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -328,9 +356,12 @@ func (s *SkillSummarizer) writeInput(doc *HourDoc, skill, suffix string, in any)
 	return path, nil
 }
 
-// hourInput omits excluded, paused and gap segments entirely.
-func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) hourInput {
-	in := hourInput{Day: doc.Day, Hour: doc.Hour, Segments: []segmentInput{}, Meetings: []meetingBrief{}, OCR: dedupe(screenTexts(doc.Screens))}
+// hourInput returns the encoded summarize-hour input, with the hour's
+// on-screen text compacted and capped (see fitOCR), and whether it is over
+// input_max_bytes even so. Excluded, paused and gap segments are omitted
+// entirely.
+func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) ([]byte, bool, error) {
+	in := hourInput{Day: doc.Day, Hour: doc.Hour, Segments: []segmentInput{}, Meetings: []meetingBrief{}}
 	for i, g := range doc.Segments {
 		if g.Kind == activity.KindActive || g.Kind == activity.KindIdle {
 			si := segInput(i, g, &cats[i])
@@ -345,7 +376,8 @@ func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) hourInput {
 	for _, u := range visibleSpeech(doc) {
 		in.Transcript = append(in.Transcript, lineInput{Speaker: speaker(u), Text: u.Text})
 	}
-	return in
+	in.Transcript = splitLines(in.Transcript)
+	return s.fitOCR(doc.Screens, func(ocr []string) any { in.OCR = ocr; return in })
 }
 
 func segInput(i int, g activity.Segment, category *string) segmentInput {
@@ -363,9 +395,10 @@ func speaker(u media.Utterance) string {
 }
 
 // meetingInput gathers the meeting's speech and screen text from this hour
-// and the day's earlier derived hours it spans.
-func (s *SkillSummarizer) meetingInput(doc *HourDoc, m activity.Meeting) meetingInput {
-	var in meetingInput
+// and the day's earlier derived hours it spans, and encodes it with the
+// screen text compacted and capped like an hour's (see fitOCR); over
+// reports an input over input_max_bytes even so.
+func (s *SkillSummarizer) meetingInput(doc *HourDoc, m activity.Meeting) (in meetingInput, b []byte, over bool, err error) {
 	in.Meeting.ID, in.Meeting.App, in.Meeting.Title = m.ID, m.App, m.Title
 	in.Meeting.Start, in.Meeting.End = m.Start.Format(time.RFC3339), m.End.Format(time.RFC3339)
 	docs := []*HourDoc{}
@@ -400,34 +433,14 @@ func (s *SkillSummarizer) meetingInput(doc *HourDoc, m activity.Meeting) meeting
 			}
 		}
 	}
-	in.Screens = dedupe(screenTexts(screens))
-	return in
+	in.Transcript = splitLines(in.Transcript)
+	b, over, err = s.fitOCR(screens, func(ocr []string) any { in.Screens = ocr; return in })
+	return in, b, over, err
 }
 
 func clock(d time.Duration) string {
 	sec := int(d.Seconds())
 	return fmt.Sprintf("%02d:%02d:%02d", sec/3600, sec/60%60, sec%60)
-}
-
-func screenTexts(ss []media.ScreenText) []string {
-	out := []string{}
-	for _, s := range ss {
-		out = append(out, s.Text)
-	}
-	return out
-}
-
-// dedupe drops repeated texts, keeping first occurrences in order.
-func dedupe(texts []string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, t := range texts {
-		if t = strings.TrimSpace(t); t != "" && !seen[t] {
-			seen[t] = true
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 // anonLabel matches the labels of unnamed voices.

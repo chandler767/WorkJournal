@@ -195,7 +195,7 @@ func TestRunnerArgs(t *testing.T) {
 	if slices.Contains(args, "--mcp-config") {
 		t.Errorf("--mcp-config must not be passed: %q", args)
 	}
-	want := "Use the tessl__summarize-hour skill. Input file: /data/derived/in.json. Reply with only the JSON object."
+	want := "Use the tessl__summarize-hour skill. Input file: /data/derived/in.json (one record per line; if it is too large to read at once, read it in parts with offset and limit). Reply with only the JSON object."
 	if !pair("-p", want) {
 		t.Errorf("missing -p prompt %q: %q", want, args)
 	}
@@ -397,5 +397,58 @@ func TestHourSchemaRequiresNarrativeAndTimelineAndCapsNotes(t *testing.T) {
 		if (err == nil) != c.ok {
 			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
 		}
+	}
+}
+
+func TestRunnerNoJSONErrorCarriesResultSnippet(t *testing.T) {
+	prose := "I couldn't summarize this hour because I couldn't read the input file.\n\nIt is 582 KB of minified JSON on a single line. " + strings.Repeat("More words. ", 60)
+	f := &fakeExec{outs: []string{envelope(prose, false)}}
+	var got HourSummary
+	err := newRunner(f).Run(context.Background(), "summarize-hour", "/data/in.json", &got)
+	if !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("err = %v, want ErrInvalidOutput", err)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "\n") {
+		t.Fatalf("error is not one line: %q", msg)
+	}
+	if !strings.Contains(msg, "summarize-hour") || !strings.Contains(msg, "I couldn't summarize this hour because I couldn't read the input file. It is 582 KB") {
+		t.Fatalf("error lacks skill or result snippet: %q", msg)
+	}
+	if strings.Contains(msg, strings.Repeat("More words. ", 30)) {
+		t.Fatalf("snippet longer than 300 chars: %q", msg)
+	}
+}
+
+func TestMarshalInputOneRecordPerLineNoHTMLEscapes(t *testing.T) {
+	type rec struct {
+		Speaker string `json:"speaker"`
+		Text    string `json:"text"`
+	}
+	in := struct {
+		Day   string   `json:"day"`
+		Lines []rec    `json:"lines"`
+		OCR   []string `json:"ocr"`
+	}{Day: "2026-10-07", OCR: []string{"<a> & <b>", "two"}}
+	for i := 0; i < 200; i++ {
+		in.Lines = append(in.Lines, rec{"You", strings.Repeat("w", 30)})
+	}
+	b, err := MarshalInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	if lines[0] != "{" || lines[1] != ` "day": "2026-10-07",` || lines[2] != ` "lines": [` {
+		t.Fatalf("top level not one member per line, in field order: %q", lines[:3])
+	}
+	if want := `  {"speaker":"You","text":"` + strings.Repeat("w", 30) + `"},`; lines[3] != want {
+		t.Fatalf("record line %q, want %q", lines[3], want)
+	}
+	if !strings.Contains(string(b), ` "ocr": ["<a> & <b>","two"]`) {
+		t.Fatalf("short value not kept on one line, or HTML escaped: %s", b[len(b)-80:])
+	}
+	var back map[string]any
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
 	}
 }

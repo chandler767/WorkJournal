@@ -248,6 +248,11 @@ already-built recorder.
   MCP servers (`--strict-mcp-config`); `derived/` is added with `--add-dir`, and raw media,
   `voices/` and `journal.db` are never passed to it. These are Claude Code's tool and
   directory settings, not an OS sandbox.
+- Screen text sent to Claude is trimmed first: a line already on any of the previous 10
+  screenshots is not sent again, and an hour (or meeting) sends at most `ocr_chars_per_hour`
+  (default 30000) characters, picked evenly across it. If a skill input is still over
+  `input_max_bytes` (default 70000), less screen text is sent; speech is never cut.
+  Inputs are written one record per line so Claude can read large ones in parts.
 - The dashboard binds to loopback only; `journal serve` refuses any other `listen_addr`.
 
 ## More

@@ -40,6 +40,8 @@ type Config struct {
 	PrivacyFilter                bool              `toml:"privacy_filter"`
 	RedactIdentifiers            bool              `toml:"redact_identifiers"`
 	PrivacyDropConfidence        float64           `toml:"privacy_drop_confidence"`
+	OCRCharsPerHour              int               `toml:"ocr_chars_per_hour"`
+	InputMaxBytes                int               `toml:"input_max_bytes"`
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
 	MeetingMinTwoWayMinutes      int               `toml:"meeting_min_two_way_minutes"`
@@ -82,6 +84,8 @@ func Default() Config {
 		PrivacyFilter:                true,
 		RedactIdentifiers:            true,
 		PrivacyDropConfidence:        0.7,
+		OCRCharsPerHour:              30000,
+		InputMaxBytes:                70000,
 		MinFreeGB:                    5,
 		ListenAddr:                   "127.0.0.1:4747",
 		MeetingMinTwoWayMinutes:      2,
@@ -205,6 +209,12 @@ func (c Config) Validate() error {
 	}
 	if c.PrivacyDropConfidence < 0.5 || c.PrivacyDropConfidence > 0.95 {
 		return fmt.Errorf("privacy_drop_confidence must be within [0.5,0.95], got %v", c.PrivacyDropConfidence)
+	}
+	if c.OCRCharsPerHour < 5000 || c.OCRCharsPerHour > 200000 {
+		return fmt.Errorf("ocr_chars_per_hour must be within 5000–200000, got %d", c.OCRCharsPerHour)
+	}
+	if c.InputMaxBytes < 10000 || c.InputMaxBytes > 2000000 {
+		return fmt.Errorf("input_max_bytes must be within 10000–2000000, got %d", c.InputMaxBytes)
 	}
 	if c.Diarization != "sherpa" && c.Diarization != "off" {
 		return fmt.Errorf(`diarization must be "sherpa" or "off", got %q`, c.Diarization)

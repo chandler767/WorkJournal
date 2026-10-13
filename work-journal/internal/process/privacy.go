@@ -230,7 +230,7 @@ func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us [
 // only place Claude may read), runs the skill and removes the input: it
 // holds the speech that may be removed.
 func (p *Pipeline) runPrivacy(ctx context.Context, day string, hour int, in privacyInput, out *checkedPrivacy) error {
-	b, err := json.Marshal(in)
+	b, err := skills.MarshalInput(in)
 	if err != nil {
 		return err
 	}

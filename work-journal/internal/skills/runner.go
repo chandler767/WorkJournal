@@ -107,11 +107,16 @@ func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any
 	return fmt.Errorf("%w: %s: %v", ErrUnavailable, skill, lastErr)
 }
 
-// decode extracts, validates and unmarshals a skill result into out.
+// resultSnippetMax is how much of a result without JSON an error quotes.
+const resultSnippetMax = 300
+
+// decode extracts, validates and unmarshals a skill result into out. A
+// result without a JSON object (Claude answered in prose, for example that
+// it could not read the input) is quoted, on one line, in the error.
 func decode(sch *jsonschema.Schema, result string, out any) error {
 	raw, err := ExtractJSON(result)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; result began: %s", err, snippet(result, resultSnippetMax))
 	}
 	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
 	if err != nil {
@@ -126,6 +131,107 @@ func decode(sch *jsonschema.Schema, result string, out any) error {
 	if v, ok := out.(Validator); ok {
 		return v.Validate()
 	}
+	return nil
+}
+
+// snippet is s with whitespace runs collapsed to one space, cut to max runes.
+func snippet(s string, max int) string {
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return string(r)
+}
+
+// InputLineBudget is the longest compact JSON value MarshalInput keeps on
+// one line; longer arrays and objects are spread one element per line.
+// Claude's Read tool pages by line and cuts lines over 2000 characters.
+const InputLineBudget = 1000
+
+// MarshalInput encodes a skill input so Claude's Read tool, which pages by
+// line, can read an input of any size: arrays and objects whose compact
+// form is over InputLineBudget have one element (member) per line, nested as
+// deep as needed; shorter values, and every string, stay on one line. HTML
+// characters are not escaped.
+func MarshalInput(v any) ([]byte, error) {
+	raw, err := compactJSON(v)
+	if err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	if err := layoutJSON(&b, raw, ""); err != nil {
+		return nil, err
+	}
+	b.WriteByte('\n')
+	return b.Bytes(), nil
+}
+
+func compactJSON(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(b.Bytes(), "\n"), nil
+}
+
+func layoutJSON(b *bytes.Buffer, raw []byte, indent string) error {
+	if len(raw) <= InputLineBudget || (raw[0] != '[' && raw[0] != '{') {
+		b.Write(raw)
+		return nil
+	}
+	inner := indent + " "
+	if raw[0] == '[' {
+		var elems []json.RawMessage
+		if err := json.Unmarshal(raw, &elems); err != nil {
+			return err
+		}
+		b.WriteString("[\n")
+		for i, e := range elems {
+			b.WriteString(inner)
+			if err := layoutJSON(b, e, inner); err != nil {
+				return err
+			}
+			if i < len(elems)-1 {
+				b.WriteByte(',')
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString(indent + "]")
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := dec.Token(); err != nil { // {
+		return err
+	}
+	b.WriteString("{\n")
+	first := true
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return err
+		}
+		key, err := compactJSON(tok)
+		if err != nil {
+			return err
+		}
+		if !first {
+			b.WriteString(",\n")
+		}
+		first = false
+		b.WriteString(inner)
+		b.Write(key)
+		b.WriteString(": ")
+		if err := layoutJSON(b, v, inner); err != nil {
+			return err
+		}
+	}
+	b.WriteString("\n" + indent + "}")
 	return nil
 }
 
@@ -161,7 +267,7 @@ func (r *ClaudeRunner) exec(ctx context.Context, skill, inputPath string) ([]byt
 // args makes only Skill (needed to load the skill) and Read available,
 // pre-approves Read, loads no MCP servers and never bypasses permissions.
 func (r *ClaudeRunner) args(skill, inputPath string) []string {
-	prompt := fmt.Sprintf("Use the %s%s skill. Input file: %s. Reply with only the JSON object.", installedPrefix, skill, inputPath)
+	prompt := fmt.Sprintf("Use the %s%s skill. Input file: %s (one record per line; if it is too large to read at once, read it in parts with offset and limit). Reply with only the JSON object.", installedPrefix, skill, inputPath)
 	return []string{"-p", prompt, "--output-format", "json",
 		"--tools", "Skill,Read", // the only tools that exist in the session
 		"--allowedTools", "Read", // pre-approved, so headless reads work

@@ -142,9 +142,9 @@ func minuteTotals(st *store.Store, from, to string) (map[string]int, error) {
 	return out, nil
 }
 
-// runSkill writes the input JSON to path and runs the skill on it.
+// runSkill writes the input JSON (one record per line) to path and runs the skill on it.
 func runSkill(ctx context.Context, r skills.Runner, skill, path string, in, out any) error {
-	b, err := json.Marshal(in)
+	b, err := skills.MarshalInput(in)
 	if err != nil {
 		return err
 	}

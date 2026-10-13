@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -387,8 +388,12 @@ func (f *closeSkills) Run(_ context.Context, skill, input string, out any) error
 		if err != nil {
 			return err
 		}
+		var c bytes.Buffer // inputs are indented; compare them compacted
+		if err := json.Compact(&c, b); err != nil {
+			return err
+		}
 		f.mu.Lock()
-		f.closeInput = string(b)
+		f.closeInput = c.String()
 		f.mu.Unlock()
 		return json.Unmarshal([]byte(`{"markdown":"# Day"}`), out)
 	case "weekly-rollup":
