@@ -2,13 +2,12 @@ package media
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 )
 
-// WhisperVersion returns the version string reported by whisper-cli.
-func WhisperVersion(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "whisper-cli", "--version").Output()
+// WhisperVersion returns the version string reported by whisper-cli. It goes through run so tests can stub the tool.
+func WhisperVersion(ctx context.Context, run Runner) (string, error) {
+	out, err := run(ctx, "whisper-cli", "--version")
 	if err != nil {
 		return "", err
 	}
