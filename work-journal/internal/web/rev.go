@@ -31,7 +31,7 @@ func shortHash(parts ...string) string {
 }
 
 // dayRev fingerprints the day page: database rows, the journal file, the
-// recorder state and the banners' KV inputs.
+// recorder state and the banners' KV inputs (the Claude pause among them).
 func (s *Server) dayRev(day string) (string, error) {
 	db, err := s.Store.DayRev(day)
 	if err != nil {
@@ -41,16 +41,17 @@ func (s *Server) dayRev(day string) (string, error) {
 	disk, _, _ := s.Store.GetKV("disk_state")
 	closeFail, _, _ := s.Store.GetKV(scheduler.CloseFailuresKey(day))
 	return shortHash(db, fileStamp(s.Paths.DailyJournal(day)), state, disk, boolStr(s.SkillsMissing),
-		closeFail, boolStr(day == config.DayKey(s.now()))), nil
+		closeFail, boolStr(day == config.DayKey(s.now())), s.pauseRev()), nil
 }
 
-// hourRev fingerprints the hour page: database rows and the derived doc.
+// hourRev fingerprints the hour page: database rows, the derived doc and the
+// Claude pause banner.
 func (s *Server) hourRev(day string, hour int) (string, error) {
 	db, err := s.Store.HourRev(day, hour)
 	if err != nil {
 		return "", err
 	}
-	return shortHash(db, fileStamp(s.Paths.DerivedHour(day, hour))), nil
+	return shortHash(db, fileStamp(s.Paths.DerivedHour(day, hour)), s.pauseRev()), nil
 }
 
 func boolStr(b bool) string { return strconv.FormatBool(b) }

@@ -181,6 +181,9 @@ type App struct {
 	Loc        Locations
 	Store      *store.Store
 	Runner     *skills.ClaudeRunner
+	// Gate wraps Runner for every Claude run: it pauses Claude work while
+	// a usage limit lasts (pause_on_usage_limit).
+	Gate       *skills.PausingRunner
 	Summarizer *process.SkillSummarizer
 	Pipeline   *process.Pipeline
 	Control    capture.Control
@@ -269,7 +272,9 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 	a := &App{Paths: p, ConfigPath: opt.ConfigPath, Loc: opt.Loc, Store: st, cfg: &cfgHolder{cfg: cfg}, launch: startProcess, quitRunning: capture.QuitRunning}
 
 	a.Runner = &skills.ClaudeRunner{WorkDir: opt.Loc.SkillsDir, DataDir: filepath.Join(p.Root, "derived")}
-	a.Summarizer = &process.SkillSummarizer{Runner: a.Runner, Store: st, Paths: p, Cfg: cfg, Logf: log.Printf}
+	a.Gate = &skills.PausingRunner{Runner: a.Runner, KV: st, Logf: log.Printf,
+		Enabled: func() bool { return a.Cfg().PauseOnUsageLimit }}
+	a.Summarizer = &process.SkillSummarizer{Runner: a.Gate, Store: st, Paths: p, Cfg: cfg, Logf: log.Printf}
 	a.Voices = &diarize.Voices{Dir: p.Voices(), Threshold: cfg.VoiceMatchThreshold}
 	var diarizer diarize.Diarizer
 	diarizer, a.closeDiarizer = speakerDiarizer(cfg, p, loadSherpa, log.Printf)
@@ -283,7 +288,7 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		Voices:      a.Voices,
 		Run:         media.ExecRunner,
 		Summarize:   a.Summarizer,
-		Privacy:     a.Runner,
+		Privacy:     a.Gate,
 		Logf:        log.Printf,
 	}
 	a.Control = capture.NewSocketControl(p.Socket())
@@ -293,7 +298,7 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		Store:      st,
 		Pipeline:   a.Pipeline,
 		Summarizer: a.Summarizer,
-		Runner:     a.Runner,
+		Runner:     a.Gate,
 		Control:    a.Control,
 		SaveCfg:    a.SaveCfg,
 		FreeGB:     retention.FreeGB,

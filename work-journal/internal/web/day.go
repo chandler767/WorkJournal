@@ -71,6 +71,7 @@ type dayPage struct {
 	DiskWarn                string
 	SkillsMissing           bool
 	CloseFailed             bool
+	ClaudePause             string // usage-limit banner; "" when not paused
 	Notice                  string
 	Journal                 template.HTML
 	Totals                  []totalRow
@@ -124,6 +125,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		p.CloseFailed = n > 0
 	}
 	p.SkillsMissing = s.SkillsMissing
+	p.ClaudePause = s.claudePause()
 
 	hours, err := s.Store.HoursOn(day)
 	if err != nil {

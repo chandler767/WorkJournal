@@ -6,6 +6,7 @@
   <form class="reprocess next" method="post" action="/hour/{{.Date}}/{{.Hour}}/reprocess"><button type="submit" class="link">Reprocess</button></form>
 </nav>
 
+{{if .ClaudePause}}<div class="banner claude-paused" role="alert">{{.ClaudePause}}. <form method="post" action="/claude/resume"><button type="submit">Run now anyway</button></form></div>{{end}}
 {{if .NeedsReview}}<div class="banner"><span class="badge warn">needs review</span>
   This hour could not be summarized cleanly. Reprocess it to try again.</div>{{end}}
 {{if .PartialNote}}<div class="banner" role="status"><span class="badge">in progress</span> {{.PartialNote}}</div>{{end}}

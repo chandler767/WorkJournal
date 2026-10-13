@@ -8,6 +8,7 @@
 
 {{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
 {{if .DiskWarn}}<div class="banner disk-warning" role="alert">Disk space is low (state: {{.DiskWarn}}). Recording may be paused or raw media cleaned early.</div>{{end}}
+{{if .ClaudePause}}<div class="banner claude-paused" role="alert">{{.ClaudePause}}. <form method="post" action="/claude/resume"><button type="submit">Run now anyway</button></form></div>{{end}}
 {{if .SkillsMissing}}<div class="banner skills-missing" role="alert">Claude Code skills were not found, so hours are not being summarized. Run <code>journal setup</code> (it installs the skills) and restart <code>journal serve</code>.</div>{{end}}
 
 <section class="status {{if .RecorderUp}}up{{else}}down{{end}}">

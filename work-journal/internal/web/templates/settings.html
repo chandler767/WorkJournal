@@ -47,6 +47,13 @@
     </label>
   </section>
   <section>
+    <h2>Claude usage</h2>
+    <p class="muted">When Claude's usage limit is reached, nothing more is sent to Claude until it resets; recording and local transcription go on, and the waiting hours are summarized as soon as the limit resets. The day page says so and offers "Run now anyway". Off: Claude is asked again on the usual schedule.</p>
+    <label>Pause summaries when Claude usage runs out
+      <select name="pause_on_usage_limit"><option value="true"{{if eq .Form.PauseOnUsageLimit "true"}} selected{{end}}>On</option><option value="false"{{if eq .Form.PauseOnUsageLimit "false"}} selected{{end}}>Off</option></select>
+    </label>
+  </section>
+  <section>
     <h2>Exclusions</h2>
     <p class="muted">One per line. Exclusion changes take effect after the recorder restarts.</p>
     <label>Excluded apps <textarea name="excluded_apps" rows="4">{{.Form.ExcludedApps}}</textarea></label>

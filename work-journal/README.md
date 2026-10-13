@@ -65,6 +65,18 @@ are kept in `cache/<day>/` and reused by later runs and the final pass. A cache 
 redone when its file's size or modification time changes, or the whisper model changes. An
 unchanged in-progress hour is not summarized again.
 
+## Claude usage limits
+
+When Claude reports a usage or rate limit, work-journal stops asking Claude until the limit
+resets (the time Claude gives, else about an hour, at most 24 hours). Recording,
+transcription, speaker separation and OCR go on; hours wait as transcribed rather than being
+marked needs review, and the day's journal and weekly rollup wait too. Once the limit resets,
+the waiting hours are summarized oldest first. Meanwhile the day and hour pages say
+"Claude usage limit reached — summaries paused until 3:00 PM" with a **Run now anyway**
+button, which tries straight away (and pauses again if Claude is still limited).
+`journal doctor` reports the limit and its reset time. Settings → Claude usage
+(`pause_on_usage_limit`) turns pausing off; Claude is then asked again on the usual schedule.
+
 ## Screen capture
 
 Screenshots follow what you do rather than a fixed timer: one when you switch apps or windows,

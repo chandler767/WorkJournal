@@ -14,6 +14,7 @@ import (
 
 	"workjournal/internal/config"
 	"workjournal/internal/diarize"
+	"workjournal/internal/skills"
 )
 
 func mkfile(t *testing.T, path, content string) {
@@ -367,7 +368,29 @@ func TestBuildFallsBackToNoopWithoutModels(t *testing.T) {
 
 func TestBuildWiresPrivacyFilter(t *testing.T) {
 	a := newTestApp(t)
-	if a.Pipeline.Privacy == nil || a.Pipeline.Privacy != a.Runner {
-		t.Fatalf("privacy runner = %v, want the skills runner", a.Pipeline.Privacy)
+	if a.Pipeline.Privacy == nil || a.Pipeline.Privacy != skills.Runner(a.Gate) {
+		t.Fatalf("privacy runner = %v, want the paused-aware skills runner", a.Pipeline.Privacy)
+	}
+}
+
+// Every Claude run goes through the usage-limit pause gate.
+func TestBuildGatesClaudeRunsBehindUsagePause(t *testing.T) {
+	a := newTestApp(t)
+	if a.Gate == nil || a.Gate.Runner != skills.Runner(a.Runner) || a.Gate.KV == nil {
+		t.Fatalf("gate = %+v", a.Gate)
+	}
+	for name, r := range map[string]skills.Runner{"summarizer": a.Summarizer.Runner, "privacy": a.Pipeline.Privacy, "jobs": a.Jobs.Runner} {
+		if r != skills.Runner(a.Gate) {
+			t.Errorf("%s runner is not the gate", name)
+		}
+	}
+	if !a.Gate.Enabled() {
+		t.Error("gate disabled with the default config")
+	}
+	cfg := a.Cfg()
+	cfg.PauseOnUsageLimit = false
+	a.cfg.set(cfg)
+	if a.Gate.Enabled() {
+		t.Error("gate ignores pause_on_usage_limit")
 	}
 }

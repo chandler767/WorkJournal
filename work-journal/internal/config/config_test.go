@@ -378,3 +378,22 @@ func TestSkillInputSizeDefaultsAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPauseOnUsageLimitDefault(t *testing.T) {
+	if !Default().PauseOnUsageLimit {
+		t.Fatal("pause_on_usage_limit defaults to off")
+	}
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte("retention_days = 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(p); err != nil || !got.PauseOnUsageLimit {
+		t.Fatalf("an older file without the key: %v, %v", got.PauseOnUsageLimit, err)
+	}
+	if err := os.WriteFile(p, []byte("pause_on_usage_limit = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(p); err != nil || got.PauseOnUsageLimit {
+		t.Fatalf("Load = %v, %v", got.PauseOnUsageLimit, err)
+	}
+}

@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-// fakeExec returns canned stdout values in order and records each call.
+// fakeExec returns canned stdout values in order (with err, when set, as a
+// failed command's output) and records each call.
 type fakeExec struct {
 	outs  []string
 	err   error
@@ -24,11 +25,11 @@ type fakeExec struct {
 
 func (f *fakeExec) run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, append([]string{name}, args...))
-	if f.err != nil {
-		return nil, f.err
+	var out []byte
+	if len(f.outs) > 0 {
+		out = []byte(f.outs[min(len(f.calls)-1, len(f.outs)-1)])
 	}
-	i := min(len(f.calls)-1, len(f.outs)-1)
-	return []byte(f.outs[i]), nil
+	return out, f.err
 }
 
 // envelope wraps result the way `claude --output-format json` does.

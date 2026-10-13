@@ -25,7 +25,8 @@ var ErrInvalidOutput = errors.New("invalid skill output")
 
 // ErrUnavailable means claude produced no usable result twice (non-zero exit,
 // an is_error envelope, a per-run timeout or an unparseable envelope). It is
-// transient: the caller retries later (Ruling 34).
+// transient: the caller retries later (Ruling 34). ErrUsageLimited (after
+// one attempt) also matches it.
 var ErrUnavailable = errors.New("claude unavailable")
 
 // Validator is implemented by outputs with checks beyond the schema (for
@@ -67,9 +68,11 @@ type resultEnvelope struct {
 // Run invokes the skill with up to two attempts. An attempt fails on a
 // non-zero exit, a per-attempt timeout, an is_error or unparseable envelope
 // (no usable result), or a result that is not a schema-valid JSON object
-// (invalid output). When both attempts fail and either produced invalid output,
-// Run returns ErrInvalidOutput (the hour goes to review); otherwise
-// ErrUnavailable (transient; retried later, Ruling 34). A missing claude
+// (invalid output). A run claude refuses for a usage or rate limit returns
+// ErrUsageLimited at once, without a second attempt. When both attempts fail
+// and either produced invalid output, Run returns ErrInvalidOutput (the hour
+// goes to review); otherwise ErrUnavailable (transient; retried later,
+// Ruling 34). A missing claude
 // binary or an ended ctx returns a plain transient error at once.
 func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any) error {
 	sch, err := schema(skill)
@@ -80,19 +83,31 @@ func (r *ClaudeRunner) Run(ctx context.Context, skill, inputPath string, out any
 	invalid := false
 	for attempt := 0; attempt < 2; attempt++ {
 		stdout, err := r.exec(ctx, skill, inputPath)
+		var env resultEnvelope
+		envErr := json.Unmarshal(stdout, &env)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 				return fmt.Errorf("skill %s: %w", skill, err)
 			}
+			// A non-zero exit may still print the error envelope.
+			msg := err.Error()
+			if envErr == nil && env.IsError {
+				msg = env.Result + "\n" + msg
+			}
+			if ul, ok := ParseUsageLimit(msg, time.Now()); ok {
+				return fmt.Errorf("skill %s: %w", skill, ul)
+			}
 			lastErr = err // non-zero exit or per-attempt timeout
 			continue
 		}
-		var env resultEnvelope
-		if err := json.Unmarshal(stdout, &env); err != nil {
-			lastErr = fmt.Errorf("unparseable claude output: %v", err)
+		if envErr != nil {
+			lastErr = fmt.Errorf("unparseable claude output: %v", envErr)
 			continue
 		}
 		if env.IsError {
+			if ul, ok := ParseUsageLimit(env.Result, time.Now()); ok {
+				return fmt.Errorf("skill %s: %w", skill, ul)
+			}
 			lastErr = fmt.Errorf("claude reported an error: %s", env.Result)
 			continue
 		}
@@ -259,7 +274,8 @@ func (r *ClaudeRunner) exec(ctx context.Context, skill, inputPath string) ([]byt
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("%s: %w", bin, ctx.Err())
 		}
-		return nil, fmt.Errorf("%s: %w: %s", bin, err, strings.TrimSpace(stderr.String()))
+		// stdout too: claude prints its error envelope before exiting non-zero.
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", bin, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }

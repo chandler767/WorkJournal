@@ -45,6 +45,7 @@ type hourPage struct {
 	Hour                       string
 	NeedsReview                bool
 	PartialNote                string
+	ClaudePause                string // usage-limit banner; "" when not paused
 	Summary                    skills.HourSummary
 	HasSummary                 bool
 	Transcript                 []utterRow
@@ -79,6 +80,7 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Rev = rev
+	p.ClaudePause = s.claudePause()
 
 	rec, found, err := s.Store.Hour(day, hour)
 	if err != nil {

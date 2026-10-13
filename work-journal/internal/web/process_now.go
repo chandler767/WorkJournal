@@ -15,17 +15,30 @@ import (
 // ProcessNow) and sends the browser to that day with a notice.
 func (s *Server) handleProcessNow(w http.ResponseWriter, r *http.Request) {
 	upto, err := s.Jobs.ProcessNow(r.Context())
+	http.Redirect(w, r, s.processedTo(upto, err), http.StatusSeeOther)
+}
+
+// processedTo is the day page a Process now run returns to, with a notice:
+// that Claude is still usage-limited when the run paused Claude work again,
+// else whether it worked.
+func (s *Server) processedTo(upto time.Time, err error) string {
 	if upto.IsZero() {
 		upto = time.Now()
 	}
 	to := "/day/" + config.DayKey(upto)
-	if err != nil {
+	switch {
+	case s.claudePause() != "":
+		if err != nil {
+			log.Printf("web: process now: %v", err)
+		}
+		to += "?notice=claude-still-limited"
+	case err != nil:
 		log.Printf("web: process now: %v", err)
 		to += "?notice=process-failed"
-	} else {
+	default:
 		to += "?notice=processed&upto=" + upto.Format("15:04")
 	}
-	http.Redirect(w, r, to, http.StatusSeeOther)
+	return to
 }
 
 var clockRE = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
@@ -41,6 +54,8 @@ func dayNotice(q url.Values) string {
 		return "Processed."
 	case "process-failed":
 		return "Processing failed — see the log. Anything that finished was kept."
+	case "claude-still-limited":
+		return "Claude is still at its usage limit, so summaries stay paused. Recordings were transcribed; summaries follow once the limit resets."
 	case "reprocess-not-ready":
 		return "That hour's audio is still being recorded — try again in a few minutes."
 	case "reprocess-expired":

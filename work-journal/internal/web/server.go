@@ -84,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /audio-mode", s.sameOrigin(s.handleAudioMode))
 	mux.HandleFunc("POST /close-day/{date}", s.sameOrigin(s.handleCloseDay))
 	mux.HandleFunc("POST /process-now", s.sameOrigin(s.handleProcessNow))
+	mux.HandleFunc("POST /claude/resume", s.sameOrigin(s.handleClaudeResume))
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
 	mux.HandleFunc("POST /segment/category", s.sameOrigin(s.handleSegmentCategory))
 	mux.HandleFunc("POST /meeting/{id}/speaker", s.sameOrigin(s.handleSpeaker))

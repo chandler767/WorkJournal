@@ -42,6 +42,7 @@ type Config struct {
 	PrivacyDropConfidence        float64           `toml:"privacy_drop_confidence"`
 	OCRCharsPerHour              int               `toml:"ocr_chars_per_hour"`
 	InputMaxBytes                int               `toml:"input_max_bytes"`
+	PauseOnUsageLimit            bool              `toml:"pause_on_usage_limit"`
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
 	MeetingMinTwoWayMinutes      int               `toml:"meeting_min_two_way_minutes"`
@@ -86,6 +87,7 @@ func Default() Config {
 		PrivacyDropConfidence:        0.7,
 		OCRCharsPerHour:              30000,
 		InputMaxBytes:                70000,
+		PauseOnUsageLimit:            true,
 		MinFreeGB:                    5,
 		ListenAddr:                   "127.0.0.1:4747",
 		MeetingMinTwoWayMinutes:      2,

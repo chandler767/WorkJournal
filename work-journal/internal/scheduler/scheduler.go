@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/skills"
 	"workjournal/internal/store"
 )
 
@@ -72,6 +73,11 @@ type Scheduler struct {
 	// HasDailyJournal reports whether day has a journal entry; a week is
 	// rolled up only when one of its days has. Nil means assume yes.
 	HasDailyJournal func(day string) bool
+
+	// pauseOn is the tick's pause_on_usage_limit; loggedPause is the
+	// end of the Claude usage-limit pause last logged ("" for none).
+	pauseOn     bool
+	loggedPause string
 }
 
 func (s *Scheduler) logf(format string, args ...any) {
@@ -101,20 +107,95 @@ func (s *Scheduler) Run(ctx context.Context, every time.Duration) {
 // persistent failure is retried hourly rather than every tick.
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	cfg := s.Cfg()
+	s.pauseOn = cfg.PauseOnUsageLimit
 	s.step("disk check", s.Jobs.DiskCheck(ctx))
 	s.step("audio mode", s.Jobs.SyncAudioMode(ctx))
+	paused := s.claudePause(ctx, now)
 	s.process(ctx, now)
 	s.partial(ctx, now, cfg)
-	s.closeDays(ctx, now, cfg)
-	s.rollups(ctx, now, cfg)
+	if !paused {
+		s.closeDays(ctx, now, cfg)
+		s.rollups(ctx, now, cfg)
+	}
+	s.claudePause(ctx, now) // log a pause this tick's runs started
 }
 
-func (s *Scheduler) step(name string, err error) bool {
-	if err != nil {
-		s.logf("scheduler: %s: %v", name, err)
+// claudePause reports whether Claude work is paused for a usage limit (see
+// skills.PausingRunner), logging each pause once. Recording and local
+// processing go on while paused (the skills return at once); closes and
+// rollups wait, so their markers do not advance. Once the pause has passed
+// it is cleared and pending hours are processed straight away, oldest first.
+func (s *Scheduler) claudePause(ctx context.Context, now time.Time) bool {
+	if !s.pauseOn {
 		return false
 	}
-	return true
+	st, err := skills.ReadPause(s.Store, now)
+	if !s.step("read claude pause", err) || st.Until.IsZero() {
+		return false
+	}
+	if st.Active {
+		if until := st.Until.Format(time.RFC3339); s.loggedPause != until {
+			s.loggedPause = until
+			s.logf("scheduler: Claude usage limit reached; summaries paused until %s (%s)", st.Until.Format("Jan 2 15:04"), st.Reason)
+		}
+		return true
+	}
+	if !s.step("clear claude pause", skills.ClearPause(s.Store)) {
+		return false
+	}
+	s.loggedPause = ""
+	s.logf("scheduler: Claude usage limit reset; resuming summaries")
+	s.step("process pending", s.Jobs.ProcessPending(ctx))
+	if ctx.Err() == nil && settled(now) {
+		s.mark(kvProcessHour, hourKey(now))
+	}
+	return false
+}
+
+// usageLimited reports whether err is a Claude usage limit that pauses
+// Claude work (pause_on_usage_limit on).
+func (s *Scheduler) usageLimited(err error) bool {
+	var ul skills.ErrUsageLimited
+	return s.pauseOn && errors.As(err, &ul)
+}
+
+// step logs err, except the parts that are Claude usage limits while those
+// pause Claude work (the pause itself is logged once), and reports whether
+// the job succeeded.
+func (s *Scheduler) step(name string, err error) bool {
+	if err == nil {
+		return true
+	}
+	if s.pauseOn {
+		if rest := withoutUsageLimited(err); rest != nil {
+			s.logf("scheduler: %s: %v", name, rest)
+		}
+	} else {
+		s.logf("scheduler: %s: %v", name, err)
+	}
+	return false
+}
+
+// withoutUsageLimited drops the usage-limit errors from err, looking into
+// joined errors; nil when nothing else is left.
+func withoutUsageLimited(err error) error {
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		var keep []error
+		for _, e := range j.Unwrap() {
+			if e = withoutUsageLimited(e); e != nil {
+				keep = append(keep, e)
+			}
+		}
+		if len(keep) == len(j.Unwrap()) {
+			return err
+		}
+		return errors.Join(keep...)
+	}
+	var ul skills.ErrUsageLimited
+	if errors.As(err, &ul) {
+		return nil
+	}
+	return err
 }
 
 func (s *Scheduler) kv(key string) string { return getKV(s.Store, key, s.logf) }
@@ -249,7 +330,7 @@ func (s *Scheduler) closeDays(ctx context.Context, now time.Time, cfg config.Con
 	if now.Before(closeInstant(now, cfg).Add(SettleDelay)) || !g.take() {
 		return
 	}
-	s.closeOne(ctx, today)
+	s.closeOne(ctx, today, g)
 }
 
 // catchUp closes every day after last up to yesterday that has data. It
@@ -272,7 +353,7 @@ func (s *Scheduler) catchUp(ctx context.Context, now time.Time, last string, g *
 			s.mark(kvCloseDay, day)
 			continue
 		}
-		if !g.take() || !s.closeOne(ctx, day) {
+		if !g.take() || !s.closeOne(ctx, day, g) {
 			return false
 		}
 	}
@@ -280,8 +361,11 @@ func (s *Scheduler) catchUp(ctx context.Context, now time.Time, last string, g *
 }
 
 // closeOne closes day and reports whether the scheduler may move past it:
-// on success, or once the day has failed maxCloseFailures times.
-func (s *Scheduler) closeOne(ctx context.Context, day string) bool {
+// on success, or once the day has failed maxCloseFailures times. A close
+// stopped by a Claude usage limit (while that pauses Claude work) is not a
+// failure and does not use up the hour's attempt: it is retried once the
+// pause ends.
+func (s *Scheduler) closeOne(ctx context.Context, day string, g *attemptGuard) bool {
 	err := s.Jobs.CloseDay(ctx, day)
 	if err == nil {
 		s.mark(kvCloseDay, day)
@@ -289,6 +373,10 @@ func (s *Scheduler) closeOne(ctx context.Context, day string) bool {
 			s.mark(CloseFailuresKey(day), "0")
 		}
 		return true
+	}
+	if s.usageLimited(err) {
+		g.taken = false
+		return false
 	}
 	s.logf("scheduler: close %s: %v", day, err)
 	if ctx.Err() != nil {
@@ -331,7 +419,10 @@ func (s *Scheduler) rollups(ctx context.Context, now time.Time, cfg config.Confi
 		if !g.take() {
 			return
 		}
-		if !s.step("rollup "+week, s.Jobs.Rollup(ctx, week)) {
+		if err := s.Jobs.Rollup(ctx, week); !s.step("rollup "+week, err) {
+			if s.usageLimited(err) {
+				g.taken = false // retried once the pause ends
+			}
 			return
 		}
 		s.mark(kvRollupWeek, week)

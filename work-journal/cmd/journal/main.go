@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"workjournal/internal/config"
-	"workjournal/internal/media"
 	"workjournal/internal/retention"
 )
 
@@ -187,7 +186,7 @@ func defaultDoctorDeps(cfg config.Config, loc Locations) DoctorDeps {
 		Glob:              filepath.Glob,
 		FreeGB:            func(p string) (float64, error) { return retention.FreeGB(nearestExisting(p)) },
 		SelfTest:          func(app string) error { return recorderSelfTest(app, execOpen) },
-		ClaudeResponds:    func() error { return claudeResponds(media.ExecRunner) },
+		ClaudeResponds:    func() error { return claudeResponds(execKeepingStdout) },
 		SpeakerSeparation: speakerSeparationWorks,
 	}
 }

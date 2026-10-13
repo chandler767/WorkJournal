@@ -66,12 +66,16 @@ type fakeJobs struct {
 	upto                        time.Time
 	nowErr                      error
 	reprocessErr                error
+	onProcessNow                func() // runs inside ProcessNow when set
 }
 
 func (f *fakeJobs) ProcessPending(context.Context) error { return nil }
 func (f *fakeJobs) ProcessCurrent(context.Context) error { return nil }
 func (f *fakeJobs) ProcessNow(context.Context) (time.Time, error) {
 	f.processedNow++
+	if f.onProcessNow != nil {
+		f.onProcessNow()
+	}
 	return f.upto, f.nowErr
 }
 func (f *fakeJobs) ReprocessHour(_ context.Context, d string, h int) error {

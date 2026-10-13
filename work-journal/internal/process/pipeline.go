@@ -73,8 +73,9 @@ func hourBounds(day string, hour int) (time.Time, time.Time, error) {
 }
 
 // ProcessPending transcribes (if needed) and summarizes every pending hour.
-// A failing hour is logged, keeps its status, and does not stop the loop;
-// the joined errors are returned for logging.
+// A failing hour is logged (unless Claude is usage-limited), keeps its
+// status, and does not stop the loop; the joined errors are returned for
+// logging.
 func (p *Pipeline) ProcessPending(ctx context.Context) error {
 	hours, err := p.PendingHours()
 	if err != nil {
@@ -87,7 +88,10 @@ func (p *Pipeline) ProcessPending(ctx context.Context) error {
 		}
 		if err := p.processHour(ctx, h); err != nil {
 			err = fmt.Errorf("hour %s %02d: %w", h.Day, h.Hour, err)
-			p.logf("process: %v", err)
+			// A Claude usage limit is logged once by the scheduler, not per hour.
+			if !errors.As(err, new(skills.ErrUsageLimited)) {
+				p.logf("process: %v", err)
+			}
 			errs = append(errs, err)
 		}
 	}

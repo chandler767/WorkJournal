@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"workjournal/internal/config"
+	"workjournal/internal/media"
+	"workjournal/internal/skills"
 )
 
 type fakeInfo struct{ size int64 }
@@ -369,6 +371,37 @@ func TestDoctorSpeakerSeparationSkipped(t *testing.T) {
 		}
 		if called {
 			t.Errorf("%s: SpeakerSeparation called", tc)
+		}
+	}
+}
+
+func TestDoctorClaudeUsageLimit(t *testing.T) {
+	d := okDeps()
+	reset := time.Date(2026, 10, 13, 15, 0, 0, 0, time.Local)
+	d.ClaudeResponds = func() error { return skills.ErrUsageLimited{ResetAt: reset, Message: "5-hour limit reached"} }
+	c := find(t, RunChecks(d), "claude responds")
+	if c.OK || !strings.Contains(c.Fix, "usage limit reached (resets 3:00 PM") || strings.Contains(c.Fix, "sign in") {
+		t.Fatalf("check = %+v", c)
+	}
+	d.ClaudeResponds = func() error { return skills.ErrUsageLimited{} }
+	if c := find(t, RunChecks(d), "claude responds"); c.OK || !strings.Contains(c.Fix, "usage limit reached (reset time unknown)") {
+		t.Fatalf("check = %+v", c)
+	}
+}
+
+func TestClaudeRespondsProbeDetectsUsageLimit(t *testing.T) {
+	for _, run := range []media.Runner{
+		func(context.Context, string, ...string) ([]byte, error) {
+			return []byte(`{"type":"result","is_error":true,"result":"Claude AI usage limit reached|1760400000"}`), nil
+		},
+		func(context.Context, string, ...string) ([]byte, error) {
+			return nil, errors.New("claude: exit status 1: 5-hour limit reached ∙ resets 3pm")
+		},
+	} {
+		err := claudeResponds(run)
+		var ul skills.ErrUsageLimited
+		if !errors.As(err, &ul) || ul.ResetAt.IsZero() {
+			t.Fatalf("err = %v, want ErrUsageLimited with a reset time", err)
 		}
 	}
 }

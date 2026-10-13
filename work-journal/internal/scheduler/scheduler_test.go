@@ -18,6 +18,8 @@ type fakeJobs struct {
 	failClose   map[string]bool // days whose close fails
 	failRoll    bool
 	failCurrent bool
+	closeErr    error // returned by CloseDay when set
+	rollErr     error // returned by Rollup when set
 }
 
 func (f *fakeJobs) rec(s string) error                   { f.calls = append(f.calls, s); return nil }
@@ -34,6 +36,9 @@ func (f *fakeJobs) ReprocessHour(_ context.Context, d string, h int) error {
 }
 func (f *fakeJobs) CloseDay(_ context.Context, d string) error {
 	f.rec("close " + d)
+	if f.closeErr != nil {
+		return f.closeErr
+	}
 	if f.failClose[d] {
 		return fmt.Errorf("boom")
 	}
@@ -41,6 +46,9 @@ func (f *fakeJobs) CloseDay(_ context.Context, d string) error {
 }
 func (f *fakeJobs) Rollup(_ context.Context, w string) error {
 	f.rec("rollup " + w)
+	if f.rollErr != nil {
+		return f.rollErr
+	}
 	if f.failRoll {
 		return fmt.Errorf("boom")
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"workjournal/internal/activity"
 	"workjournal/internal/media"
 	"workjournal/internal/skills"
+	"workjournal/internal/store"
 )
 
 // chromeLines is window chrome that is on every screenshot.
@@ -256,5 +258,30 @@ func TestMarshalInputSplitsRecordsOverLines(t *testing.T) {
 	}
 	if bytes.Count(b, []byte("\n")) < 100 {
 		t.Fatalf("not one record per line: %s", b)
+	}
+}
+
+// While Claude is paused the summarizer's skills are not run and the hour
+// stays transcribed (retried after the pause), not needs_review.
+func TestSummarizeHourWhileClaudePaused(t *testing.T) {
+	e := newSumEnv(t)
+	now := time.Now()
+	if err := skills.SetPause(e.st, now, skills.ErrUsageLimited{ResetAt: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.Runner = &skills.PausingRunner{Runner: e.fk, KV: e.st}
+	doc := &HourDoc{Day: day, Hour: 10, Segments: []activity.Segment{sg(activity.KindActive, "Code", "main.go", 10, 0, 60)}}
+	e.transcribed(doc)
+	e.fk.out["summarize-hour"] = hourOut
+	err := e.s.SummarizeHour(context.Background(), doc)
+	var ul skills.ErrUsageLimited
+	if !errors.As(err, &ul) {
+		t.Fatalf("err = %v, want ErrUsageLimited", err)
+	}
+	if len(e.fk.calls) != 0 {
+		t.Fatalf("claude ran while paused: %v", e.fk.skillsCalled())
+	}
+	if st := e.hour(10).Status; st != store.StatusTranscribed {
+		t.Fatalf("status %q, want transcribed", st)
 	}
 }

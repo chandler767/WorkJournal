@@ -22,6 +22,7 @@ type settingsForm struct {
 	ProcessInterval                                                       string
 	MinGap, IdleBackstop, Sensitivity, CaptureOnSwitch                    string
 	PrivacyFilter, RedactIdentifiers                                      string
+	PauseOnUsageLimit                                                     string
 	AudioMode                                                             string
 	ExcludedApps, ExcludedTitles, Categories, Rules                       string
 }
@@ -89,6 +90,7 @@ func formFromConfig(c config.Config) settingsForm {
 		CaptureOnSwitch:   strconv.FormatBool(c.CaptureOnAppSwitch),
 		PrivacyFilter:     strconv.FormatBool(c.PrivacyFilter),
 		RedactIdentifiers: strconv.FormatBool(c.RedactIdentifiers),
+		PauseOnUsageLimit: strconv.FormatBool(c.PauseOnUsageLimit),
 		AudioMode:         c.AudioMode,
 		ExcludedApps:      strings.Join(c.ExcludedApps, "\n"),
 		ExcludedTitles:    strings.Join(c.ExcludedTitleKeywords, "\n"),
@@ -168,6 +170,7 @@ func applyForm(base config.Config, f settingsForm) (config.Config, error) {
 		{"capture_on_app_switch", f.CaptureOnSwitch, &c.CaptureOnAppSwitch},
 		{"privacy_filter", f.PrivacyFilter, &c.PrivacyFilter},
 		{"redact_identifiers", f.RedactIdentifiers, &c.RedactIdentifiers},
+		{"pause_on_usage_limit", f.PauseOnUsageLimit, &c.PauseOnUsageLimit},
 	} {
 		switch v := strings.TrimSpace(b.v); v {
 		case "":
@@ -258,7 +261,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		MinGap: r.PostFormValue("screenshot_min_gap_sec"), IdleBackstop: r.PostFormValue("screenshot_idle_backstop_sec"),
 		Sensitivity: r.PostFormValue("screen_change_sensitivity"), CaptureOnSwitch: r.PostFormValue("capture_on_app_switch"),
 		PrivacyFilter: r.PostFormValue("privacy_filter"), RedactIdentifiers: r.PostFormValue("redact_identifiers"),
-		AudioMode: r.PostFormValue("audio_mode"),
+		AudioMode: r.PostFormValue("audio_mode"), PauseOnUsageLimit: r.PostFormValue("pause_on_usage_limit"),
 	}
 	c, err := applyForm(s.Cfg(), f)
 	if err == nil {

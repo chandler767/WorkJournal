@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"workjournal/internal/config"
 	"workjournal/internal/diarize"
 	"workjournal/internal/media"
+	"workjournal/internal/skills"
 )
 
 // Check is one doctor result. Fix says how to resolve a failed check.
@@ -86,7 +88,12 @@ func RunChecks(d DoctorDeps) []Check {
 	if err != nil {
 		add("claude responds", false, "install Claude Code first")
 	} else if err := d.ClaudeResponds(); err != nil {
-		add("claude responds", false, fmt.Sprintf("%v: run `claude` and sign in", err))
+		var ul skills.ErrUsageLimited
+		if errors.As(err, &ul) {
+			add("claude responds", false, usageLimitFix(ul))
+		} else {
+			add("claude responds", false, fmt.Sprintf("%v: run `claude` and sign in", err))
+		}
 	} else {
 		add("claude responds", true, "")
 	}
@@ -262,24 +269,57 @@ func speakerSeparationWorks(segModel, embModel string) error {
 // claudeProbeTimeout bounds the "claude responds" check.
 const claudeProbeTimeout = 60 * time.Second
 
+// usageLimitFix is the doctor's "claude responds" text for a usage limit.
+func usageLimitFix(ul skills.ErrUsageLimited) string {
+	when := "reset time unknown"
+	if !ul.ResetAt.IsZero() {
+		when = "resets " + ul.ResetAt.Local().Format("3:04 PM Jan 2")
+	}
+	return "usage limit reached (" + when + "); summaries pause until then and catch up afterwards, or use \"Run now anyway\" on the dashboard"
+}
+
 // claudeResponds asks claude for a trivial reply with no tools and no MCP
-// servers; it fails when claude cannot run, is signed out or errors.
+// servers; it fails when claude cannot run, is signed out or errors, and
+// returns skills.ErrUsageLimited when a usage limit stops it.
 func claudeResponds(run media.Runner) error {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 	defer cancel()
 	out, err := run(ctx, "claude", "-p", "Reply with OK", "--output-format", "json", "--tools", "", "--strict-mcp-config")
-	if err != nil {
-		return err
-	}
 	var env struct {
 		IsError bool   `json:"is_error"`
 		Result  string `json:"result"`
 	}
-	if err := json.Unmarshal(out, &env); err != nil {
+	envErr := json.Unmarshal(out, &env)
+	if err != nil {
+		msg := err.Error()
+		if envErr == nil && env.IsError {
+			msg = env.Result + "\n" + msg
+		}
+		if ul, ok := skills.ParseUsageLimit(msg, time.Now()); ok {
+			return ul
+		}
+		return err
+	}
+	if envErr != nil {
 		return fmt.Errorf("unexpected claude output: %.200s", strings.TrimSpace(string(out)))
 	}
 	if env.IsError {
+		if ul, ok := skills.ParseUsageLimit(env.Result, time.Now()); ok {
+			return ul
+		}
 		return fmt.Errorf("claude reported an error: %.200s", env.Result)
 	}
 	return nil
+}
+
+// execKeepingStdout is media.ExecRunner, but a failed command's stdout is
+// returned too: claude prints its error envelope before exiting non-zero.
+func execKeepingStdout(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }
