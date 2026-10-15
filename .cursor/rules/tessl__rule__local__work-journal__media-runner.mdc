@@ -1,0 +1,9 @@
+---
+alwaysApply: true
+---
+
+# Media Runner
+
+- In `work-journal/internal/media`, helper code must use the package's `Runner` abstraction to execute external commands.
+- `work-journal/internal/media/exec.go` is the only production file that should import `os/exec` or call `exec.Command` / `exec.CommandContext`.
+- New media helpers should accept a `Runner` or use an existing type that carries one, so tests can stub external tools without spawning real processes.
