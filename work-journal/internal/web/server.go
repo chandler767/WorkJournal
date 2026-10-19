@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"workjournal/internal/capture"
@@ -46,7 +47,14 @@ type Server struct {
 	// SkillsMissing is set when no installed Claude Code skills were found:
 	// hours then cannot be summarized and the day page says so.
 	SkillsMissing bool
-	nowFn         func() time.Time // test hook; time.Now when nil
+	// Ask answers /ask questions (Claude with only the journal MCP tools);
+	// nil disables the Ask box.
+	Ask   Asker
+	nowFn func() time.Time // test hook; time.Now when nil
+
+	askMu      sync.Mutex
+	askRunning *askEntry // the question being answered; nil when idle
+	askWG      sync.WaitGroup
 }
 
 func (s *Server) now() time.Time {
@@ -74,6 +82,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /week/{week}", s.handleWeek)
 	mux.HandleFunc("POST /week/{week}/rollup", s.sameOrigin(s.handleWeekRollup))
 	mux.HandleFunc("GET /search", s.handleSearch)
+	mux.HandleFunc("GET /ask", s.handleAskPage)
+	mux.HandleFunc("POST /ask", s.sameOrigin(s.handleAsk))
+	mux.HandleFunc("GET /api/rev/ask", s.handleRevAsk)
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings", s.sameOrigin(s.handleSettingsSave))
 	mux.HandleFunc("POST /settings/restart-recorder", s.sameOrigin(s.handleRestartRecorder))

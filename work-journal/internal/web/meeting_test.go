@@ -266,7 +266,7 @@ func TestMeetingHourStartsHalfHourZone(t *testing.T) {
 	start := time.Date(2026, 10, 7, 10, 40, 0, 0, ist)
 	end := time.Date(2026, 10, 7, 11, 10, 0, 0, ist)
 	var got []int
-	for _, h := range hourStarts(start, end, ist) {
+	for _, h := range process.HourStarts(start, end, ist) {
 		if h.Minute() != 0 {
 			t.Fatalf("hour start %s not on the hour", h)
 		}

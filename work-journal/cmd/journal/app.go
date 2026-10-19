@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"workjournal/internal/ask"
 	"workjournal/internal/capture"
 	"workjournal/internal/config"
 	"workjournal/internal/diarize"
@@ -345,8 +346,25 @@ func Build(cfg config.Config, opt Options) (*App, error) {
 		Jobs:          a.Jobs,
 		Voices:        a.Voices,
 		SkillsMissing: opt.Loc.SkillsDir == "",
+		Ask:           askRunner(opt.ConfigPath, st, func() bool { return a.Cfg().PauseOnUsageLimit }),
 	}
 	return a, nil
+}
+
+// askRunner answers the dashboard's Ask with Claude limited to this
+// binary's `journal mcp` tools on the same config. Without a resolvable
+// executable Ask is off (nil).
+func askRunner(cfgPath string, st *store.Store, pause func() bool) web.Asker {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	cfg, cerr := filepath.Abs(cfgPath)
+	if err != nil || cerr != nil {
+		log.Printf("ask: disabled: cannot resolve the journal binary or config path (%v, %v)", err, cerr)
+		return nil
+	}
+	return &ask.Runner{Self: exe, ConfigPath: cfg, KV: st, PauseEnabled: pause}
 }
 
 // recorderArgs launches the recorder bundle through LaunchServices (so its

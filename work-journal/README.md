@@ -80,6 +80,62 @@ button, which tries straight away (and pauses again if Claude is still limited).
 `journal doctor` reports the limit and its reset time. Settings → Claude usage
 (`pause_on_usage_limit`) turns pausing off; Claude is then asked again on the usual schedule.
 
+## Ask your journal
+
+Type a question into the **Ask** box at the top of the day page, or open **Ask** (`/ask`):
+"What did we decide about the release?", "How long was I in meetings yesterday?", "What
+was I doing at 2pm on Tuesday?". `journal serve` runs `claude -p` in the background with
+only the journal's own read-only tools (no file, shell or web tools, no other MCP servers,
+in an empty temporary directory so no project settings or skills load). Answers cite the
+hours and meetings they come from as dashboard links, and say so when the journal does not
+know. The page updates when the answer lands (up to 3 minutes); one question runs at a time,
+and the last 20 questions and answers are kept on the Ask page. During a Claude usage-limit
+pause, questions wait too; **Ask anyway** tries that one question now (summaries stay paused).
+
+The same tools are available to any Claude client through `journal mcp`, a read-only MCP
+server over stdio. It opens the database read-only, so it runs safely beside `journal serve`.
+It returns only what the dashboard shows: summaries, privacy-filtered transcripts (removed
+speech appears only as "4 min of non-work audio removed"; hours whose privacy check failed
+show that note, not speech), meetings, time totals and the journal entries. It never returns
+raw recordings, screenshots, file paths, `cache/`, voice profiles or privacy decisions.
+
+| Tool | What it returns |
+| --- | --- |
+| `search(query, from?, to?, limit≤50, offset?)` | ranked snippets from transcripts, screen text, notes and meeting summaries, with dashboard links |
+| `get_day(date)` | the daily journal entry, each hour's status, narrative, notes and action items, minutes per category, the day's meetings |
+| `get_hour(date, hour, include_transcript?, transcript_offset?)` | the hour's summary, timeline, activity and meetings; the transcript on request, paged |
+| `list_meetings(from, to, person?)` | meetings with time, app, title, participants and a one-line summary |
+| `get_meeting(id, include_transcript?, offset?)` | summary, decisions, action items, participants; the transcript on request, paged |
+| `time_report(from, to, group_by)` | minutes by `category`, `day` or `app` |
+| `get_week(week)` | the weekly rollup and minutes per category for each day |
+
+Dates are `YYYY-MM-DD`, `today` or `yesterday`; weeks are `YYYY-Www` (e.g. `2026-W41`).
+Each response is capped at about 40 KB; a cut response says which offset to ask for next.
+
+Register it with Claude Code (once, for every project):
+
+```sh
+claude mcp add --scope user work-journal -- /absolute/path/to/work-journal/bin/journal mcp
+```
+
+Add `--config /path/to/config.toml` after `mcp` if your config is not
+`~/WorkJournal/config.toml`. For Claude Desktop, add it to
+`~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "work-journal": {
+      "command": "/absolute/path/to/work-journal/bin/journal",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+`go test -tags=ask -run TestAskEval ./internal/mcpserver/` checks real answers over a
+fixture day (it needs a logged-in `claude`).
+
 ## Screen capture
 
 Screenshots follow what you do rather than a fixed timer: one when you switch apps or windows,

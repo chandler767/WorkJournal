@@ -98,8 +98,11 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     initPage(document);
-    if (!revEl(document)) return;
-    setInterval(check, POLL_MS);
+    var rev = revEl(document);
+    if (!rev) return;
+    // A page waiting for something (an Ask answer) asks for a faster poll.
+    var ms = parseInt(rev.getAttribute("data-poll-ms"), 10);
+    setInterval(check, ms >= 1000 ? ms : POLL_MS);
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible") check();
     });

@@ -5,6 +5,10 @@
   <h1>{{.Date}}{{if .IsToday}} <small>today</small>{{end}}</h1>
   <a class="next" href="/day/{{.Next}}" aria-label="Next day, {{.Next}}"><span class="long">{{.Next}} &rarr;</span><span class="short">{{.NextShort}} &rarr;</span></a>
 </nav>
+<form class="search ask-box" method="post" action="/ask" role="search" aria-label="Ask your journal">
+  <input type="text" name="q" maxlength="1000" required placeholder="Ask your journal, e.g. what did we decide in standup?" aria-label="Question about your journal">
+  <button type="submit">Ask</button>
+</form>
 
 {{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
 {{if .DiskWarn}}<div class="banner disk-warning" role="alert">Disk space is low (state: {{.DiskWarn}}). Recording may be paused or raw media cleaned early.</div>{{end}}
