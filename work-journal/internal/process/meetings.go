@@ -16,9 +16,9 @@ import (
 // activity and the speech of this hour plus every other derived hour of the
 // day (later ones too, so running an hour again judges a meeting that
 // continues past it the same way), and returns the meetings overlapping
-// the hour's instants w; a meeting ending exactly where a span of w starts is included so the hour
-// after its last one can report it ended. events must include the previous
-// day's (see stateEvents).
+// the hour's instants w. A meeting ending exactly where a span of w starts
+// is included, so the hour after its last one can report it ended. events
+// must include the previous day's (see stateEvents).
 func (p *Pipeline) detectMeetings(day string, hour int, midnight time.Time, w hourWindow, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
 	segs := activity.Segments(events, midnight, w.end())
 	var speech []activity.SpeechSpan

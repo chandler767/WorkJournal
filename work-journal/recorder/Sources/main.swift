@@ -22,7 +22,7 @@ func runPolicyTests() -> Int32 {
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
-    let checks: [(String, Bool)] = socketChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + audioModeChecks() + [
+    let checks: [(String, Bool)] = socketChecks() + zoneChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + audioModeChecks() + [
         ("excluded app 1Password", isExcluded(app: "1Password", title: "", c)),
         ("excluded app case-insensitive", isExcluded(app: "1password", title: "", c)),
         ("excluded title Private Browsing", isExcluded(app: "Safari", title: "Private Browsing — x", c)),
@@ -74,6 +74,37 @@ func runPolicyTests() -> Int32 {
     if failed > 0 { return 1 }
     print("run-tests ok (\(checks.count) checks)")
     return 0
+}
+
+/// `zone` events: when the watch fires, what the state holds, and the logged line.
+func zoneChecks() -> [(String, Bool)] {
+    let ny = TimeZone(identifier: "America/New_York")!, chicago = TimeZone(identifier: "America/Chicago")!
+    let t = Date(timeIntervalSince1970: 1_791_381_600) // 2026-10-07T14:00:00Z
+    let s1 = zoneState(at: t, zone: chicago)
+    var w = ZoneWatch()
+    let first = w.changed(s1)
+    let same = !w.changed(zoneState(at: t.addingTimeInterval(2), zone: chicago))
+    let moved = w.changed(zoneState(at: t.addingTimeInterval(4), zone: ny))
+    let nextDay = w.changed(zoneState(at: t.addingTimeInterval(86_400), zone: ny))
+    // Same zone, DST ends (2026-11-01 06:00Z in New York): the offset change is logged.
+    var d = ZoneWatch()
+    _ = d.changed(zoneState(at: Date(timeIntervalSince1970: 1_793_512_700), zone: ny)) // 05:58:20Z, EDT
+    let dst = d.changed(zoneState(at: Date(timeIntervalSince1970: 1_793_512_820), zone: ny)) // 06:00:20Z, EST
+
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wjzone-\(getpid())")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    ActivityLog(dataDir: dir).append("zone", tz: "Europe/London")
+    let line = (try? String(contentsOf: rawDayDir(dir, Date()).appendingPathComponent("activity.jsonl"), encoding: .utf8)) ?? ""
+    return [
+        ("zone state offset and day", s1.identifier == "America/Chicago" && s1.offset == -18000 && s1.day == "2026-10-07"),
+        ("zone logged at the first check (recorder start)", first),
+        ("zone not logged again unchanged", same),
+        ("zone logged on a zone change", moved),
+        ("zone logged on a new day", nextDay),
+        ("zone logged on a DST offset change", dst),
+        ("zone event line", line.contains("\"type\":\"zone\"") && line.contains("\"tz\":\"Europe/London\"")
+            && line.contains("\"ts\":")),
+    ]
 }
 
 /// Capture restart debounce (display changes come in bursts) and stop-error backoff.

@@ -78,6 +78,18 @@ Each moment belongs to exactly one hour: the hour its clock read at the time, us
 in force when it happened. A flight is filed under the departure clock's hours until the
 first activity on the new clock.
 
+The recorder logs a `zone` event whenever the Mac's time zone or UTC offset changes, and
+when it starts or a new day begins. That marks exactly when the clock moved. Without one
+(an older recorder, for example), a recording made between the change and the next
+activity event is placed by its name: 10:30 after 09:10 CDT and before 10:45 EDT is
+10:30 EDT. It stays in the hour it is named in, and an exclusion or pause in force then
+still removes it.
+
+Overnight, the hours of a new day before its first event use that day's first offset. If
+the zone changed overnight with no event logged at the change, the first hour of the new day
+can overlap the end of the previous one. The `zone` event logged at the start of each day
+usually prevents this.
+
 Caveat: when the clock goes back during a day (flying west, or the autumn DST change), the
 same clock hour happens twice. Both stretches are filed under that one hour of the day, so
 they read as one hour, though nothing is counted twice. Where an audio chunk or screenshot

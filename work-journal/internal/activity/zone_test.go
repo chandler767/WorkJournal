@@ -161,3 +161,39 @@ func TestHourSpansAfterSpringForward(t *testing.T) {
 		t.Errorf("fallback hour 3 = %v", sp)
 	}
 }
+
+// A zone event alone (no app change) re-anchors the clock from its instant.
+func TestZoneEventReanchors(t *testing.T) {
+	ny, _ := time.LoadLocation("America/New_York")
+	evs := []Event{evAt(t, "2026-10-07T09:10:00-05:00"), evAt(t, "2026-10-07T10:20:00-04:00")}
+	evs[1].Type = "zone"
+	z := NewZoneTimeline(evs, ny)
+	if got := offsetAt(z, "2026-10-07", 10, 30); got != -4*3600 {
+		t.Errorf("10:30 offset %d, want -4h", got)
+	}
+	sp, _ := z.HourSpans("2026-10-07", 10)
+	from, _ := time.Parse(time.RFC3339, "2026-10-07T10:20:00-04:00")
+	if len(sp) != 1 || !sp[0].Start.Equal(from) {
+		t.Errorf("hour 10 = %v, want from 10:20 EDT", sp)
+	}
+	// Segments take no state from it.
+	evs = append([]Event{{TS: evs[0].TS, Type: "start"}, {TS: evs[0].TS, Type: "app", App: "Arc"}}, evs[1])
+	segs := Segments(evs, evs[0].TS, from.Add(time.Hour))
+	if len(segs) != 1 || segs[0].App != "Arc" || segs[0].Kind != KindActive {
+		t.Errorf("segments = %+v, want one Arc segment", segs)
+	}
+}
+
+// Between two events of different offsets, a wall time takes the offset
+// that puts it between them in time: 10:30 after 09:10 CDT and before
+// 10:45 EDT can only be 10:30 EDT.
+func TestAtPicksTheConsistentOffset(t *testing.T) {
+	ny, _ := time.LoadLocation("America/New_York")
+	z := NewZoneTimeline([]Event{evAt(t, "2026-10-07T09:10:00-05:00"), evAt(t, "2026-10-07T10:45:00-04:00")}, ny)
+	if got := offsetAt(z, "2026-10-07", 10, 30); got != -4*3600 {
+		t.Errorf("10:30 offset %d, want -4h", got)
+	}
+	if got := offsetAt(z, "2026-10-07", 9, 30); got != -5*3600 {
+		t.Errorf("09:30 offset %d, want -5h (both fit; the earlier clock)", got)
+	}
+}

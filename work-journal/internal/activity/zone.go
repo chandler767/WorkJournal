@@ -26,6 +26,7 @@ type zoneRun struct {
 
 type zonePoint struct {
 	wall time.Time // wall clock fields, as UTC
+	at   time.Time // the instant
 	off  int
 }
 
@@ -35,7 +36,7 @@ func NewZoneTimeline(events []Event, fallback *time.Location) ZoneTimeline {
 	z := ZoneTimeline{fallback: fallback}
 	for _, e := range events {
 		_, off := e.TS.Zone()
-		z.points = append(z.points, zonePoint{wall: asWall(e.TS), off: off})
+		z.points = append(z.points, zonePoint{wall: asWall(e.TS), at: e.TS, off: off})
 	}
 	sort.SliceStable(z.points, func(i, j int) bool { return z.points[i].wall.Before(z.points[j].wall) })
 	byInstant := append([]Event(nil), events...)
@@ -54,13 +55,31 @@ func asWall(t time.Time) time.Time {
 
 // At returns the location in force at the wall clock of wall (its
 // location is ignored): a fixed zone, or the fallback with no events.
+// Between two events of different offsets (the clock changed in between,
+// logged only by the later one), the wall time takes the later event's
+// offset when only that one puts it between the two events in time:
+// 10:30 after 09:10 CDT and before 10:45 EDT is 10:30 EDT.
 func (z ZoneTimeline) At(wall time.Time) *time.Location {
 	if len(z.points) == 0 {
 		return z.fallback
 	}
 	w := asWall(wall)
 	i := sort.Search(len(z.points), func(i int) bool { return z.points[i].wall.After(w) })
-	return time.FixedZone("", z.points[max(i-1, 0)].off)
+	if i == 0 {
+		return time.FixedZone("", z.points[0].off)
+	}
+	prev := z.points[i-1]
+	if i < len(z.points) && z.points[i].off != prev.off {
+		next := z.points[i]
+		between := func(off int) bool {
+			t := w.Add(-time.Duration(off) * time.Second)
+			return !t.Before(prev.at) && !t.After(next.at)
+		}
+		if !between(prev.off) && between(next.off) {
+			return time.FixedZone("", next.off)
+		}
+	}
+	return time.FixedZone("", prev.off)
 }
 
 // Date is the instant whose recorded wall clock is day ("YYYY-MM-DD")

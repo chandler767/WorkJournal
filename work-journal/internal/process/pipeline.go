@@ -257,16 +257,28 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	screens, err := p.ocrHour(ctx, day, hour, clock.shots, segs)
+	// The hour's files whose times its spans miss (a zone change logged
+	// late) are judged by the exclusions and pauses in force then.
+	var times []activity.Span
+	for _, u := range speechOf(audio) {
+		times = append(times, activity.Span{Start: u.Start, End: u.End})
+	}
+	for _, s := range clock.shots {
+		if sameHour(s.t, day, hour) {
+			times = append(times, activity.Span{Start: s.t, End: s.t.Add(time.Second)})
+		}
+	}
+	heard := append(slices.Clone(segs), outside(events, seen, times)...)
+	screens, err := p.ocrHour(ctx, day, hour, clock.shots, w, cut, heard)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	speech := audibleSpeech(segs, speechOf(audio))
+	speech := audibleSpeech(heard, speechOf(audio))
 	detected, err := p.detectMeetings(day, hour, midnight, seen, events, speech)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	lab, utts, meetings, err := p.labelHour(ctx, day, hour, start, end, audio, detected, segs, &wavs)
+	lab, utts, meetings, err := p.labelHour(ctx, day, hour, start, end, audio, detected, heard, &wavs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -274,7 +286,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	h := &hearing{lab: lab, utts: utts, meetings: meetings}
 	if p.privacyOn() && len(utts) > 0 {
 		in := hourAudio{day: day, hour: hour, midnight: midnight, seen: seen, start: start, end: end, cut: cut, events: events,
-			segs: segs, audio: audio, speech: speech, detected: detected, wavs: &wavs}
+			segs: heard, audio: audio, speech: speech, detected: detected, wavs: &wavs}
 		if h, err = p.filterHour(ctx, in, h, partial); err != nil {
 			return nil, time.Time{}, err
 		}
@@ -413,10 +425,11 @@ func textDocs(d *HourDoc) []store.TextDoc {
 // sees it. Results come from the processing cache where the file is
 // unchanged; the rest are OCRed in one batch and cached. Empty texts are
 // dropped and consecutive identical texts collapse to the first.
-func (p *Pipeline) ocrHour(ctx context.Context, day string, h int, shots []shot, segs []activity.Segment) ([]media.ScreenText, error) {
+func (p *Pipeline) ocrHour(ctx context.Context, day string, h int, shots []shot, w hourWindow, cut time.Time, segs []activity.Segment) ([]media.ScreenText, error) {
 	var hour []shot
 	for _, s := range shots {
-		if !sameHour(s.t, day, h) || !visible(segs, s.t) {
+		// A shot of the hour from cut on is not ready (in-progress hour).
+		if !sameHour(s.t, day, h) || (w.contains(s.t) && !s.t.Before(cut)) || !visible(segs, s.t) {
 			continue
 		}
 		hour = append(hour, s)
@@ -490,5 +503,27 @@ func visible(segs []activity.Segment, t time.Time) bool {
 			return s.Kind == activity.KindActive || s.Kind == activity.KindIdle
 		}
 	}
-	return false
+	// No segment holds t: a file named in the hour whose time the hour's
+	// spans miss (see outside, which adds the exclusions in force then).
+	return true
+}
+
+// outside returns, for the times of this hour's files that the hour's
+// spans w do not hold, the excluded and paused segments in force then.
+// Such a time is a file named in the hour that the activity log placed
+// elsewhere (the clock moved and the next event came later); it stays in
+// the hour, but what an exclusion or pause covered is still dropped.
+func outside(events []activity.Event, w hourWindow, times []activity.Span) []activity.Segment {
+	var out []activity.Segment
+	for _, t := range times {
+		if slices.ContainsFunc(w, func(s activity.Span) bool { return !t.Start.Before(s.Start) && !t.End.After(s.End) }) {
+			continue
+		}
+		for _, g := range activity.Segments(events, t.Start, t.End) {
+			if g.Kind == activity.KindExcluded || g.Kind == activity.KindPaused {
+				out = append(out, g)
+			}
+		}
+	}
+	return out
 }

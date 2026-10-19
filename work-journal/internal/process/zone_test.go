@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -288,5 +289,64 @@ func TestFlightHoursPartitionTime(t *testing.T) {
 		if g.Start.Before(london(20, 0, 0)) && london(17, 0, 0).Before(g.End) {
 			t.Errorf("segment %v–%v %s inside the flight", g.Start, g.End, g.Kind)
 		}
+	}
+}
+
+// zoneEv is the recorder's zone event: the zone just changed to tz.
+func zoneEv(t time.Time, tz string) string {
+	return fmt.Sprintf(`{"ts":%q,"type":"zone","tz":%q}`, t.Format(time.RFC3339), tz)
+}
+
+// The Mac stays awake through the clock moving forward (Chicago to New
+// York at 14:20Z) and the next activity event comes only at 10:45 EDT. The
+// chunk and screenshot named 10:30 are 10:30 EDT (14:30Z), not 10:30 CDT,
+// and stay in hour 10, with the recorder's zone event or without it.
+func TestFilesAfterAnUnloggedZoneChange(t *testing.T) {
+	ny := inNewYork(t)
+	cdt, edt := time.FixedZone("", -5*3600), time.FixedZone("", -4*3600)
+	at := func(h, m int, loc *time.Location) time.Time { return time.Date(2026, 10, 7, h, m, 0, 0, loc) }
+	for _, c := range []struct {
+		name     string
+		zone     bool
+		excluded bool
+	}{{"no zone event", false, false}, {"zone event", true, false}, {"excluded", false, true}, {"excluded, zone event", true, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.p.Cfg.Diarization = "off"
+			old := time.Date(2026, 10, 7, 12, 0, 0, 0, ny)
+			e.p.Now = func() time.Time { return old.Add(time.Hour) }
+			lines := []string{evAt(at(9, 0, cdt), "start"), evAt(at(9, 0, cdt), "app", "Code"), evAt(at(9, 10, cdt), "app", "Arc")}
+			if c.excluded {
+				lines = append(lines, evAt(at(9, 15, cdt), "excluded"))
+			}
+			if c.zone {
+				lines = append(lines, zoneEv(at(10, 20, edt), "America/New_York"))
+			}
+			if c.excluded {
+				lines = append(lines, evAt(at(10, 45, edt), "included"))
+			}
+			lines = append(lines, evAt(at(10, 45, edt), "app", "Mail"))
+			e.activity(old, lines...)
+			e.file("audio/1030-mic.m4a", old)
+			e.file("screens/103000.jpg", old)
+			e.tr.utts["1030-mic"] = []fu{{0, 5, "after landing"}}
+			e.ocr.texts["103000.jpg"] = "gate info"
+			doc, err := e.p.Transcribe(context.Background(), day, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.excluded {
+				if len(doc.Transcript) != 0 || len(doc.Screens) != 0 {
+					t.Errorf("excluded content kept: transcript %+v screens %+v", doc.Transcript, doc.Screens)
+				}
+				return
+			}
+			if len(doc.Transcript) != 1 || !doc.Transcript[0].Start.Equal(at(10, 30, edt)) {
+				t.Errorf("transcript = %+v, want speech at 10:30 EDT", doc.Transcript)
+			}
+			if len(doc.Screens) != 1 || !doc.Screens[0].Time.Equal(at(10, 30, edt)) {
+				t.Errorf("screens = %+v, want one at 10:30 EDT", doc.Screens)
+			}
+		})
 	}
 }
