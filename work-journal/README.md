@@ -74,11 +74,15 @@ otherwise it reads, for example, **UTC+01:00**. Each day is processed in the zon
 recorded in, which comes from the offsets in that day's activity log. Days already processed
 in another zone can be reprocessed, and their cached speech is reused.
 
+Each moment belongs to exactly one hour: the hour its clock read at the time, using the zone
+in force when it happened. A flight is filed under the departure clock's hours until the
+first activity on the new clock.
+
 Caveat: when the clock goes back during a day (flying west, or the autumn DST change), the
-same clock hour happens twice. Both are filed under one hour of that day. Its window covers
-both and nothing is dropped, but the two stretches read as one hour. Where an audio chunk
-or screenshot name repeats, only one file can exist. Speech in the repeated stretch can
-then be placed on the wrong side of the change.
+same clock hour happens twice. Both stretches are filed under that one hour of the day, so
+they read as one hour, though nothing is counted twice. Where an audio chunk or screenshot
+name repeats, only one file can exist. Speech in the repeated stretch can then be placed on
+the wrong side of the change.
 
 ## Claude usage limits
 

@@ -358,7 +358,8 @@ func removedSpans(us []media.Utterance, dropped map[int]string) []RemovedSpan {
 type hourAudio struct {
 	day        string
 	hour       int
-	midnight   time.Time // of day, on its recorded clock
+	midnight   time.Time  // of day, on its recorded clock
+	seen       hourWindow // the hour's instants up to cut
 	start, end time.Time
 	cut        time.Time
 	events     []activity.Event
@@ -386,7 +387,7 @@ type hearing struct {
 // and any other failure, returns the error and nothing is written.
 func (p *Pipeline) filterHour(ctx context.Context, a hourAudio, h *hearing, partial bool) (*hearing, error) {
 	relabel := func(speech []media.Utterance) (*hearing, error) {
-		again, err := p.detectMeetings(a.day, a.hour, a.midnight, a.start, a.cut, a.events, speech)
+		again, err := p.detectMeetings(a.day, a.hour, a.midnight, a.seen, a.events, speech)
 		if err != nil {
 			return nil, err
 		}
@@ -434,7 +435,7 @@ func (p *Pipeline) ForgetPrivacy(day string, hour int) error {
 	if _, err := os.Stat(p.privacyCachePath(day)); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	start, end, err := hourBounds(p.Paths, day, hour)
+	w, err := hourBounds(p.Paths, day, hour)
 	if err != nil {
 		return err
 	}
@@ -444,7 +445,7 @@ func (p *Pipeline) ForgetPrivacy(day string, hour int) error {
 		if len(parts) != 3 {
 			continue
 		}
-		if t, err := time.Parse(time.RFC3339Nano, parts[1]); err == nil && !t.Before(start) && t.Before(end) {
+		if t, err := time.Parse(time.RFC3339Nano, parts[1]); err == nil && w.contains(t) {
 			delete(c.Lines, k)
 		}
 	}

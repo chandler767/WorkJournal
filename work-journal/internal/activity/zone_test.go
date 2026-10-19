@@ -83,12 +83,8 @@ func TestLoadZoneTimeline(t *testing.T) {
 	}
 }
 
-func TestHourBoundsCoverAZoneChange(t *testing.T) {
+func TestHourSpansPartitionAFlight(t *testing.T) {
 	ny, _ := time.LoadLocation("America/New_York")
-	z := NewZoneTimeline([]Event{
-		evAt(t, "2026-10-12T09:00:00+01:00"),
-		evAt(t, "2026-10-12T15:10:00-04:00"),
-	}, ny)
 	parse := func(s string) time.Time {
 		v, err := time.Parse(time.RFC3339, s)
 		if err != nil {
@@ -96,39 +92,72 @@ func TestHourBoundsCoverAZoneChange(t *testing.T) {
 		}
 		return v
 	}
-	// Hour 15 holds the 15:10 New York event: New York's hour, not London's.
-	s, e, err := z.HourBounds("2026-10-12", 15, nil)
-	if err != nil || !s.Equal(parse("2026-10-12T15:00:00-04:00")) || !e.Equal(parse("2026-10-12T16:00:00-04:00")) || s.Hour() != 15 {
-		t.Errorf("hour 15 = %v–%v (%v)", s, e, err)
+	// London until 16:30 BST (15:30Z), New York from 15:10 EDT (19:10Z).
+	z := NewZoneTimeline([]Event{
+		evAt(t, "2026-10-12T09:00:00+01:00"),
+		evAt(t, "2026-10-12T16:30:00+01:00"),
+		evAt(t, "2026-10-12T15:10:00-04:00"),
+	}, ny)
+	spans := func(h int) []Span {
+		sp, err := z.HourSpans("2026-10-12", h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sp
 	}
-	// A London file at 15:05 too: the window covers both clocks' 15:00.
-	s, e, _ = z.HourBounds("2026-10-12", 15, []time.Time{parse("2026-10-12T15:05:00+01:00")})
-	if !s.Equal(parse("2026-10-12T15:00:00+01:00")) || !e.Equal(parse("2026-10-12T16:00:00-04:00")) || s.Hour() != 15 || e.Hour() != 16 {
-		t.Errorf("mixed hour 15 = %v–%v", s, e)
+	same := func(h int, want ...string) {
+		t.Helper()
+		got := spans(h)
+		if len(got) != len(want)/2 {
+			t.Fatalf("hour %d spans %v, want %v", h, got, want)
+		}
+		for i, sp := range got {
+			if !sp.Start.Equal(parse(want[2*i])) || !sp.End.Equal(parse(want[2*i+1])) || sp.Start.Hour() != h {
+				t.Errorf("hour %d span %d = %v–%v, want %s–%s", h, i, sp.Start, sp.End, want[2*i], want[2*i+1])
+			}
+		}
 	}
-	// An hour with nothing in it: the offset in force at h:00.
-	s, _, _ = z.HourBounds("2026-10-12", 12, nil)
-	if !s.Equal(parse("2026-10-12T12:00:00+01:00")) {
-		t.Errorf("hour 12 = %v", s)
-	}
-	// Files on another day are ignored.
-	s, _, _ = z.HourBounds("2026-10-12", 9, []time.Time{parse("2026-10-13T09:30:00-04:00")})
-	if !s.Equal(parse("2026-10-12T09:00:00+01:00")) {
-		t.Errorf("hour 9 = %v", s)
+	same(15, "2026-10-12T15:00:00+01:00", "2026-10-12T16:00:00+01:00", "2026-10-12T15:10:00-04:00", "2026-10-12T16:00:00-04:00")
+	same(16, "2026-10-12T16:00:00+01:00", "2026-10-12T17:00:00+01:00", "2026-10-12T16:00:00-04:00", "2026-10-12T17:00:00-04:00")
+	// The flight's last minutes in BST, then New York's 20:00.
+	same(20, "2026-10-12T20:00:00+01:00", "2026-10-12T20:10:00+01:00", "2026-10-12T20:00:00-04:00", "2026-10-12T21:00:00-04:00")
+	same(12, "2026-10-12T12:00:00+01:00", "2026-10-12T13:00:00+01:00") // New York's 12:00 never happened
+	// Every minute of the day is in exactly one hour.
+	for m := parse("2026-10-11T23:00:00Z"); m.Before(parse("2026-10-13T04:00:00Z")); m = m.Add(time.Minute) {
+		n := 0
+		for h := 0; h < 24; h++ {
+			for _, sp := range spans(h) {
+				if !m.Before(sp.Start) && m.Before(sp.End) {
+					n++
+				}
+			}
+		}
+		wall := m.In(time.FixedZone("", 3600))
+		if !m.Before(parse("2026-10-12T19:10:00Z")) {
+			wall = m.In(time.FixedZone("", -4*3600))
+		}
+		if want := map[bool]int{true: 1, false: 0}[wall.Format("2006-01-02") == "2026-10-12"]; n != want {
+			t.Fatalf("%v (wall %v) is in %d hours, want %d", m, wall, n, want)
+		}
 	}
 }
 
 // Spring forward overnight: the last event before sleep is EST, the wake at
-// 08:10 is EDT; hour 8 is EDT's.
-func TestHourBoundsAfterSpringForward(t *testing.T) {
+// 08:10 is EDT; hour 8 is EDT's, from the wake.
+func TestHourSpansAfterSpringForward(t *testing.T) {
 	ny, _ := time.LoadLocation("America/New_York")
 	z := NewZoneTimeline([]Event{
 		evAt(t, "2027-03-14T00:30:00-05:00"),
 		evAt(t, "2027-03-14T08:10:00-04:00"),
 	}, ny)
-	s, e, err := z.HourBounds("2027-03-14", 8, nil)
-	want, _ := time.Parse(time.RFC3339, "2027-03-14T08:00:00-04:00")
-	if err != nil || !s.Equal(want) || !e.Equal(want.Add(time.Hour)) {
-		t.Errorf("hour 8 = %v–%v (%v), want from %v", s, e, err, want)
+	sp, err := z.HourSpans("2027-03-14", 8)
+	from, _ := time.Parse(time.RFC3339, "2027-03-14T08:10:00-04:00")
+	if err != nil || len(sp) != 1 || !sp[0].Start.Equal(from) || !sp[0].End.Equal(from.Add(50*time.Minute)) {
+		t.Errorf("hour 8 = %v (%v), want 08:10–09:00 EDT", sp, err)
+	}
+	// No events: the fallback zone, DST-aware.
+	sp, _ = NewZoneTimeline(nil, ny).HourSpans("2027-03-14", 3)
+	if len(sp) != 1 || sp[0].Start.Hour() != 3 || sp[0].End.Sub(sp[0].Start) != time.Hour {
+		t.Errorf("fallback hour 3 = %v", sp)
 	}
 }

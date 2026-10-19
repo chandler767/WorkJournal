@@ -350,11 +350,7 @@ func (p *Pipeline) relabel(m store.MeetingRecord, track, speaker, name string, h
 // with doc's, leaving the notes and meeting summaries of its summary
 // indexed (unlike IndexText).
 func (p *Pipeline) IndexTranscript(doc *HourDoc) error {
-	start, _, err := hourBounds(p.Paths, doc.Day, doc.Hour)
-	if err != nil {
-		return err
-	}
-	if err := p.Store.ReplaceTextKinds(doc.Day, doc.Hour, []string{"transcript", "ocr"}, textDocs(doc, start)); err != nil {
+	if err := p.Store.ReplaceTextKinds(doc.Day, doc.Hour, []string{"transcript", "ocr"}, textDocs(doc)); err != nil {
 		return fmt.Errorf("index text: %w", err)
 	}
 	return nil
@@ -362,11 +358,7 @@ func (p *Pipeline) IndexTranscript(doc *HourDoc) error {
 
 // IndexText replaces the hour's indexed transcript and OCR text with doc's.
 func (p *Pipeline) IndexText(doc *HourDoc) error {
-	start, _, err := hourBounds(p.Paths, doc.Day, doc.Hour)
-	if err != nil {
-		return err
-	}
-	if err := p.Store.ReplaceText(doc.Day, doc.Hour, textDocs(doc, start)); err != nil {
+	if err := p.Store.ReplaceText(doc.Day, doc.Hour, textDocs(doc)); err != nil {
 		return fmt.Errorf("index text: %w", err)
 	}
 	return nil

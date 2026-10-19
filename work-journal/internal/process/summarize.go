@@ -156,10 +156,11 @@ func clockMinutes(s string) (int, error) {
 // (claude failing to run, store errors) is returned and the hour stays
 // transcribed for a later retry.
 func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error {
-	start, _, err := hourBounds(s.Paths, doc.Day, doc.Hour)
+	w, err := hourBounds(s.Paths, doc.Day, doc.Hour)
 	if err != nil {
 		return err
 	}
+	start := w.start()
 	invalid := false
 	// run runs one skill; invalid output is recorded rather than returned.
 	run := func(skill, suffix string, in []byte, out any) (bool, error) {
@@ -238,7 +239,7 @@ func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error
 		return fmt.Errorf("store segments: %w", err)
 	}
 
-	texts := textDocs(doc, start)
+	texts := textDocs(doc)
 	ref := fmt.Sprintf("hour/%s/%02d", doc.Day, doc.Hour)
 	indexed := append([]string{sum.Narrative}, sum.Notes...)
 	for _, e := range sum.Timeline {

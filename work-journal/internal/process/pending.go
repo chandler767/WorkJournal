@@ -63,11 +63,11 @@ func (p *Pipeline) PendingHours() ([]HourKey, error) {
 		}
 		sort.Ints(hours)
 		for _, h := range hours {
-			start, _, err := clock.bounds(h)
+			w, err := clock.window(h)
 			if err != nil {
 				return nil, err
 			}
-			if !start.Before(current) {
+			if w.end().After(current) {
 				continue
 			}
 			rec, ok, err := p.Store.Hour(day, h)
@@ -203,17 +203,17 @@ func (p *Pipeline) dayClock(day string) (*dayClock, error) {
 	return c, err
 }
 
-// bounds is the absolute window of the recorded hour (see
-// activity.ZoneTimeline.HourBounds), widened by the day's raw files.
-func (c *dayClock) bounds(hour int) (time.Time, time.Time, error) {
-	walls := make([]time.Time, 0, len(c.chunks)+len(c.shots))
-	for _, ch := range c.chunks {
-		walls = append(walls, ch.start)
+// window is the instants of the recorded hour (see hourWindow).
+func (c *dayClock) window(hour int) (hourWindow, error) {
+	spans, err := c.zones.HourSpans(c.day, hour)
+	if err != nil {
+		return nil, err
 	}
-	for _, s := range c.shots {
-		walls = append(walls, s.t)
+	if len(spans) == 0 {
+		h0, _ := c.zones.Date(c.day, hour, 0, 0)
+		spans = []activity.Span{{Start: h0, End: h0}}
 	}
-	return c.zones.HourBounds(c.day, hour, walls)
+	return hourWindow(spans), nil
 }
 
 // chunks lists the day's audio chunks, ordered by start time.
@@ -282,13 +282,11 @@ func readNames(dir string) ([]string, error) {
 	return names, nil
 }
 
-// inHour is the chunks of the recorded hour [start, end): start reads h:00
-// on its clock, and a window widened over a zone change (see
-// dayClock.bounds) still takes only the chunks named in hour h.
-func inHour(cs []chunk, start, end time.Time) []chunk {
+// inHour is the chunks named in the recorded hour (day, hour).
+func inHour(cs []chunk, day string, hour int) []chunk {
 	var out []chunk
 	for _, c := range cs {
-		if !c.start.Before(start) && c.start.Before(end) && c.start.Hour() == start.Hour() {
+		if sameHour(c.start, day, hour) {
 			out = append(out, c)
 		}
 	}

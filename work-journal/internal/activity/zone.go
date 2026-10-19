@@ -14,7 +14,14 @@ import (
 // one of the latest event at or before it, the first event's before any.
 type ZoneTimeline struct {
 	points   []zonePoint // by wall clock
+	runs     []zoneRun   // by instant: where the offset in force changes
 	fallback *time.Location
+}
+
+// zoneRun is the offset in force from an instant until the next run.
+type zoneRun struct {
+	from time.Time
+	off  int
 }
 
 type zonePoint struct {
@@ -31,6 +38,13 @@ func NewZoneTimeline(events []Event, fallback *time.Location) ZoneTimeline {
 		z.points = append(z.points, zonePoint{wall: asWall(e.TS), off: off})
 	}
 	sort.SliceStable(z.points, func(i, j int) bool { return z.points[i].wall.Before(z.points[j].wall) })
+	byInstant := append([]Event(nil), events...)
+	sort.SliceStable(byInstant, func(i, j int) bool { return byInstant[i].TS.Before(byInstant[j].TS) })
+	for _, e := range byInstant {
+		if _, off := e.TS.Zone(); len(z.runs) == 0 || z.runs[len(z.runs)-1].off != off {
+			z.runs = append(z.runs, zoneRun{from: e.TS, off: off})
+		}
+	}
 	return z
 }
 
@@ -68,48 +82,50 @@ func LoadZoneTimeline(path string, fallback *time.Location) ZoneTimeline {
 	return NewZoneTimeline(evs, fallback)
 }
 
-// HourBounds returns the absolute window of the recorded wall-clock hour
-// hour of day. The hour takes the offset of every event of the timeline and
-// every other recorded time in walls (raw file times, already in their
-// zones) whose wall clock lies inside it, so an hour holding a zone change
-// (a flight, a DST change after sleep) covers both sides and drops nothing:
-// it runs from the earliest h:00 to the latest h+1:00 among those offsets.
-// An hour with none of them uses the offset in force at h:00. start and end
-// read h:00 and h+1:00 on their own clocks.
-func (z ZoneTimeline) HourBounds(day string, hour int, walls []time.Time) (time.Time, time.Time, error) {
-	h0, err := z.Date(day, hour, 0, 0)
+// Span is an absolute interval [Start, End).
+type Span struct{ Start, End time.Time }
+
+// HourSpans returns the instants of the recorded wall-clock hour hour of
+// day: those whose wall clock, read in the zone in force at that instant,
+// is day hour:mm. The zone in force at an instant is the offset of the
+// latest event at or before it (the first event's before any; fallback with
+// no events). So every instant belongs to exactly one hour: the hour that
+// holds a flight's zone change is the old clock's piece plus the new
+// clock's, and the flight itself is filed under the old clock's later
+// hours. Spans are ordered and disjoint, each starting and ending on the
+// clock of its piece (so a span's Start reads hour h).
+func (z ZoneTimeline) HourSpans(day string, hour int) ([]Span, error) {
+	d, err := time.Parse("2006-01-02", day)
 	if err != nil {
-		return time.Time{}, time.Time{}, err
+		return nil, fmt.Errorf("bad day %q: %w", day, err)
 	}
-	from := time.Date(h0.Year(), h0.Month(), h0.Day(), hour, 0, 0, 0, time.UTC)
-	to := from.Add(time.Hour)
-	inHour := func(w time.Time) bool { return !w.Before(from) && w.Before(to) }
-	var offs []int
-	for _, p := range z.points {
-		if inHour(p.wall) {
-			offs = append(offs, p.off)
-		}
+	if len(z.runs) == 0 {
+		s := time.Date(d.Year(), d.Month(), d.Day(), hour, 0, 0, 0, z.fallback)
+		e := time.Date(d.Year(), d.Month(), d.Day(), hour+1, 0, 0, 0, z.fallback)
+		return []Span{{s, e}}, nil
 	}
-	for _, w := range walls {
-		if inHour(asWall(w)) {
-			_, off := w.Zone()
-			offs = append(offs, off)
-		}
-	}
-	if len(offs) == 0 {
-		return h0, h0.Add(time.Hour), nil
-	}
-	var start, end time.Time
-	for i, off := range offs {
-		loc := time.FixedZone("", off)
-		s := time.Date(from.Year(), from.Month(), from.Day(), hour, 0, 0, 0, loc)
+	var out []Span
+	for i, r := range z.runs {
+		loc := time.FixedZone("", r.off)
+		s := time.Date(d.Year(), d.Month(), d.Day(), hour, 0, 0, 0, loc)
 		e := s.Add(time.Hour)
-		if i == 0 || s.Before(start) {
-			start = s
+		if i > 0 && s.Before(r.from) {
+			s = r.from.In(loc)
 		}
-		if i == 0 || e.After(end) {
-			end = e
+		if i+1 < len(z.runs) && z.runs[i+1].from.Before(e) {
+			e = z.runs[i+1].from.In(loc)
 		}
+		if !s.Before(e) {
+			continue
+		}
+		if n := len(out); n > 0 && !out[n-1].End.Before(s) {
+			if e.After(out[n-1].End) {
+				out[n-1].End = e
+			}
+			continue
+		}
+		out = append(out, Span{s, e})
 	}
-	return start, end, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
+	return out, nil
 }

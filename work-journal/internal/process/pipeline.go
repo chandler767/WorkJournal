@@ -62,15 +62,76 @@ func (p *Pipeline) logf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
-// hourBounds returns [start, end) of a recorded wall-clock hour: raw file
+// hourBounds returns the instants of a recorded wall-clock hour: raw file
 // names and hour keys are the wall clock where they were recorded, not the
-// Mac's current zone (see dayClock.bounds).
-func hourBounds(paths config.Paths, day string, hour int) (time.Time, time.Time, error) {
+// Mac's current zone (see dayClock.window).
+func hourBounds(paths config.Paths, day string, hour int) (hourWindow, error) {
 	c, _, err := readDayClock(paths, day)
 	if err != nil {
-		return time.Time{}, time.Time{}, err
+		return nil, err
 	}
-	return c.bounds(hour)
+	return c.window(hour)
+}
+
+// hourWindow is the instants of one recorded hour (see
+// activity.ZoneTimeline.HourSpans): ordered, disjoint spans, more than one
+// when the hour holds a zone change. It is never empty; an hour that never
+// happened on any clock is one empty span at its h:00.
+type hourWindow []activity.Span
+
+// start is when the hour begins; it reads h:00 (or later) on its clock.
+func (w hourWindow) start() time.Time { return w[0].Start }
+
+// end is when the hour's last span ends.
+func (w hourWindow) end() time.Time { return w[len(w)-1].End }
+
+// contains reports whether t is one of the hour's instants.
+func (w hourWindow) contains(t time.Time) bool {
+	return slices.ContainsFunc(w, func(s activity.Span) bool { return !t.Before(s.Start) && t.Before(s.End) })
+}
+
+// overlaps reports whether [a, b) shares an instant with the hour; touch
+// also counts a span ending exactly where one of the hour's spans starts.
+func (w hourWindow) overlaps(a, b time.Time, touch bool) bool {
+	return slices.ContainsFunc(w, func(s activity.Span) bool {
+		return (a.Before(s.End) && s.Start.Before(b)) || (touch && b.Equal(s.Start))
+	})
+}
+
+// upto is the hour's instants before cut.
+func (w hourWindow) upto(cut time.Time) hourWindow {
+	var out hourWindow
+	for _, s := range w {
+		if !s.Start.Before(cut) {
+			break
+		}
+		if s.End.After(cut) {
+			s.End = cut
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		out = hourWindow{{Start: w[0].Start, End: w[0].Start}}
+	}
+	return out
+}
+
+// segments is the hour's activity: Segments over each span, so time of
+// other hours between them (a flight, the other clock's hours) is left out.
+func (w hourWindow) segments(events []activity.Event) []activity.Segment {
+	var out []activity.Segment
+	for _, s := range w {
+		if s.Start.Before(s.End) {
+			out = append(out, activity.Segments(events, s.Start, s.End)...)
+		}
+	}
+	return out
+}
+
+// sameHour reports whether t reads (day, hour) on its own clock: how raw
+// files and utterances are named.
+func sameHour(t time.Time, day string, hour int) bool {
+	return config.DayKey(t) == day && t.Hour() == hour
 }
 
 // ProcessPending transcribes (if needed) and summarizes every pending hour.
@@ -163,7 +224,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	start, end, err := clock.bounds(hour)
+	w, err := clock.window(hour)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -171,19 +232,21 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	start, end := w.start(), w.end()
 	partial := !upto.IsZero()
 	cut := end
 	if partial {
 		cut = earlier(upto, end)
 	}
+	seen := w.upto(cut)
 	events, err := p.stateEvents(clock)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	segs := activity.Segments(events, start, cut)
+	segs := seen.segments(events)
 
 	all := clock.chunks
-	chunks, covered := inHour(all, start, end), cut
+	chunks, covered := inHour(all, day, hour), cut
 	if partial {
 		chunks, covered = readyChunks(all, chunks, upto, rotatedAt)
 		covered = earlier(covered, cut)
@@ -194,12 +257,12 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	screens, err := p.ocrHour(ctx, day, clock.shots, start, cut, segs)
+	screens, err := p.ocrHour(ctx, day, hour, clock.shots, segs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	speech := audibleSpeech(segs, speechOf(audio))
-	detected, err := p.detectMeetings(day, hour, midnight, start, cut, events, speech)
+	detected, err := p.detectMeetings(day, hour, midnight, seen, events, speech)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -210,7 +273,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	p.warnDiarization(day, hour, &wavs)
 	h := &hearing{lab: lab, utts: utts, meetings: meetings}
 	if p.privacyOn() && len(utts) > 0 {
-		in := hourAudio{day: day, hour: hour, midnight: midnight, start: start, end: end, cut: cut, events: events,
+		in := hourAudio{day: day, hour: hour, midnight: midnight, seen: seen, start: start, end: end, cut: cut, events: events,
 			segs: segs, audio: audio, speech: speech, detected: detected, wavs: &wavs}
 		if h, err = p.filterHour(ctx, in, h, partial); err != nil {
 			return nil, time.Time{}, err
@@ -329,9 +392,11 @@ func segmentRecords(day string, hour int, segs []activity.Segment) []store.Segme
 
 // textDocs is the hour's searchable transcript and screen text. Speech during
 // an excluded or paused span is never indexed.
-func textDocs(d *HourDoc, start time.Time) []store.TextDoc {
+func textDocs(d *HourDoc) []store.TextDoc {
+	// Seconds into the hour on t's own clock, as the hour page counts.
 	ref := func(t time.Time) string {
-		return fmt.Sprintf("hour/%s/%02d#%d", d.Day, d.Hour, int(t.Sub(start).Seconds()))
+		h0 := time.Date(t.Year(), t.Month(), t.Day(), d.Hour, 0, 0, 0, t.Location())
+		return fmt.Sprintf("hour/%s/%02d#%d", d.Day, d.Hour, int(t.Sub(h0).Seconds()))
 	}
 	var out []store.TextDoc
 	for _, u := range visibleSpeech(d) {
@@ -343,15 +408,15 @@ func textDocs(d *HourDoc, start time.Time) []store.TextDoc {
 	return out
 }
 
-// ocrHour returns the screen text of the screenshots taken in [start, end),
+// ocrHour returns the screen text of the screenshots named in the hour,
 // dropping any taken during an excluded, paused or gap segment before OCR
 // sees it. Results come from the processing cache where the file is
 // unchanged; the rest are OCRed in one batch and cached. Empty texts are
 // dropped and consecutive identical texts collapse to the first.
-func (p *Pipeline) ocrHour(ctx context.Context, day string, shots []shot, start, end time.Time, segs []activity.Segment) ([]media.ScreenText, error) {
+func (p *Pipeline) ocrHour(ctx context.Context, day string, h int, shots []shot, segs []activity.Segment) ([]media.ScreenText, error) {
 	var hour []shot
 	for _, s := range shots {
-		if s.t.Before(start) || !s.t.Before(end) || s.t.Hour() != start.Hour() || !visible(segs, s.t) {
+		if !sameHour(s.t, day, h) || !visible(segs, s.t) {
 			continue
 		}
 		hour = append(hour, s)

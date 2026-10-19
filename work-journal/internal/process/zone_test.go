@@ -115,22 +115,23 @@ func TestZoneChangeMidDay(t *testing.T) {
 	if len(cs) != 2 || !cs[0].start.Equal(london(9, 30, 0)) || !cs[1].start.Equal(nyT(15, 30)) {
 		t.Fatalf("chunks = %+v, want 09:30+01:00 and 15:30-04:00", cs)
 	}
-	s, _, err := hourBounds(e.paths, day, 9)
-	if err != nil || !s.Equal(london(9, 0, 0)) {
-		t.Errorf("hour 9 starts %v (%v), want 09:00+01:00", s, err)
+	w, err := hourBounds(e.paths, day, 9)
+	if err != nil || len(w) != 1 || !w.start().Equal(london(9, 0, 0)) {
+		t.Errorf("hour 9 = %v (%v), want from 09:00+01:00", w, err)
 	}
-	s, _, err = hourBounds(e.paths, day, 16)
-	if err != nil || !s.Equal(nyT(16, 0)) {
-		t.Errorf("hour 16 starts %v (%v), want 16:00-04:00", s, err)
+	w, err = hourBounds(e.paths, day, 16)
+	if err != nil || len(w) != 2 || !w[1].Start.Equal(nyT(16, 0)) || !w.end().Equal(nyT(17, 0)) {
+		t.Errorf("hour 16 = %v (%v), want London's 16:00 piece and 16:00–17:00 -04:00", w, err)
 	}
-	// Hour 15 holds the change: New York's 15:00, with the 1530 chunk and
-	// the events after 15:10.
-	s, end, err := hourBounds(e.paths, day, 15)
-	if err != nil || !s.Equal(nyT(15, 0)) || !end.Equal(nyT(16, 0)) {
-		t.Errorf("hour 15 = %v–%v (%v), want 15:00–16:00 -04:00", s, end, err)
+	// Hour 15 holds the change: London's whole 15:00 hour, then New York's
+	// from the 15:10 change.
+	w, err = hourBounds(e.paths, day, 15)
+	if err != nil || len(w) != 2 || !w[0].Start.Equal(london(15, 0, 0)) || !w[0].End.Equal(london(16, 0, 0)) ||
+		!w[1].Start.Equal(nyT(15, 10)) || !w[1].End.Equal(nyT(16, 0)) {
+		t.Errorf("hour 15 = %v (%v), want 15:00–16:00 +01:00 and 15:10–16:00 -04:00", w, err)
 	}
-	if in := inHour(cs, s, end); len(in) != 1 || in[0].start.Hour() != 15 {
-		t.Errorf("hour 15 chunks = %+v, want the 1530 chunk", in)
+	if in := inHour(cs, day, 15); len(in) != 1 || !in[0].start.Equal(nyT(15, 30)) || !w.contains(in[0].start) {
+		t.Errorf("hour 15 chunks = %+v, want the 1530 chunk inside the hour", in)
 	}
 	e.p.Cfg.Diarization = "off"
 	doc, err := e.p.Transcribe(context.Background(), day, 15)
@@ -162,12 +163,12 @@ func TestWakeAfterSpringForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Chtimes(path, old, old)
-	s, end, err := hourBounds(e.paths, d, 8)
-	if want := time.Date(2027, 3, 14, 8, 0, 0, 0, ny); err != nil || !s.Equal(want) || !end.Equal(want.Add(time.Hour)) {
-		t.Fatalf("hour 8 = %v–%v (%v), want from %v", s, end, err, want)
+	w, err := hourBounds(e.paths, d, 8)
+	if from := time.Date(2027, 3, 14, 8, 10, 0, 0, ny); err != nil || len(w) != 1 || !w.start().Equal(from) || !w.end().Equal(from.Add(50*time.Minute)) {
+		t.Fatalf("hour 8 = %v (%v), want 08:10–09:00 EDT", w, err)
 	}
 	cs, err := e.p.chunks(d)
-	if err != nil || len(cs) != 1 || len(inHour(cs, s, end)) != 1 {
+	if err != nil || len(cs) != 1 || len(inHour(cs, d, 8)) != 1 || !w.contains(cs[0].start) {
 		t.Errorf("chunks = %+v (%v), want 0815 in hour 8", cs, err)
 	}
 }
@@ -229,5 +230,63 @@ func TestRebaseOneShiftPerChunk(t *testing.T) {
 	rebase(us, lon)
 	if !us[0].Start.Equal(london(10, 5, 1)) || !us[0].End.Equal(london(10, 5, 9)) {
 		t.Errorf("London utterance at %v–%v, want 10:05:01–10:05:09 +01:00", us[0].Start, us[0].End)
+	}
+}
+
+// A flight home: London until 16:30 BST, asleep in the air, New York from
+// 15:10 EDT. Wall hours 15 and 16 each hold both clocks. Every instant
+// belongs to one hour: no segment is in two hour docs, active minutes add
+// up to the time observed, and the flight's gap is filed under the wall
+// hours it covered (only its first 30 min, 16:00–16:30 BST, are in hour 16).
+func TestFlightHoursPartitionTime(t *testing.T) {
+	ny := inNewYork(t)
+	e := newEnv(t)
+	e.p.Cfg.Diarization = "off"
+	nyT := func(h, m int) time.Time { return time.Date(2026, 10, 7, h, m, 0, 0, ny) }
+	e.activity(nyT(20, 0),
+		evAt(london(13, 0, 0), "start"), evAt(london(13, 0, 0), "app", "Code"),
+		evAt(london(14, 0, 0), "app", "Arc"), evAt(london(15, 0, 0), "app", "Slack"),
+		evAt(london(16, 0, 0), "app", "Docs"), evAt(london(16, 30, 0), "sleep"),
+		evAt(nyT(15, 10), "wake"), evAt(nyT(15, 10), "app", "Mail"),
+		evAt(nyT(16, 0), "app", "Notes"), evAt(nyT(16, 30), "stop"))
+	var all []activity.Segment
+	active := time.Duration(0)
+	gapIn := map[int]time.Duration{}
+	activeIn := map[int]time.Duration{}
+	for h := 13; h <= 16; h++ {
+		doc, err := e.p.Transcribe(context.Background(), day, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, g := range doc.Segments {
+			for _, o := range all {
+				if g.Start.Before(o.End) && o.Start.Before(g.End) {
+					t.Errorf("hour %d segment %v–%v %s overlaps %v–%v %s", h, g.Start, g.End, g.App, o.Start, o.End, o.App)
+				}
+			}
+			all = append(all, g)
+			switch g.Kind {
+			case activity.KindActive:
+				active += g.End.Sub(g.Start)
+				activeIn[h] += g.End.Sub(g.Start)
+			case activity.KindGap:
+				gapIn[h] += g.End.Sub(g.Start)
+			}
+		}
+	}
+	if want := 290 * time.Minute; active != want {
+		t.Errorf("active time %v over the hours, want %v (210 min London + 80 min New York)", active, want)
+	}
+	if want := map[int]time.Duration{13: time.Hour, 14: time.Hour, 15: 110 * time.Minute, 16: time.Hour}; !reflect.DeepEqual(activeIn, want) {
+		t.Errorf("active per hour %v, want %v", activeIn, want)
+	}
+	if gapIn[15] != 0 || gapIn[16] != time.Hour {
+		t.Errorf("gap per hour %v, want 0 in 15 and 60 min in 16 (30 of flight, 30 after stop)", gapIn)
+	}
+	// Nothing of the flight's middle (17:00–20:00 BST) is in these hours.
+	for _, g := range all {
+		if g.Start.Before(london(20, 0, 0)) && london(17, 0, 0).Before(g.End) {
+			t.Errorf("segment %v–%v %s inside the flight", g.Start, g.End, g.Kind)
+		}
 	}
 }

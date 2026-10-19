@@ -16,11 +16,11 @@ import (
 // activity and the speech of this hour plus every other derived hour of the
 // day (later ones too, so running an hour again judges a meeting that
 // continues past it the same way), and returns the meetings overlapping
-// [start, end); a meeting ending exactly at start is included so the hour
+// the hour's instants w; a meeting ending exactly where a span of w starts is included so the hour
 // after its last one can report it ended. events must include the previous
 // day's (see stateEvents).
-func (p *Pipeline) detectMeetings(day string, hour int, midnight, start, end time.Time, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
-	segs := activity.Segments(events, midnight, end)
+func (p *Pipeline) detectMeetings(day string, hour int, midnight time.Time, w hourWindow, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
+	segs := activity.Segments(events, midnight, w.end())
 	var speech []activity.SpeechSpan
 	for h := 0; h < 24; h++ {
 		if h == hour {
@@ -39,7 +39,7 @@ func (p *Pipeline) detectMeetings(day string, hour int, midnight, start, end tim
 	speech = appendSpeech(speech, utts)
 	var out []activity.Meeting
 	for _, m := range activity.DetectMeetings(segs, speech, p.Cfg) {
-		if !m.End.Before(start) && m.Start.Before(end) {
+		if w.overlaps(m.Start, m.End, true) {
 			out = append(out, m)
 		}
 	}
@@ -139,7 +139,7 @@ func (p *Pipeline) upsertMeetings(doc *HourDoc) error {
 			return err
 		}
 	}
-	start, end, err := hourBounds(p.Paths, doc.Day, doc.Hour)
+	w, err := hourBounds(p.Paths, doc.Day, doc.Hour)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (p *Pipeline) upsertMeetings(doc *HourDoc) error {
 		return err
 	}
 	for _, r := range recs {
-		if !r.Start.Before(end) || !r.End.After(start) ||
+		if !w.overlaps(r.Start, r.End, false) ||
 			slices.ContainsFunc(ms, func(m activity.Meeting) bool { return m.ID == r.ID }) {
 			continue
 		}
