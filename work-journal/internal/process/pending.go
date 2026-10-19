@@ -62,7 +62,7 @@ func (p *Pipeline) PendingHours() ([]HourKey, error) {
 		}
 		sort.Ints(hours)
 		for _, h := range hours {
-			start, _, err := hourBounds(day, h)
+			start, _, err := hourBounds(p.Paths, day, h)
 			if err != nil {
 				return nil, err
 			}
@@ -111,7 +111,7 @@ func (p *Pipeline) hourFiles(day string) (map[int][]string, error) {
 		return nil, err
 	}
 	for _, e := range events {
-		t := e.TS.In(time.Local)
+		t := e.TS // its own offset: the recorded wall clock
 		if config.DayKey(t) != day {
 			continue
 		}
@@ -184,12 +184,14 @@ func (p *Pipeline) chunks(day string) ([]chunk, error) {
 	if err != nil {
 		return nil, err
 	}
+	zones := zonesOf(p.Paths, day)
 	var out []chunk
 	for _, n := range names {
-		start, track, err := media.ChunkStart(day, n, time.Local)
+		wall, _, err := media.ChunkStart(day, n, time.UTC)
 		if err != nil {
 			continue // not an audio chunk
 		}
+		start, track, _ := media.ChunkStart(day, n, zones.At(wall))
 		out = append(out, chunk{path: filepath.Join(dir, n), start: start, track: track})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].start.Before(out[j].start) })
@@ -203,16 +205,18 @@ func (p *Pipeline) shots(day string) ([]shot, error) {
 	if err != nil {
 		return nil, err
 	}
+	zones := zonesOf(p.Paths, day)
 	var out []shot
 	for _, n := range names {
 		stem, ok := strings.CutSuffix(n, ".jpg")
 		if !ok || len(stem) != 6 {
 			continue
 		}
-		t, err := time.ParseInLocation("2006-01-02 150405", day+" "+stem, time.Local)
+		wall, err := time.ParseInLocation("2006-01-02 150405", day+" "+stem, time.UTC)
 		if err != nil {
 			continue
 		}
+		t, _ := time.ParseInLocation("2006-01-02 150405", day+" "+stem, zones.At(wall))
 		out = append(out, shot{path: filepath.Join(dir, n), t: t})
 	}
 	return out, nil

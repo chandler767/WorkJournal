@@ -14,6 +14,7 @@ import (
 	"workjournal/internal/config"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 // Skill input shapes; each matches the "Input" section of its SKILL.md.
@@ -83,7 +84,7 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 		return err
 	}
 	for _, m := range meetings {
-		mi := meetingInput{ID: m.ID, Title: m.Title, Start: m.Start.Format("15:04"), End: m.End.Format("15:04"),
+		mi := meetingInput{ID: m.ID, Title: m.Title, Start: wallclock.Clock(m.Start), End: wallclock.Clock(m.End),
 			Participants: []string{}, Decisions: []string{}, ActionItems: []skills.ActionItem{}}
 		var ms skills.MeetingSummary
 		if m.SummaryJSON != "" {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 // What the dashboard and the journal MCP server show of derived data, kept
@@ -27,7 +28,7 @@ func RemovedNotices(spans []RemovedSpan) []string {
 	}
 	var out []string
 	for _, r := range merged {
-		span := r.Start.Local().Format("15:04") + "–" + r.End.Local().Format("15:04")
+		span := wallclock.Span(r.Start, r.End)
 		if d := r.End.Sub(r.Start); d < time.Minute {
 			out = append(out, "Under a minute of non-work audio removed ("+span+")")
 		} else {
@@ -50,8 +51,9 @@ func SpeakerDisplay(speaker string, p *store.ParticipantRecord, threshold float6
 	}
 }
 
-// HourStarts returns the local clock hours (h:00 in loc) that [start, end)
-// touches, starting with the hour holding start.
+// HourStarts returns the clock hours (h:00 in loc) that [start, end)
+// touches, starting with the hour holding start. For a recorded span pass
+// start.Location(): derived hours are keyed by the recorded wall clock.
 func HourStarts(start, end time.Time, loc *time.Location) []time.Time {
 	s := start.In(loc)
 	var out []time.Time

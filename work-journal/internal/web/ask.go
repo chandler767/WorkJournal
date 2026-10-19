@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"workjournal/internal/skills"
+	"workjournal/internal/wallclock"
 )
 
 // Asker answers a question about the journal (ask.Runner): Claude with only
@@ -136,14 +137,14 @@ func (s *Server) renderAsk(w http.ResponseWriter, r *http.Request, question, not
 		pending = ""
 	}
 	if e := s.running(); e != nil {
-		p.Pending = &askRow{ID: e.ID, Question: e.Question, When: e.Asked.Local().Format("Jan 2 15:04")}
+		p.Pending = &askRow{ID: e.ID, Question: e.Question, When: wallclock.Format(e.Asked, "Jan 2 15:04")}
 	}
 	h, err := s.askHistory()
 	if err != nil {
 		p.Notice = "Earlier questions could not be read: " + err.Error()
 	}
 	for _, e := range h {
-		row := askRow{ID: e.ID, Question: e.Question, Error: e.Error, When: e.Asked.Local().Format("Jan 2 15:04"), Highlight: e.ID == pending}
+		row := askRow{ID: e.ID, Question: e.Question, Error: e.Error, When: wallclock.Format(e.Asked, "Jan 2 15:04"), Highlight: e.ID == pending}
 		if e.Answer != "" {
 			if row.Answer, err = renderMarkdown(e.Answer, s.Cfg().ListenAddr); err != nil {
 				row.Error = "answer could not be rendered: " + err.Error()

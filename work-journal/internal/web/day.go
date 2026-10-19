@@ -15,6 +15,7 @@ import (
 	"workjournal/internal/scheduler"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 type totalRow struct {
@@ -170,7 +171,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range meets {
 		p.Meetings = append(p.Meetings, meetingRow{ID: m.ID, Title: m.Title, App: m.App,
-			Time: m.Start.Format("15:04") + "–" + m.End.Format("15:04")})
+			Time: wallclock.Span(m.Start, m.End)})
 	}
 	for i, j := 0, len(p.Meetings)-1; i < j; i, j = i+1, j-1 {
 		p.Meetings[i], p.Meetings[j] = p.Meetings[j], p.Meetings[i]
@@ -293,7 +294,7 @@ func orderTotals(totals map[string]time.Duration, order []string, colors map[str
 func buildTimeline(day string, segs []store.SegmentRecord, colors map[string]string) timelineSpec {
 	spec := timelineSpec{From: 6, To: 22, Day: day, Segs: []tlSeg{}}
 	for _, g := range segs {
-		s := g.Start.Local().Hour()*60 + g.Start.Local().Minute()
+		s := g.Start.Hour()*60 + g.Start.Minute() // the recorded wall clock
 		e := s + int(g.End.Sub(g.Start).Round(time.Minute)/time.Minute)
 		if e <= s {
 			e = s + 1

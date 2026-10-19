@@ -62,13 +62,20 @@ func (p *Pipeline) logf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
-// hourBounds returns [start, end) of a local hour.
-func hourBounds(day string, hour int) (time.Time, time.Time, error) {
-	d, err := time.ParseInLocation("2006-01-02", day, time.Local)
+// zonesOf is the recording zone of day's wall clock, from its activity log
+// (time.Local without one): raw file names and hour keys are the wall
+// clock where they were recorded, not the Mac's current zone.
+func zonesOf(paths config.Paths, day string) activity.ZoneTimeline {
+	return activity.LoadZoneTimeline(paths.Activity(day), time.Local)
+}
+
+// hourBounds returns [start, end) of a recorded wall-clock hour, in the
+// zone in force at its start.
+func hourBounds(paths config.Paths, day string, hour int) (time.Time, time.Time, error) {
+	start, err := zonesOf(paths, day).Date(day, hour, 0, 0)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("bad day %q: %w", day, err)
+		return time.Time{}, time.Time{}, err
 	}
-	start := time.Date(d.Year(), d.Month(), d.Day(), hour, 0, 0, 0, time.Local)
 	return start, start.Add(time.Hour), nil
 }
 
@@ -158,7 +165,7 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 // finished). It also returns the time up to which the doc's audio is
 // complete. It writes nothing but the processing cache.
 func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotatedAt time.Time) (*HourDoc, time.Time, error) {
-	start, end, err := hourBounds(day, hour)
+	start, end, err := hourBounds(p.Paths, day, hour)
 	if err != nil {
 		return nil, time.Time{}, err
 	}

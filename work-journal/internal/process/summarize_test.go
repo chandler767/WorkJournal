@@ -109,7 +109,7 @@ func (e *sumEnv) transcribed(doc *HourDoc) {
 			e.t.Fatal(err)
 		}
 	}
-	start, _, _ := hourBounds(doc.Day, doc.Hour)
+	start, _, _ := hourBounds(e.paths, doc.Day, doc.Hour)
 	if err := e.st.ReplaceSegments(doc.Day, doc.Hour, segmentRecords(doc.Day, doc.Hour, doc.Segments)); err != nil {
 		e.t.Fatal(err)
 	}

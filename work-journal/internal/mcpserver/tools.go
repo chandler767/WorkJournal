@@ -17,6 +17,7 @@ import (
 	"workjournal/internal/process"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 // Tool inputs. Fields without omitempty are required.
@@ -34,7 +35,7 @@ type (
 	}
 	HourArgs struct {
 		Date              string `json:"date" jsonschema:"the day: YYYY-MM-DD, today or yesterday"`
-		Hour              int    `json:"hour" jsonschema:"the hour, 0-23 (local time)"`
+		Hour              int    `json:"hour" jsonschema:"the hour, 0-23, on the clock where it was recorded"`
 		IncludeTranscript bool   `json:"include_transcript,omitempty" jsonschema:"also return the transcript lines"`
 		TranscriptOffset  int    `json:"transcript_offset,omitempty" jsonschema:"transcript lines to skip, for the next page"`
 	}
@@ -109,7 +110,7 @@ func (j *Journal) Search(a SearchArgs) (string, error) {
 				continue
 			}
 		}
-		line := fmt.Sprintf("- [%s] %s %s (hour %02d): %s", h.Kind, h.Day, h.TS.Local().Format("15:04"), h.Hour,
+		line := fmt.Sprintf("- [%s] %s %s (hour %02d): %s", h.Kind, h.Day, wallclock.Clock(h.TS), h.Hour,
 			strings.Join(strings.Fields(h.Snippet), " "))
 		if p := hitPath(h.Ref); p != "" {
 			line += " — " + j.link(p)
@@ -328,7 +329,7 @@ func (j *Journal) GetHour(a HourArgs) (string, error) {
 			if g.App == "" {
 				continue
 			}
-			line := "- " + g.Start.Local().Format("15:04") + " " + g.App
+			line := "- " + wallclock.Clock(g.Start) + " " + g.App
 			if g.Title != "" {
 				line += " — " + g.Title
 			}
@@ -343,9 +344,10 @@ func (j *Journal) GetHour(a HourArgs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hs := hourStart(day, a.Hour)
 	var mlist []string
 	for _, m := range meets {
+		// The hour of the meeting's own recorded wall clock.
+		hs := hourStartIn(day, a.Hour, m.Start.Location())
 		if m.Start.Before(hs.Add(time.Hour)) && m.End.After(hs) {
 			mlist = append(mlist, fmt.Sprintf("%s (%s, id %s)", m.Title, clockSpan(m.Start, m.End), m.ID))
 		}
@@ -375,12 +377,10 @@ func (j *Journal) GetHour(a HourArgs) (string, error) {
 	fmt.Fprintf(&b, "\n## Transcript (%d lines)\n", len(speech))
 	lines := make([]string, len(speech))
 	for i, u := range speech {
-		lines[i] = u.Start.Local().Format("15:04:05") + " " + u.Speaker + ": " + u.Text
+		lines[i] = wallclock.Format(u.Start, "15:04:05") + " " + u.Speaker + ": " + u.Text
 	}
 	return paged(b.String(), lines, a.TranscriptOffset, "transcript_offset", "transcript lines"), nil
 }
-
-func hourStart(day string, hour int) time.Time { return hourStartIn(day, hour, time.Local) }
 
 // hourStartIn is the wall-clock hour:00 of day in loc (right on DST days,
 // unlike midnight plus hours).
@@ -516,7 +516,7 @@ func (j *Journal) GetMeeting(a MeetingArgs) (string, error) {
 	}
 
 	var lines []string
-	for _, t := range process.HourStarts(m.Start, m.End, time.Local) {
+	for _, t := range process.HourStarts(m.Start, m.End, m.Start.Location()) {
 		doc, err := process.Load(j.Paths.DerivedHour(config.DayKey(t), t.Hour()))
 		if err != nil {
 			continue
@@ -532,7 +532,7 @@ func (j *Journal) GetMeeting(a MeetingArgs) (string, error) {
 			if u.Start.Before(m.Start) || u.Start.After(m.End) {
 				continue
 			}
-			lines = append(lines, u.Start.Local().Format("15:04:05")+" "+
+			lines = append(lines, wallclock.Format(u.Start, "15:04:05")+" "+
 				process.SpeakerDisplay(u.Speaker, by[u.Speaker], j.Cfg.NameConfidenceThreshold)+": "+u.Text)
 		}
 	}
@@ -703,9 +703,8 @@ func (j *Journal) totalLines(totals map[string]time.Duration, format string) []s
 	return out
 }
 
-func clockSpan(a, b time.Time) string {
-	return a.Local().Format("15:04") + "–" + b.Local().Format("15:04")
-}
+// clockSpan is a span on the clock it was recorded by (see wallclock).
+func clockSpan(a, b time.Time) string { return wallclock.Span(a, b) }
 
 // readOptional returns a journal file's text, "" when it does not exist.
 func readOptional(path string) (string, error) {

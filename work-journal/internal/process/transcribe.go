@@ -109,6 +109,9 @@ func (p *Pipeline) loadAudio(ctx context.Context, day string, chunks []chunk, sk
 			return nil, fmt.Errorf("stat %s: %w", name, err)
 		}
 		e, ok := p.loadChunk(day, c.path, key)
+		if ok {
+			rebase(e.Utterances, c.start)
+		}
 		needText := !ok
 		needTurns := c.track == "system" && d != nil && (!ok || !e.Diarized)
 		if needText || needTurns {
@@ -341,4 +344,21 @@ func (p *Pipeline) chunkMayBeOpen(path string) bool {
 	}
 	limit := time.Duration(p.Cfg.AudioChunkMinutes)*time.Minute + 2*time.Minute
 	return p.now().Sub(fi.ModTime()) < limit
+}
+
+// rebase moves cached utterances onto the chunk's start. A chunk's speech
+// is cached at absolute times, and a cache written before chunk names were
+// read in the recording zone holds them at the Mac's zone of that time
+// (10:05 EDT for a 10:05 London chunk). Each utterance keeps its wall-clock
+// distance from the chunk name, so it is re-based on the chunk's start; for
+// a current entry this changes nothing.
+func rebase(us []media.Utterance, start time.Time) {
+	clock := func(t time.Time) time.Time {
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	}
+	for i := range us {
+		d := us[i].End.Sub(us[i].Start)
+		us[i].Start = start.Add(clock(us[i].Start).Sub(clock(start)))
+		us[i].End = us[i].Start.Add(d)
+	}
 }

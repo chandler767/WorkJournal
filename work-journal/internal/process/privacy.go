@@ -178,7 +178,7 @@ func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us [
 		}) {
 			continue
 		}
-		in.Utterances = append(in.Utterances, privacyLine{Index: len(sent), Time: u.Start.In(time.Local).Format("15:04:05"),
+		in.Utterances = append(in.Utterances, privacyLine{Index: len(sent), Time: u.Start.Format("15:04:05"),
 			Track: u.Track, Speaker: speaker(u), Text: u.Text, Context: decided})
 		sent = append(sent, u)
 	}
@@ -254,8 +254,8 @@ func (p *Pipeline) runPrivacy(ctx context.Context, day string, hour int, in priv
 func (p *Pipeline) privacyMeetings(us []media.Utterance, meetings []activity.Meeting) []privacyMeeting {
 	out := []privacyMeeting{}
 	for _, m := range meetings {
-		pm := privacyMeeting{ID: m.ID, App: m.App, Start: m.Start.In(time.Local).Format("15:04:05"),
-			End: m.End.In(time.Local).Format("15:04:05"), Participants: []string{}}
+		pm := privacyMeeting{ID: m.ID, App: m.App, Start: m.Start.Format("15:04:05"),
+			End: m.End.Format("15:04:05"), Participants: []string{}}
 		add := func(s string) {
 			if s != "" && s != "others" && s != unknownSpeaker && !slices.Contains(pm.Participants, s) {
 				pm.Participants = append(pm.Participants, s)
@@ -433,7 +433,7 @@ func (p *Pipeline) ForgetPrivacy(day string, hour int) error {
 	if _, err := os.Stat(p.privacyCachePath(day)); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	start, end, err := hourBounds(day, hour)
+	start, end, err := hourBounds(p.Paths, day, hour)
 	if err != nil {
 		return err
 	}

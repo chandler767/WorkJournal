@@ -395,3 +395,32 @@ func TestWhisperKeepsSilencePhrasesForHourFilter(t *testing.T) {
 		t.Errorf("kept %q, want %q", got, want)
 	}
 }
+
+// A screenshot's HHMMSS name is the wall clock where it was taken: the
+// day's activity log gives that zone, whatever the Mac's zone is now.
+func TestOCRTimeInRecordingZone(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := time.Local
+	time.Local = ny
+	t.Cleanup(func() { time.Local = prev })
+	dayDir := filepath.Join(t.TempDir(), "2026-10-07")
+	if err := os.MkdirAll(filepath.Join(dayDir, "screens"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dayDir, "activity.jsonl"), []byte(`{"ts":"2026-10-07T09:00:00+01:00","type":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dayDir, "screens", "101500.jpg")
+	out, _ := json.Marshal([]map[string]string{{"file": file, "text": "Terminal"}})
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) { return out, nil }
+	st, err := RecorderOCR{Run: run, Bin: "recorder"}.OCR(context.Background(), []string{file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 10, 7, 10, 15, 0, 0, time.FixedZone("", 3600)); len(st) != 1 || !st[0].Time.Equal(want) {
+		t.Fatalf("got %+v, want 10:15+01:00", st)
+	}
+}

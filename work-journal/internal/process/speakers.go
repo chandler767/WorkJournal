@@ -122,8 +122,9 @@ func overlap(from, to, s, e time.Time) float64 {
 func (p *Pipeline) otherHourChunks(m activity.Meeting, start, end time.Time) []diarChunk {
 	length := time.Duration(p.Cfg.AudioChunkMinutes) * time.Minute
 	var out []diarChunk
-	s, e := m.Start.In(time.Local), m.End.In(time.Local)
-	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.Local); !d.After(e); d = d.AddDate(0, 0, 1) {
+	loc := m.Start.Location() // the meeting's recorded wall clock
+	s, e := m.Start, m.End.In(loc)
+	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, loc); !d.After(e); d = d.AddDate(0, 0, 1) {
 		day := config.DayKey(d)
 		all, err := p.chunks(day)
 		if err != nil {
@@ -309,7 +310,7 @@ func (p *Pipeline) relabelMeetings(doc *HourDoc) error {
 	if sp == nil {
 		return nil
 	}
-	hourStart, _, err := hourBounds(doc.Day, doc.Hour)
+	hourStart, _, err := hourBounds(p.Paths, doc.Day, doc.Hour)
 	if err != nil {
 		return err
 	}
@@ -324,8 +325,8 @@ func (p *Pipeline) relabelMeetings(doc *HourDoc) error {
 			}
 		}
 		note(doc)
-		s := m.Start.In(time.Local)
-		for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, time.Local); !t.After(m.End); t = t.Add(time.Hour) {
+		s := m.Start // its recorded wall clock names the derived hours
+		for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, s.Location()); !t.After(m.End); t = t.Add(time.Hour) {
 			if t.Equal(hourStart) {
 				continue
 			}

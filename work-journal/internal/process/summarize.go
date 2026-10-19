@@ -156,7 +156,7 @@ func clockMinutes(s string) (int, error) {
 // (claude failing to run, store errors) is returned and the hour stays
 // transcribed for a later retry.
 func (s *SkillSummarizer) SummarizeHour(ctx context.Context, doc *HourDoc) error {
-	start, _, err := hourBounds(doc.Day, doc.Hour)
+	start, _, err := hourBounds(s.Paths, doc.Day, doc.Hour)
 	if err != nil {
 		return err
 	}

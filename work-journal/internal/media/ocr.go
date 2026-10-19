@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"workjournal/internal/activity"
 )
 
 // ScreenText is the OCR text of one screenshot.
@@ -41,7 +43,7 @@ type FileOCR interface {
 }
 
 // OCR implements OCR. Time comes from raw/<day>/screens/HHMMSS.jpg in the
-// local zone; unparseable names are skipped. Empty texts are dropped and
+// day's recording zone; unparseable names are skipped. Empty texts are dropped and
 // consecutive identical texts collapse to the first.
 func (r RecorderOCR) OCR(ctx context.Context, files []string) ([]ScreenText, error) {
 	entries, err := r.run(ctx, files)
@@ -102,8 +104,16 @@ func (r RecorderOCR) run(ctx context.Context, files []string) ([]ocrEntry, error
 	return all, nil
 }
 
+// screenTime is the time of raw/<day>/screens/HHMMSS.jpg, a wall clock in
+// the zone the day was recorded in (its activity log; time.Local without).
 func screenTime(file string) (time.Time, error) {
-	day := filepath.Base(filepath.Dir(filepath.Dir(file)))
+	dayDir := filepath.Dir(filepath.Dir(file))
+	day := filepath.Base(dayDir)
 	stem := strings.TrimSuffix(filepath.Base(file), ".jpg")
-	return time.ParseInLocation("2006-01-02 150405", day+" "+stem, time.Local)
+	wall, err := time.ParseInLocation("2006-01-02 150405", day+" "+stem, time.UTC)
+	if err != nil {
+		return time.Time{}, err
+	}
+	zones := activity.LoadZoneTimeline(filepath.Join(dayDir, "activity.jsonl"), time.Local)
+	return time.ParseInLocation("2006-01-02 150405", day+" "+stem, zones.At(wall))
 }

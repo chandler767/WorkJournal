@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"workjournal/internal/config"
@@ -16,6 +15,7 @@ import (
 	"workjournal/internal/scheduler"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 var meetingIDRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{4}-[a-z0-9-]+$`)
@@ -72,7 +72,7 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.Cfg()
 	p := meetingPage{Title: m.Title, ID: m.ID, Day: m.Day, App: m.App,
-		Time:    m.Start.Local().Format("15:04") + "–" + m.End.Local().Format("15:04"),
+		Time:    wallclock.Span(m.Start, m.End),
 		Notice:  notices[r.URL.Query().Get("notice")],
 		CanName: cfg.Diarization != "off"}
 	if m.SummaryJSON != "" {
@@ -96,7 +96,7 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Walk every hour the meeting touches, keeping utterances in [Start, End].
-	for _, t := range process.HourStarts(m.Start, m.End, time.Local) {
+	for _, t := range process.HourStarts(m.Start, m.End, m.Start.Location()) {
 		doc, err := process.Load(s.Paths.DerivedHour(config.DayKey(t), t.Hour()))
 		if err != nil {
 			continue // hour not processed yet; the page shows what exists
@@ -105,7 +105,7 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 			if u.Start.Before(m.Start) || u.Start.After(m.End) {
 				continue
 			}
-			p.Transcript = append(p.Transcript, meetingUtter{Clock: u.Start.Local().Format("15:04:05"),
+			p.Transcript = append(p.Transcript, meetingUtter{Clock: wallclock.Format(u.Start, "15:04:05"),
 				Speaker: process.SpeakerDisplay(u.Speaker, byName[u.Speaker], cfg.NameConfidenceThreshold), Track: u.Track, Text: u.Text})
 		}
 	}

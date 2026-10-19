@@ -20,7 +20,10 @@ import (
 // after its last one can report it ended. events must include the previous
 // day's (see stateEvents).
 func (p *Pipeline) detectMeetings(day string, hour int, start, end time.Time, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
-	midnight := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
+	midnight, err := zonesOf(p.Paths, day).Date(day, 0, 0, 0)
+	if err != nil {
+		return nil, err
+	}
 	segs := activity.Segments(events, midnight, end)
 	var speech []activity.SpeechSpan
 	for h := 0; h < 24; h++ {
@@ -91,7 +94,7 @@ func (p *Pipeline) keepInPerson(day string, hour int, m activity.Meeting, lab *l
 		}
 		return total-top >= inPersonOtherSeconds
 	}
-	from, to := m.Start.In(time.Local).Hour(), m.End.In(time.Local).Hour()
+	from, to := m.Start.Hour(), m.End.Hour() // the recorded wall clock
 	if config.DayKey(m.Start) != day {
 		from = 0
 	}
@@ -140,7 +143,7 @@ func (p *Pipeline) upsertMeetings(doc *HourDoc) error {
 			return err
 		}
 	}
-	start, end, err := hourBounds(doc.Day, doc.Hour)
+	start, end, err := hourBounds(p.Paths, doc.Day, doc.Hour)
 	if err != nil {
 		return err
 	}

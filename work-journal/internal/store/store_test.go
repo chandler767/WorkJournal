@@ -289,3 +289,41 @@ func TestDeleteMeetingRemovesParticipants(t *testing.T) {
 		t.Fatalf("m2 participants = %+v", ps)
 	}
 }
+
+// Times keep the offset they were recorded in: a London meeting read back
+// after flying to New York still starts at 10:05+01:00, not 05:05.
+func TestTimesKeepRecordedOffset(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := time.Local
+	time.Local = ny
+	t.Cleanup(func() { time.Local = prev })
+	s := openTest(t)
+	bst := time.FixedZone("", 3600)
+	start := time.Date(2026, 10, 12, 10, 5, 0, 0, bst)
+	if err := s.UpsertMeeting(MeetingRecord{ID: "2026-10-12-1005-in-person", Day: "2026-10-12", Start: start, End: start.Add(40 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := s.Meeting("2026-10-12-1005-in-person")
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, off := m.Start.Zone(); off != 3600 || m.Start.Hour() != 10 || !m.Start.Equal(start) {
+		t.Errorf("start read back as %v, want 10:05+01:00", m.Start)
+	}
+	if err := s.ReplaceSegments("2026-10-12", 10, []SegmentRecord{{Day: "2026-10-12", Hour: 10, Start: start, End: start.Add(time.Minute), App: "Code", Kind: "active"}}); err != nil {
+		t.Fatal(err)
+	}
+	segs, err := s.SegmentsOn("2026-10-12")
+	if err != nil || len(segs) != 1 {
+		t.Fatal(segs, err)
+	}
+	if segs[0].Start.Hour() != 10 {
+		t.Errorf("segment start read back as %v", segs[0].Start)
+	}
+	if err := s.SetSegmentCategory("2026-10-12", 10, segs[0].Start, "Deep work"); err != nil {
+		t.Errorf("set category by the read-back start: %v", err)
+	}
+}

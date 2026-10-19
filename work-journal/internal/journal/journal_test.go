@@ -360,3 +360,41 @@ func TestJournalInputsSplitLongTexts(t *testing.T) {
 		t.Errorf("markdown lines lost structure: first %q last %q", ls[0], ls[len(ls)-1])
 	}
 }
+
+// A meeting recorded in London reads 10:05 BST in the close-day input after
+// the Mac moved to New York, not 05:05.
+func TestCloseDayMeetingKeepsRecordedZone(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := time.Local
+	time.Local = ny
+	t.Cleanup(func() { time.Local = prev })
+	st, p := setup(t)
+	seedDay(t, st, "2026-10-12")
+	bst := time.FixedZone("", 3600)
+	if err := st.UpsertMeeting(store.MeetingRecord{ID: "lon", Day: "2026-10-12", Start: time.Date(2026, 10, 12, 10, 5, 0, 0, bst),
+		End: time.Date(2026, 10, 12, 10, 45, 0, 0, bst), App: "In person", Title: "Planning"}); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{md: "ok"}
+	if err := CloseDay(context.Background(), r, st, p, "2026-10-12", nil); err != nil {
+		t.Fatal(err)
+	}
+	var in struct {
+		Meetings []struct {
+			Title, Start, End string
+		} `json:"meetings"`
+	}
+	if err := json.Unmarshal(r.input, &in); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, m := range in.Meetings {
+		got[m.Title] = m.Start + "–" + m.End
+	}
+	if got["Planning"] != "10:05 BST–10:45 BST" || got["Standup"] != "09:10–09:30" {
+		t.Errorf("meeting times = %v", got)
+	}
+}
