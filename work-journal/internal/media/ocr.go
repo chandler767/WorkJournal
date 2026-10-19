@@ -53,8 +53,9 @@ func (r RecorderOCR) OCR(ctx context.Context, files []string) ([]ScreenText, err
 	var out []ScreenText
 	last := ""
 	have := false
+	zones := map[string]activity.ZoneTimeline{} // by day directory, read once
 	for _, e := range entries {
-		t, err := screenTime(e.File)
+		t, err := screenTime(e.File, zones)
 		if err != nil {
 			log.Printf("media: skipping %s: %v", e.File, err)
 			continue
@@ -105,8 +106,9 @@ func (r RecorderOCR) run(ctx context.Context, files []string) ([]ocrEntry, error
 }
 
 // screenTime is the time of raw/<day>/screens/HHMMSS.jpg, a wall clock in
-// the zone the day was recorded in (its activity log; time.Local without).
-func screenTime(file string) (time.Time, error) {
+// the zone the day was recorded in (its activity log, read once per day
+// into zones; time.Local without).
+func screenTime(file string, zones map[string]activity.ZoneTimeline) (time.Time, error) {
 	dayDir := filepath.Dir(filepath.Dir(file))
 	day := filepath.Base(dayDir)
 	stem := strings.TrimSuffix(filepath.Base(file), ".jpg")
@@ -114,6 +116,10 @@ func screenTime(file string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	zones := activity.LoadZoneTimeline(filepath.Join(dayDir, "activity.jsonl"), time.Local)
-	return time.ParseInLocation("2006-01-02 150405", day+" "+stem, zones.At(wall))
+	z, ok := zones[dayDir]
+	if !ok {
+		z = activity.LoadZoneTimeline(filepath.Join(dayDir, "activity.jsonl"), time.Local)
+		zones[dayDir] = z
+	}
+	return time.ParseInLocation("2006-01-02 150405", day+" "+stem, z.At(wall))
 }

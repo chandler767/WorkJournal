@@ -67,3 +67,49 @@ func LoadZoneTimeline(path string, fallback *time.Location) ZoneTimeline {
 	evs, _, _ := ReadEvents(path)
 	return NewZoneTimeline(evs, fallback)
 }
+
+// HourBounds returns the absolute window of the recorded wall-clock hour
+// hour of day. The hour takes the offset of every event of the timeline and
+// every other recorded time in walls (raw file times, already in their
+// zones) whose wall clock lies inside it, so an hour holding a zone change
+// (a flight, a DST change after sleep) covers both sides and drops nothing:
+// it runs from the earliest h:00 to the latest h+1:00 among those offsets.
+// An hour with none of them uses the offset in force at h:00. start and end
+// read h:00 and h+1:00 on their own clocks.
+func (z ZoneTimeline) HourBounds(day string, hour int, walls []time.Time) (time.Time, time.Time, error) {
+	h0, err := z.Date(day, hour, 0, 0)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	from := time.Date(h0.Year(), h0.Month(), h0.Day(), hour, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	inHour := func(w time.Time) bool { return !w.Before(from) && w.Before(to) }
+	var offs []int
+	for _, p := range z.points {
+		if inHour(p.wall) {
+			offs = append(offs, p.off)
+		}
+	}
+	for _, w := range walls {
+		if inHour(asWall(w)) {
+			_, off := w.Zone()
+			offs = append(offs, off)
+		}
+	}
+	if len(offs) == 0 {
+		return h0, h0.Add(time.Hour), nil
+	}
+	var start, end time.Time
+	for i, off := range offs {
+		loc := time.FixedZone("", off)
+		s := time.Date(from.Year(), from.Month(), from.Day(), hour, 0, 0, 0, loc)
+		e := s.Add(time.Hour)
+		if i == 0 || s.Before(start) {
+			start = s
+		}
+		if i == 0 || e.After(end) {
+			end = e
+		}
+	}
+	return start, end, nil
+}

@@ -2,7 +2,10 @@ package process
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -120,6 +123,53 @@ func TestZoneChangeMidDay(t *testing.T) {
 	if err != nil || !s.Equal(nyT(16, 0)) {
 		t.Errorf("hour 16 starts %v (%v), want 16:00-04:00", s, err)
 	}
+	// Hour 15 holds the change: New York's 15:00, with the 1530 chunk and
+	// the events after 15:10.
+	s, end, err := hourBounds(e.paths, day, 15)
+	if err != nil || !s.Equal(nyT(15, 0)) || !end.Equal(nyT(16, 0)) {
+		t.Errorf("hour 15 = %v–%v (%v), want 15:00–16:00 -04:00", s, end, err)
+	}
+	if in := inHour(cs, s, end); len(in) != 1 || in[0].start.Hour() != 15 {
+		t.Errorf("hour 15 chunks = %+v, want the 1530 chunk", in)
+	}
+	e.p.Cfg.Diarization = "off"
+	doc, err := e.p.Transcribe(context.Background(), day, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(doc.Segments, func(g activity.Segment) bool { return g.App == "Arc" && g.Start.Equal(nyT(15, 10)) }) {
+		t.Errorf("hour 15 segments = %+v, want Arc from 15:10-04:00", doc.Segments)
+	}
+}
+
+// Spring forward overnight in New York: the last event before sleep is
+// EST, the wake at 08:10 is EDT. Hour 8 is EDT's and keeps its chunk.
+func TestWakeAfterSpringForward(t *testing.T) {
+	ny := inNewYork(t)
+	e := newEnv(t)
+	const d = "2027-03-14"
+	old := time.Date(2027, 3, 14, 12, 0, 0, 0, ny)
+	e.p.Now = func() time.Time { return old.Add(time.Hour) }
+	e.activityOn(d, old,
+		evAt(time.Date(2027, 3, 14, 0, 30, 0, 0, time.FixedZone("", -5*3600)), "sleep"),
+		evAt(time.Date(2027, 3, 14, 8, 10, 0, 0, time.FixedZone("", -4*3600)), "wake"),
+		evAt(time.Date(2027, 3, 14, 8, 10, 0, 0, time.FixedZone("", -4*3600)), "app", "Code"))
+	path := filepath.Join(e.paths.Audio(d), "0815-mic.m4a")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	os.Chtimes(path, old, old)
+	s, end, err := hourBounds(e.paths, d, 8)
+	if want := time.Date(2027, 3, 14, 8, 0, 0, 0, ny); err != nil || !s.Equal(want) || !end.Equal(want.Add(time.Hour)) {
+		t.Fatalf("hour 8 = %v–%v (%v), want from %v", s, end, err, want)
+	}
+	cs, err := e.p.chunks(d)
+	if err != nil || len(cs) != 1 || len(inHour(cs, s, end)) != 1 {
+		t.Errorf("chunks = %+v (%v), want 0815 in hour 8", cs, err)
+	}
 }
 
 // A London day transcribed before this fix cached its speech at the New
@@ -151,5 +201,33 @@ func TestCachedSpeechRebasedOnRecordingZone(t *testing.T) {
 	}
 	if len(doc.Transcript) == 0 || !doc.Transcript[0].Start.Equal(london(10, 5, 1)) || !doc.Transcript[0].End.Equal(london(10, 5, 20)) {
 		t.Fatalf("transcript = %+v, want cached speech at 10:05:01 London time", doc.Transcript)
+	}
+}
+
+// rebase shifts a whole cache entry by one amount: a chunk recorded across
+// the spring-forward change keeps its later speech where it was, and a
+// second pass changes nothing.
+func TestRebaseOneShiftPerChunk(t *testing.T) {
+	ny := inNewYork(t)
+	est, edt := time.FixedZone("", -5*3600), time.FixedZone("", -4*3600)
+	start := time.Date(2027, 3, 14, 1, 55, 0, 0, ny) // 01:55 EST
+	us := []media.Utterance{
+		{Start: time.Date(2027, 3, 14, 1, 56, 0, 0, est), End: time.Date(2027, 3, 14, 1, 57, 0, 0, est)},
+		{Start: time.Date(2027, 3, 14, 3, 5, 0, 0, edt), End: time.Date(2027, 3, 14, 3, 6, 0, 0, edt)}, // 02:05 EST
+	}
+	want := []time.Time{us[0].Start, us[1].Start}
+	rebase(us, start)
+	for i := range us {
+		if !us[i].Start.Equal(want[i]) || us[i].End.Sub(us[i].Start) != time.Minute {
+			t.Errorf("utterance %d moved to %v, want %v", i, us[i].Start, want[i])
+		}
+	}
+	// The London chunk cached at its New York reading moves by 5 h, once.
+	lon := london(10, 5, 0)
+	us = []media.Utterance{{Start: time.Date(2026, 10, 7, 10, 5, 1, 0, edt), End: time.Date(2026, 10, 7, 10, 5, 9, 0, edt)}}
+	rebase(us, lon)
+	rebase(us, lon)
+	if !us[0].Start.Equal(london(10, 5, 1)) || !us[0].End.Equal(london(10, 5, 9)) {
+		t.Errorf("London utterance at %v–%v, want 10:05:01–10:05:09 +01:00", us[0].Start, us[0].End)
 	}
 }

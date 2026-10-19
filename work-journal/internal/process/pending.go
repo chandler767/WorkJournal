@@ -52,17 +52,18 @@ func (p *Pipeline) PendingHours() ([]HourKey, error) {
 			continue
 		}
 		day := e.Name()
-		files, err := p.hourFiles(day)
+		clock, err := p.dayClock(day)
 		if err != nil {
 			return nil, err
 		}
+		files := p.hourFiles(clock)
 		hours := make([]int, 0, len(files))
 		for h := range files {
 			hours = append(hours, h)
 		}
 		sort.Ints(hours)
 		for _, h := range hours {
-			start, _, err := hourBounds(p.Paths, day, h)
+			start, _, err := clock.bounds(h)
 			if err != nil {
 				return nil, err
 			}
@@ -90,26 +91,16 @@ func (p *Pipeline) PendingHours() ([]HourKey, error) {
 
 // hourFiles maps each hour with raw data on day to the raw files belonging
 // to it.
-func (p *Pipeline) hourFiles(day string) (map[int][]string, error) {
+func (p *Pipeline) hourFiles(c *dayClock) map[int][]string {
+	day := c.day
 	files := map[int][]string{}
-	chunks, err := p.chunks(day)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range chunks {
+	for _, c := range c.chunks {
 		files[c.start.Hour()] = append(files[c.start.Hour()], c.path)
 	}
-	shots, err := p.shots(day)
-	if err != nil {
-		return nil, err
-	}
-	for _, s := range shots {
+	for _, s := range c.shots {
 		files[s.t.Hour()] = append(files[s.t.Hour()], s.path)
 	}
-	events, err := p.events(day)
-	if err != nil {
-		return nil, err
-	}
+	events := c.events
 	for _, e := range events {
 		t := e.TS // its own offset: the recorded wall clock
 		if config.DayKey(t) != day {
@@ -126,7 +117,7 @@ func (p *Pipeline) hourFiles(day string) (map[int][]string, error) {
 		}
 		files[latest] = append(files[latest], p.Paths.Activity(day))
 	}
-	return files, nil
+	return files
 }
 
 func anyFresh(paths []string, now time.Time) (bool, error) {
@@ -146,20 +137,16 @@ func anyFresh(paths []string, now time.Time) (bool, error) {
 // The recorder only logs changes, so the previous day establishes the state
 // (app, exclusion, sleep, …) in effect at midnight; Segments clips to its
 // own range, so the earlier events never become segments of day.
-func (p *Pipeline) stateEvents(day string) ([]activity.Event, error) {
-	d, err := time.ParseInLocation("2006-01-02", day, time.Local)
+func (p *Pipeline) stateEvents(c *dayClock) ([]activity.Event, error) {
+	d, err := time.ParseInLocation("2006-01-02", c.day, time.Local)
 	if err != nil {
-		return nil, fmt.Errorf("bad day %q: %w", day, err)
+		return nil, fmt.Errorf("bad day %q: %w", c.day, err)
 	}
 	prev, err := p.events(config.DayKey(d.AddDate(0, 0, -1)))
 	if err != nil {
 		return nil, err
 	}
-	cur, err := p.events(day)
-	if err != nil {
-		return nil, err
-	}
-	return append(prev, cur...), nil
+	return append(prev, c.events...), nil
 }
 
 // events reads the day's activity log; a missing log has no events.
@@ -177,14 +164,72 @@ func (p *Pipeline) events(day string) ([]activity.Event, error) {
 	return evs, nil
 }
 
+// dayClock is one day's activity events, its recording zone, and its raw
+// audio chunks and screenshots placed on that clock, read once per scan or
+// hour build.
+type dayClock struct {
+	day    string
+	zones  activity.ZoneTimeline
+	events []activity.Event // the day's own (see stateEvents for the state)
+	chunks []chunk
+	shots  []shot
+}
+
+// readDayClock reads day's activity log (a missing one has no events) and
+// lists its raw files; it also returns the count of malformed log lines.
+func readDayClock(paths config.Paths, day string) (*dayClock, int, error) {
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		return nil, 0, fmt.Errorf("bad day %q: %w", day, err)
+	}
+	evs, skipped, err := activity.ReadEvents(paths.Activity(day))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, err
+	}
+	c := &dayClock{day: day, zones: activity.NewZoneTimeline(evs, time.Local), events: evs}
+	if c.chunks, err = listChunks(paths.Audio(day), day, c.zones); err != nil {
+		return nil, 0, err
+	}
+	if c.shots, err = listShots(paths.Screens(day), day, c.zones); err != nil {
+		return nil, 0, err
+	}
+	return c, skipped, nil
+}
+
+func (p *Pipeline) dayClock(day string) (*dayClock, error) {
+	c, skipped, err := readDayClock(p.Paths, day)
+	if err == nil && skipped > 0 {
+		p.logf("process: %s: skipped %d malformed activity lines", day, skipped)
+	}
+	return c, err
+}
+
+// bounds is the absolute window of the recorded hour (see
+// activity.ZoneTimeline.HourBounds), widened by the day's raw files.
+func (c *dayClock) bounds(hour int) (time.Time, time.Time, error) {
+	walls := make([]time.Time, 0, len(c.chunks)+len(c.shots))
+	for _, ch := range c.chunks {
+		walls = append(walls, ch.start)
+	}
+	for _, s := range c.shots {
+		walls = append(walls, s.t)
+	}
+	return c.zones.HourBounds(c.day, hour, walls)
+}
+
 // chunks lists the day's audio chunks, ordered by start time.
 func (p *Pipeline) chunks(day string) ([]chunk, error) {
-	dir := p.Paths.Audio(day)
+	c, err := p.dayClock(day)
+	if err != nil {
+		return nil, err
+	}
+	return c.chunks, nil
+}
+
+func listChunks(dir, day string, zones activity.ZoneTimeline) ([]chunk, error) {
 	names, err := readNames(dir)
 	if err != nil {
 		return nil, err
 	}
-	zones := zonesOf(p.Paths, day)
 	var out []chunk
 	for _, n := range names {
 		wall, _, err := media.ChunkStart(day, n, time.UTC)
@@ -198,14 +243,12 @@ func (p *Pipeline) chunks(day string) ([]chunk, error) {
 	return out, nil
 }
 
-// shots lists the day's screenshots (HHMMSS.jpg), ordered by time.
-func (p *Pipeline) shots(day string) ([]shot, error) {
-	dir := p.Paths.Screens(day)
+// listShots lists the day's screenshots (HHMMSS.jpg), ordered by time.
+func listShots(dir, day string, zones activity.ZoneTimeline) ([]shot, error) {
 	names, err := readNames(dir)
 	if err != nil {
 		return nil, err
 	}
-	zones := zonesOf(p.Paths, day)
 	var out []shot
 	for _, n := range names {
 		stem, ok := strings.CutSuffix(n, ".jpg")
@@ -239,10 +282,13 @@ func readNames(dir string) ([]string, error) {
 	return names, nil
 }
 
+// inHour is the chunks of the recorded hour [start, end): start reads h:00
+// on its clock, and a window widened over a zone change (see
+// dayClock.bounds) still takes only the chunks named in hour h.
 func inHour(cs []chunk, start, end time.Time) []chunk {
 	var out []chunk
 	for _, c := range cs {
-		if !c.start.Before(start) && c.start.Before(end) {
+		if !c.start.Before(start) && c.start.Before(end) && c.start.Hour() == start.Hour() {
 			out = append(out, c)
 		}
 	}

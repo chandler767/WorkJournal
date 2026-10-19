@@ -62,21 +62,15 @@ func (p *Pipeline) logf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
-// zonesOf is the recording zone of day's wall clock, from its activity log
-// (time.Local without one): raw file names and hour keys are the wall
-// clock where they were recorded, not the Mac's current zone.
-func zonesOf(paths config.Paths, day string) activity.ZoneTimeline {
-	return activity.LoadZoneTimeline(paths.Activity(day), time.Local)
-}
-
-// hourBounds returns [start, end) of a recorded wall-clock hour, in the
-// zone in force at its start.
+// hourBounds returns [start, end) of a recorded wall-clock hour: raw file
+// names and hour keys are the wall clock where they were recorded, not the
+// Mac's current zone (see dayClock.bounds).
 func hourBounds(paths config.Paths, day string, hour int) (time.Time, time.Time, error) {
-	start, err := zonesOf(paths, day).Date(day, hour, 0, 0)
+	c, _, err := readDayClock(paths, day)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	return start, start.Add(time.Hour), nil
+	return c.bounds(hour)
 }
 
 // ProcessPending transcribes (if needed) and summarizes every pending hour.
@@ -165,7 +159,15 @@ func (p *Pipeline) Transcribe(ctx context.Context, day string, hour int) (*HourD
 // finished). It also returns the time up to which the doc's audio is
 // complete. It writes nothing but the processing cache.
 func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotatedAt time.Time) (*HourDoc, time.Time, error) {
-	start, end, err := hourBounds(p.Paths, day, hour)
+	clock, err := p.dayClock(day)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	start, end, err := clock.bounds(hour)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	midnight, err := clock.zones.Date(day, 0, 0, 0)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -174,16 +176,13 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if partial {
 		cut = earlier(upto, end)
 	}
-	events, err := p.stateEvents(day)
+	events, err := p.stateEvents(clock)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	segs := activity.Segments(events, start, cut)
 
-	all, err := p.chunks(day)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
+	all := clock.chunks
 	chunks, covered := inHour(all, start, end), cut
 	if partial {
 		chunks, covered = readyChunks(all, chunks, upto, rotatedAt)
@@ -195,12 +194,12 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	screens, err := p.ocrHour(ctx, day, start, cut, segs)
+	screens, err := p.ocrHour(ctx, day, clock.shots, start, cut, segs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	speech := audibleSpeech(segs, speechOf(audio))
-	detected, err := p.detectMeetings(day, hour, start, cut, events, speech)
+	detected, err := p.detectMeetings(day, hour, midnight, start, cut, events, speech)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -211,7 +210,7 @@ func (p *Pipeline) build(ctx context.Context, day string, hour int, upto, rotate
 	p.warnDiarization(day, hour, &wavs)
 	h := &hearing{lab: lab, utts: utts, meetings: meetings}
 	if p.privacyOn() && len(utts) > 0 {
-		in := hourAudio{day: day, hour: hour, start: start, end: end, cut: cut, events: events,
+		in := hourAudio{day: day, hour: hour, midnight: midnight, start: start, end: end, cut: cut, events: events,
 			segs: segs, audio: audio, speech: speech, detected: detected, wavs: &wavs}
 		if h, err = p.filterHour(ctx, in, h, partial); err != nil {
 			return nil, time.Time{}, err
@@ -349,14 +348,10 @@ func textDocs(d *HourDoc, start time.Time) []store.TextDoc {
 // sees it. Results come from the processing cache where the file is
 // unchanged; the rest are OCRed in one batch and cached. Empty texts are
 // dropped and consecutive identical texts collapse to the first.
-func (p *Pipeline) ocrHour(ctx context.Context, day string, start, end time.Time, segs []activity.Segment) ([]media.ScreenText, error) {
-	shots, err := p.shots(day)
-	if err != nil {
-		return nil, err
-	}
+func (p *Pipeline) ocrHour(ctx context.Context, day string, shots []shot, start, end time.Time, segs []activity.Segment) ([]media.ScreenText, error) {
 	var hour []shot
 	for _, s := range shots {
-		if s.t.Before(start) || !s.t.Before(end) || !visible(segs, s.t) {
+		if s.t.Before(start) || !s.t.Before(end) || s.t.Hour() != start.Hour() || !visible(segs, s.t) {
 			continue
 		}
 		hour = append(hour, s)

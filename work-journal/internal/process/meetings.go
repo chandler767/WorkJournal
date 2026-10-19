@@ -19,11 +19,7 @@ import (
 // [start, end); a meeting ending exactly at start is included so the hour
 // after its last one can report it ended. events must include the previous
 // day's (see stateEvents).
-func (p *Pipeline) detectMeetings(day string, hour int, start, end time.Time, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
-	midnight, err := zonesOf(p.Paths, day).Date(day, 0, 0, 0)
-	if err != nil {
-		return nil, err
-	}
+func (p *Pipeline) detectMeetings(day string, hour int, midnight, start, end time.Time, events []activity.Event, utts []media.Utterance) ([]activity.Meeting, error) {
 	segs := activity.Segments(events, midnight, end)
 	var speech []activity.SpeechSpan
 	for h := 0; h < 24; h++ {

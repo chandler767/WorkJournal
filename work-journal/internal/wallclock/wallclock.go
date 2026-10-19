@@ -7,10 +7,11 @@ package wallclock
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
-// known are the IANA zones tried, in order, to name a bare offset.
+// known are the IANA zones that can name a bare offset.
 var known = []string{
 	"America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
 	"America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu", "America/Halifax",
@@ -18,6 +19,23 @@ var known = []string{
 	"Europe/Athens", "Europe/Moscow", "Asia/Kolkata", "Asia/Tokyo", "Asia/Seoul",
 	"Australia/Sydney", "Australia/Adelaide", "Australia/Brisbane", "Australia/Perth",
 	"Pacific/Auckland", "UTC",
+}
+
+var (
+	loadOnce sync.Once
+	knownLoc []*time.Location
+)
+
+// knownZones loads the known zones once; ones missing from tzdata are left out.
+func knownZones() []*time.Location {
+	loadOnce.Do(func() {
+		for _, z := range known {
+			if loc, err := time.LoadLocation(z); err == nil {
+				knownLoc = append(knownLoc, loc)
+			}
+		}
+	})
+	return knownLoc
 }
 
 // Format formats t with layout in its own offset, adding " <zone>" when
@@ -50,22 +68,30 @@ func Suffix(t time.Time) string {
 	return " " + Zone(t)
 }
 
-// Zone names t's offset: the location's own abbreviation when it has one,
-// else the abbreviation of the first known IANA zone with that offset at
-// that instant, else "UTC+01:00".
+// Zone names t's offset: the location's own abbreviation when it has one;
+// else the abbreviation the known IANA zones with that offset at that
+// instant agree on (London alone at +01:00 in October: "BST"; Denver and
+// Phoenix: "MST"); else, with no candidate or candidates naming it
+// differently (GMT and UTC, ADT and -03), "UTC+01:00".
 func Zone(t time.Time) string {
 	name, off := t.Zone()
 	if isAbbrev(name) {
 		return name
 	}
-	for _, z := range known {
-		loc, err := time.LoadLocation(z)
-		if err != nil {
+	agreed := ""
+	for _, loc := range knownZones() {
+		n, o := t.In(loc).Zone()
+		if o != off {
 			continue
 		}
-		if n, o := t.In(loc).Zone(); o == off && isAbbrev(n) {
-			return n
+		if !isAbbrev(n) || (agreed != "" && n != agreed) {
+			agreed = ""
+			break
 		}
+		agreed = n
+	}
+	if agreed != "" {
+		return agreed
 	}
 	sign := '+'
 	if off < 0 {

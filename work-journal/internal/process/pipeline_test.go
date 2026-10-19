@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -403,8 +404,12 @@ func TestHourDocRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc.Embeddings = nil
-	if !reflect.DeepEqual(got, doc) {
-		t.Fatalf("round trip:\n got %+v\nwant %+v", got, doc)
+	// Compare as encoded: a loaded time's Location (Local or a fixed zone
+	// with the same offset) depends on the Mac's zone, not the doc.
+	gb, _ := json.Marshal(got)
+	wb, _ := json.Marshal(doc)
+	if string(gb) != string(wb) || got.Embeddings != nil {
+		t.Fatalf("round trip:\n got %s\nwant %s", gb, wb)
 	}
 	b, _ := os.ReadFile(path)
 	for _, key := range []string{`"day"`, `"hour"`, `"status"`, `"segments"`, `"transcript"`, `"screens"`, `"meetings"`, `"ended_meetings"`} {

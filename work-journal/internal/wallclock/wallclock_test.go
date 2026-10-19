@@ -65,3 +65,25 @@ func TestSpan(t *testing.T) {
 		t.Errorf("mixed: got %q", got)
 	}
 }
+
+// A bare offset is named only when the candidate zones agree on one name
+// for it at that instant.
+func TestZoneNamesOnlyUnambiguousOffsets(t *testing.T) {
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.FixedZone("", func() int { _, o := v.Zone(); return o }()))
+	}
+	for _, c := range []struct{ ts, want string }{
+		{"2026-10-12T10:05:00+01:00", "BST"},       // London only
+		{"2026-12-01T10:05:00+00:00", "UTC+00:00"}, // London GMT and UTC
+		{"2026-12-01T10:05:00-07:00", "MST"},       // Denver and Phoenix agree
+		{"2026-07-01T10:05:00-03:00", "UTC-03:00"}, // Halifax ADT, São Paulo -03
+	} {
+		if got := Zone(at(c.ts)); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.ts, got, c.want)
+		}
+	}
+}

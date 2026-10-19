@@ -358,6 +358,7 @@ func removedSpans(us []media.Utterance, dropped map[int]string) []RemovedSpan {
 type hourAudio struct {
 	day        string
 	hour       int
+	midnight   time.Time // of day, on its recorded clock
 	start, end time.Time
 	cut        time.Time
 	events     []activity.Event
@@ -385,7 +386,7 @@ type hearing struct {
 // and any other failure, returns the error and nothing is written.
 func (p *Pipeline) filterHour(ctx context.Context, a hourAudio, h *hearing, partial bool) (*hearing, error) {
 	relabel := func(speech []media.Utterance) (*hearing, error) {
-		again, err := p.detectMeetings(a.day, a.hour, a.start, a.cut, a.events, speech)
+		again, err := p.detectMeetings(a.day, a.hour, a.midnight, a.start, a.cut, a.events, speech)
 		if err != nil {
 			return nil, err
 		}

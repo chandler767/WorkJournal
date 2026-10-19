@@ -65,6 +65,21 @@ are kept in `cache/<day>/` and reused by later runs and the final pass. A cache 
 redone when its file's size or modification time changes, or the whisper model changes. An
 unchanged in-progress hour is not summarized again.
 
+## Time zones
+
+Times are kept and shown on the clock where they were recorded. A meeting recorded at 10:05 in
+London still reads 10:05 after you fly to New York, marked with its zone (**10:05 BST**)
+whenever that zone is not the Mac's. The zone is named only when the offset leaves no doubt;
+otherwise it reads, for example, **UTC+01:00**. Each day is processed in the zone it was
+recorded in, which comes from the offsets in that day's activity log. Days already processed
+in another zone can be reprocessed, and their cached speech is reused.
+
+Caveat: when the clock goes back during a day (flying west, or the autumn DST change), the
+same clock hour happens twice. Both are filed under one hour of that day. Its window covers
+both and nothing is dropped, but the two stretches read as one hour. Where an audio chunk
+or screenshot name repeats, only one file can exist. Speech in the repeated stretch can
+then be placed on the wrong side of the change.
+
 ## Claude usage limits
 
 When Claude reports a usage or rate limit, work-journal stops asking Claude until the limit

@@ -82,3 +82,53 @@ func TestLoadZoneTimeline(t *testing.T) {
 		t.Errorf("missing log: %v, want fallback", got)
 	}
 }
+
+func TestHourBoundsCoverAZoneChange(t *testing.T) {
+	ny, _ := time.LoadLocation("America/New_York")
+	z := NewZoneTimeline([]Event{
+		evAt(t, "2026-10-12T09:00:00+01:00"),
+		evAt(t, "2026-10-12T15:10:00-04:00"),
+	}, ny)
+	parse := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	// Hour 15 holds the 15:10 New York event: New York's hour, not London's.
+	s, e, err := z.HourBounds("2026-10-12", 15, nil)
+	if err != nil || !s.Equal(parse("2026-10-12T15:00:00-04:00")) || !e.Equal(parse("2026-10-12T16:00:00-04:00")) || s.Hour() != 15 {
+		t.Errorf("hour 15 = %v–%v (%v)", s, e, err)
+	}
+	// A London file at 15:05 too: the window covers both clocks' 15:00.
+	s, e, _ = z.HourBounds("2026-10-12", 15, []time.Time{parse("2026-10-12T15:05:00+01:00")})
+	if !s.Equal(parse("2026-10-12T15:00:00+01:00")) || !e.Equal(parse("2026-10-12T16:00:00-04:00")) || s.Hour() != 15 || e.Hour() != 16 {
+		t.Errorf("mixed hour 15 = %v–%v", s, e)
+	}
+	// An hour with nothing in it: the offset in force at h:00.
+	s, _, _ = z.HourBounds("2026-10-12", 12, nil)
+	if !s.Equal(parse("2026-10-12T12:00:00+01:00")) {
+		t.Errorf("hour 12 = %v", s)
+	}
+	// Files on another day are ignored.
+	s, _, _ = z.HourBounds("2026-10-12", 9, []time.Time{parse("2026-10-13T09:30:00-04:00")})
+	if !s.Equal(parse("2026-10-12T09:00:00+01:00")) {
+		t.Errorf("hour 9 = %v", s)
+	}
+}
+
+// Spring forward overnight: the last event before sleep is EST, the wake at
+// 08:10 is EDT; hour 8 is EDT's.
+func TestHourBoundsAfterSpringForward(t *testing.T) {
+	ny, _ := time.LoadLocation("America/New_York")
+	z := NewZoneTimeline([]Event{
+		evAt(t, "2027-03-14T00:30:00-05:00"),
+		evAt(t, "2027-03-14T08:10:00-04:00"),
+	}, ny)
+	s, e, err := z.HourBounds("2027-03-14", 8, nil)
+	want, _ := time.Parse(time.RFC3339, "2027-03-14T08:00:00-04:00")
+	if err != nil || !s.Equal(want) || !e.Equal(want.Add(time.Hour)) {
+		t.Errorf("hour 8 = %v–%v (%v), want from %v", s, e, err, want)
+	}
+}

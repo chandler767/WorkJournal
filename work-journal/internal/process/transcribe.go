@@ -349,16 +349,22 @@ func (p *Pipeline) chunkMayBeOpen(path string) bool {
 // rebase moves cached utterances onto the chunk's start. A chunk's speech
 // is cached at absolute times, and a cache written before chunk names were
 // read in the recording zone holds them at the Mac's zone of that time
-// (10:05 EDT for a 10:05 London chunk). Each utterance keeps its wall-clock
-// distance from the chunk name, so it is re-based on the chunk's start; for
-// a current entry this changes nothing.
+// (10:05 EDT for a 10:05 London chunk). The whole entry moves by one shift:
+// start less the chunk name's wall clock in the cached times' zone (the
+// first utterance's, nearest the chunk start), so speech after a DST change
+// inside the chunk is not moved an hour, and a current entry or a second
+// pass is not moved at all.
 func rebase(us []media.Utterance, start time.Time) {
-	clock := func(t time.Time) time.Time {
-		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	if len(us) == 0 {
+		return
+	}
+	old := time.Date(start.Year(), start.Month(), start.Day(), start.Hour(), start.Minute(), start.Second(), start.Nanosecond(), us[0].Start.Location())
+	shift := start.Sub(old)
+	if shift == 0 {
+		return
 	}
 	for i := range us {
-		d := us[i].End.Sub(us[i].Start)
-		us[i].Start = start.Add(clock(us[i].Start).Sub(clock(start)))
-		us[i].End = us[i].Start.Add(d)
+		us[i].Start = us[i].Start.Add(shift).In(start.Location())
+		us[i].End = us[i].End.Add(shift).In(start.Location())
 	}
 }
