@@ -75,9 +75,9 @@ func days(from, to string) []string {
 // week resolves a week argument: YYYY-Www, or a date argument naming a day
 // of the week.
 func (j *Journal) week(v string) (string, []string, error) {
-	w := strings.TrimSpace(v)
+	w := strings.ToUpper(strings.TrimSpace(v))
 	if !weekRE.MatchString(w) {
-		d, err := j.day("week", w)
+		d, err := j.day("week", v)
 		if err != nil {
 			return "", nil, fmt.Errorf("week must be an ISO week YYYY-Www (e.g. 2026-W41), today or yesterday; got %q", v)
 		}

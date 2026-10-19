@@ -47,7 +47,8 @@ const DefaultTimeout = 5 * time.Minute
 const installedPrefix = "tessl__"
 
 // ClaudeRunner runs skills through the claude CLI. The session has only the
-// Skill and Read tools, no MCP servers, and read access to DataDir.
+// Skill and Read tools, no MCP servers, no user settings or hooks, and read
+// access to DataDir.
 type ClaudeRunner struct {
 	Bin     string // claude executable; "" means "claude"
 	WorkDir string // directory whose .claude/skills holds the installed skills
@@ -282,12 +283,17 @@ func (r *ClaudeRunner) exec(ctx context.Context, skill, inputPath string) ([]byt
 
 // args makes only Skill (needed to load the skill) and Read available,
 // pre-approves Read, loads no MCP servers and never bypasses permissions.
+// Only project settings load (they make .claude/skills available): user
+// settings, and so user hooks that would see the journal text, do not; the
+// session is not saved.
 func (r *ClaudeRunner) args(skill, inputPath string) []string {
 	prompt := fmt.Sprintf("Use the %s%s skill. Input file: %s (one record per line). If the file is long, read it in parts (offset/limit) until you have read all of it, then answer. Reply with only the JSON object.", installedPrefix, skill, inputPath)
 	return []string{"-p", prompt, "--output-format", "json",
 		"--tools", "Skill,Read", // the only tools that exist in the session
 		"--allowedTools", "Read", // pre-approved, so headless reads work
 		"--strict-mcp-config", // no MCP servers (none passed via --mcp-config)
+		"--setting-sources", "project",
+		"--no-session-persistence",
 		"--add-dir", r.DataDir}
 }
 

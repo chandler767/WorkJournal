@@ -91,6 +91,11 @@ hours and meetings they come from as dashboard links, and say so when the journa
 know. The page updates when the answer lands (up to 3 minutes); one question runs at a time,
 and the last 20 questions and answers are kept on the Ask page. During a Claude usage-limit
 pause, questions wait too; **Ask anyway** tries that one question now (summaries stay paused).
+Ask loads no Claude settings files at all (`--setting-sources ""`), so no user hooks see the
+journal data it reads. Because transcripts and screen text can contain anything you saw or heard,
+Claude is told to treat them as untrusted data, and the dashboard shows no images from Claude
+or the journals and keeps only links into the dashboard itself; a Content-Security-Policy
+stops every page from loading anything from another site.
 
 The same tools are available to any Claude client through `journal mcp`, a read-only MCP
 server over stdio. It opens the database read-only, so it runs safely beside `journal serve`.
@@ -316,7 +321,9 @@ already-built recorder.
   run uses the repo root as its working directory, so it loads that repo's project
   settings (`.claude/`, `CLAUDE.md`) and installed skills. Skill inputs are written to,
   and read from, `derived/` only. The session has only the Skill and Read tools and no
-  MCP servers (`--strict-mcp-config`); `derived/` is added with `--add-dir`, and raw media,
+  MCP servers (`--strict-mcp-config`). Only project settings load (`--setting-sources project`),
+  so your user-level settings and hooks never see journal text, and sessions are not saved
+  (`--no-session-persistence`). `derived/` is added with `--add-dir`, and raw media,
   `voices/` and `journal.db` are never passed to it. These are Claude Code's tool and
   directory settings, not an OS sandbox.
 - Screen text sent to Claude is trimmed first: a line already on any of the previous 10

@@ -380,9 +380,13 @@ func (j *Journal) GetHour(a HourArgs) (string, error) {
 	return paged(b.String(), lines, a.TranscriptOffset, "transcript_offset", "transcript lines"), nil
 }
 
-func hourStart(day string, hour int) time.Time {
-	t, _ := time.ParseInLocation("2006-01-02", day, time.Local)
-	return t.Add(time.Duration(hour) * time.Hour)
+func hourStart(day string, hour int) time.Time { return hourStartIn(day, hour, time.Local) }
+
+// hourStartIn is the wall-clock hour:00 of day in loc (right on DST days,
+// unlike midnight plus hours).
+func hourStartIn(day string, hour int, loc *time.Location) time.Time {
+	t, _ := time.ParseInLocation("2006-01-02", day, loc)
+	return time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, loc)
 }
 
 // visibleSpeech drops utterances overlapping an excluded or paused span

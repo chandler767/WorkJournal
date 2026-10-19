@@ -113,7 +113,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		p.DiskWarn = v
 	}
 	if b, err := os.ReadFile(s.Paths.DailyJournal(day)); err == nil {
-		if p.Journal, err = renderMarkdown(string(b)); err != nil {
+		if p.Journal, err = renderMarkdown(string(b), s.Cfg().ListenAddr); err != nil {
 			http.Error(w, "render journal: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

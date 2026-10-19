@@ -444,3 +444,28 @@ func TestOpenIsReadOnly(t *testing.T) {
 		t.Fatal("hour write succeeded through the MCP server's store")
 	}
 }
+
+func TestHourStartOnDSTDay(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip(err)
+	}
+	// 2026-11-01 falls back at 02:00: hour 2 starts at 02:00 EST, not 3h after midnight minus one.
+	for _, h := range []int{0, 1, 2, 3, 23} {
+		if got := hourStartIn("2026-11-01", h, ny); got.Hour() != h || got.Day() != 1 {
+			t.Errorf("hour %d starts %v", h, got)
+		}
+	}
+	if got := hourStartIn("2026-03-08", 3, ny); got.Hour() != 3 {
+		t.Errorf("spring forward hour 3 starts %v", got)
+	}
+}
+
+func TestWeekIsCaseInsensitive(t *testing.T) {
+	j := newFixture(t)
+	out, err := j.GetWeek(WeekArgs{Week: "2026-w41"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contains(t, out, "Week 2026-W41", "Scheduler reliability")
+}

@@ -145,7 +145,7 @@ func (s *Server) renderAsk(w http.ResponseWriter, r *http.Request, question, not
 	for _, e := range h {
 		row := askRow{ID: e.ID, Question: e.Question, Error: e.Error, When: e.Asked.Local().Format("Jan 2 15:04"), Highlight: e.ID == pending}
 		if e.Answer != "" {
-			if row.Answer, err = renderMarkdown(e.Answer); err != nil {
+			if row.Answer, err = renderMarkdown(e.Answer, s.Cfg().ListenAddr); err != nil {
 				row.Error = "answer could not be rendered: " + err.Error()
 			}
 		}
@@ -185,18 +185,23 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ask?pending="+cur.ID+"&notice=busy", http.StatusSeeOther)
 		return
 	}
+	if s.askBase == nil {
+		s.askBase, s.askStop = context.WithCancel(context.Background())
+	}
+	base := s.askBase
 	s.askRunning = &e
 	s.askWG.Add(1)
 	s.askMu.Unlock()
-	go s.runAsk(e, force)
+	go s.runAsk(base, e, force)
 	http.Redirect(w, r, "/ask?pending="+id, http.StatusSeeOther)
 }
 
-// runAsk answers e with its own context (the request has ended by then),
-// records it in the history and clears the running ask.
-func (s *Server) runAsk(e askEntry, force bool) {
+// runAsk answers e with its own context (the request has ended by then;
+// base ends at shutdown), records it in the history and clears the running
+// ask.
+func (s *Server) runAsk(base context.Context, e askEntry, force bool) {
 	defer s.askWG.Done()
-	ctx, cancel := context.WithTimeout(context.Background(), askBudget)
+	ctx, cancel := context.WithTimeout(base, askBudget)
 	defer cancel()
 	ans, err := s.Ask.Ask(ctx, e.Question, force)
 	e.Answered = s.now()
@@ -216,6 +221,23 @@ func (s *Server) runAsk(e askEntry, force bool) {
 	s.askMu.Lock()
 	s.askRunning = nil
 	s.askMu.Unlock()
+}
+
+// CloseAsks cancels a running ask (shutdown) and waits up to d for it to
+// record its outcome.
+func (s *Server) CloseAsks(d time.Duration) {
+	s.askMu.Lock()
+	if s.askStop != nil {
+		s.askStop()
+	}
+	s.askMu.Unlock()
+	done := make(chan struct{})
+	go func() { s.askWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		log.Printf("web: an ask did not stop within %v", d)
+	}
 }
 
 func newAskID() (string, error) {

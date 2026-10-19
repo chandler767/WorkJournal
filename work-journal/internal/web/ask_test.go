@@ -210,3 +210,35 @@ func TestAskUnavailableWithoutAsker(t *testing.T) {
 		t.Fatalf("code %d", rec.Code)
 	}
 }
+
+type ctxAsker struct{ saw chan error }
+
+func (c *ctxAsker) Ask(ctx context.Context, _ string, _ bool) (string, error) {
+	<-ctx.Done()
+	c.saw <- ctx.Err()
+	return "", ctx.Err()
+}
+
+func TestCloseAsksCancelsAndWaits(t *testing.T) {
+	e := newEnv(t)
+	a := &ctxAsker{saw: make(chan error, 1)}
+	e.srv.Ask = a
+	e.h = e.srv.Handler()
+	e.post("/ask", askForm("long one"), nil)
+	began := time.Now()
+	e.srv.CloseAsks(5 * time.Second)
+	if d := time.Since(began); d > 2*time.Second {
+		t.Fatalf("CloseAsks took %v", d)
+	}
+	select {
+	case err := <-a.saw:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ctx err %v", err)
+		}
+	default:
+		t.Fatal("the running ask's context was not cancelled")
+	}
+	if e.srv.running() != nil {
+		t.Fatal("ask still running after CloseAsks")
+	}
+}

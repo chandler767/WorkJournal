@@ -45,7 +45,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		Prev: config.WeekKey(monday.AddDate(0, 0, -7)),
 		Next: config.WeekKey(monday.AddDate(0, 0, 7))}
 	if b, err := os.ReadFile(s.Paths.WeeklyJournal(week)); err == nil {
-		if p.Journal, err = renderMarkdown(string(b)); err != nil {
+		if p.Journal, err = renderMarkdown(string(b), s.Cfg().ListenAddr); err != nil {
 			http.Error(w, "render journal: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

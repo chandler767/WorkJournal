@@ -16,7 +16,10 @@ func TestWeekPageRendersMarkdownSafely(t *testing.T) {
 		t.Fatalf("code %d", rec.Code)
 	}
 	b := rec.Body.String()
-	mustContain(t, b, "<h2>Themes</h2>", "<strong>Scheduler</strong>", `href="https://example.com"`)
+	mustContain(t, b, "<h2>Themes</h2>", "<strong>Scheduler</strong>", "ok")
+	if strings.Contains(b, `href="https://example.com"`) {
+		t.Error("external link rendered (journals may link only to the dashboard)")
+	}
 	if strings.Contains(b, "<script>alert") {
 		t.Error("script tag rendered")
 	}

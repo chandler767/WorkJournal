@@ -33,7 +33,7 @@ func TestAskEval(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build journal: %v\n%s", err, out)
 	}
-	r := &ask.Runner{Self: bin, ConfigPath: cfg}
+	r := &ask.Runner{Self: bin, ConfigPath: cfg, ListenAddr: "127.0.0.1:4747"}
 	cases := []struct {
 		q    string
 		want [][]string // each group: at least one must appear (any case)

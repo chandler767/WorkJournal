@@ -92,7 +92,7 @@ func TestBuildWiresAsk(t *testing.T) {
 	}
 	exe, _ := os.Executable()
 	exe, _ = filepath.EvalSymlinks(exe)
-	if r.Self != exe || !filepath.IsAbs(r.ConfigPath) || r.ConfigPath != a.ConfigPath || r.KV == nil {
+	if r.Self != exe || !filepath.IsAbs(r.ConfigPath) || r.ConfigPath != a.ConfigPath || r.KV == nil || r.ListenAddr != a.Cfg().ListenAddr {
 		t.Fatalf("ask runner = %+v (exe %s)", r, exe)
 	}
 	if !r.PauseEnabled() {

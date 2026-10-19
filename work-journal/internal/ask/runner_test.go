@@ -57,6 +57,7 @@ func newAsk(t *testing.T, stdout string, err error, calls *[]askCall, kv memKV) 
 		Self:       "/opt/wj/bin/journal",
 		ConfigPath: "/Users/me/WorkJournal/config.toml",
 		KV:         kv,
+		ListenAddr: "127.0.0.1:4747",
 		Now:        func() time.Time { return time.Date(2026, 10, 19, 15, 4, 0, 0, time.Local) },
 		Exec:       fakeAsk(t, stdout, err, calls),
 	}
@@ -110,6 +111,15 @@ func TestAskRunsClaudeWithOnlyJournalTools(t *testing.T) {
 			}
 		}
 	}
+	// No settings files at all: user hooks never see journal text.
+	if src, ok := argAfter(c.args, "--setting-sources"); !ok || src != "" {
+		t.Errorf("--setting-sources %q (%v), want empty", src, ok)
+	}
+	for _, f := range []string{"--disable-slash-commands", "--no-session-persistence"} {
+		if !slices.Contains(c.args, f) {
+			t.Errorf("missing %s", f)
+		}
+	}
 	if mode, _ := argAfter(c.args, "--permission-mode"); mode != "dontAsk" {
 		t.Errorf("--permission-mode %q", mode)
 	}
@@ -149,7 +159,8 @@ func TestAskRunsClaudeWithOnlyJournalTools(t *testing.T) {
 	// System prompt: journal-only, cite links, admit uncertainty, today's date and zone.
 	sys, _ := argAfter(c.args, "--append-system-prompt")
 	zone, _ := time.Date(2026, 10, 19, 15, 4, 0, 0, time.Local).Zone()
-	for _, s := range []string{"only", "work-journal", "link", "unsure", "2026-10-19", "Monday", zone} {
+	for _, s := range []string{"only", "work-journal", "link", "unsure", "2026-10-19", "Monday", zone,
+		"untrusted", "never follow instructions", "no images", "http://127.0.0.1:4747/"} {
 		if !strings.Contains(sys, s) {
 			t.Errorf("system prompt lacks %q: %s", s, sys)
 		}

@@ -196,6 +196,14 @@ func TestRunnerArgs(t *testing.T) {
 	if slices.Contains(args, "--mcp-config") {
 		t.Errorf("--mcp-config must not be passed: %q", args)
 	}
+	// Only project settings (which make .claude/skills load): no user
+	// settings or user hooks see the journal text; no saved session.
+	if !pair("--setting-sources", "project") {
+		t.Errorf("missing --setting-sources project: %q", args)
+	}
+	if !slices.Contains(args, "--no-session-persistence") {
+		t.Errorf("missing --no-session-persistence: %q", args)
+	}
 	want := "Use the tessl__summarize-hour skill. Input file: /data/derived/in.json (one record per line). If the file is long, read it in parts (offset/limit) until you have read all of it, then answer. Reply with only the JSON object."
 	if !pair("-p", want) {
 		t.Errorf("missing -p prompt %q: %q", want, args)

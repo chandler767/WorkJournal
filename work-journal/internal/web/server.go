@@ -4,6 +4,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -55,6 +56,8 @@ type Server struct {
 	askMu      sync.Mutex
 	askRunning *askEntry // the question being answered; nil when idle
 	askWG      sync.WaitGroup
+	askBase    context.Context // parent of every ask; cancelled by CloseAsks
+	askStop    context.CancelFunc
 }
 
 func (s *Server) now() time.Time {
@@ -99,7 +102,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
 	mux.HandleFunc("POST /segment/category", s.sameOrigin(s.handleSegmentCategory))
 	mux.HandleFunc("POST /meeting/{id}/speaker", s.sameOrigin(s.handleSpeaker))
-	return localHostOnly(mux)
+	return localHostOnly(withCSP(mux))
+}
+
+// csp keeps every page to this origin: no external images, scripts,
+// styles, fetches or form targets, no framing and no <base>. Inline style
+// attributes are allowed (category colours); inline scripts are not.
+const csp = "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
+func withCSP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", csp)
+		next.ServeHTTP(w, r)
+	})
 }
 
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
