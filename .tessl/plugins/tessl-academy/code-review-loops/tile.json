@@ -1,0 +1,20 @@
+{
+  "name": "tessl-academy/code-review-loops",
+  "version": "0.1.0",
+  "summary": "Guided walkthroughs for the Code Review Loops course: running a review over a real change, writing a review lens that encodes one of your team's own conventions, routing lenses by path with a repository YAML profile, and publishing reviews on pull requests with a round trip that settles what the previous round found. Run one skill per lesson.",
+  "skills": {
+    "01-your-first-code-review": {
+      "path": "skills/01-your-first-code-review/SKILL.md"
+    },
+    "02-writing-a-review-lens": {
+      "path": "skills/02-writing-a-review-lens/SKILL.md"
+    },
+    "03-routing-lenses-by-path": {
+      "path": "skills/03-routing-lenses-by-path/SKILL.md"
+    },
+    "04-review-on-every-pull-request": {
+      "path": "skills/04-review-on-every-pull-request/SKILL.md"
+    }
+  },
+  "private": false
+}

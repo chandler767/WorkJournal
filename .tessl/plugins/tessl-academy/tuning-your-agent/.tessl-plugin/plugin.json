@@ -1,0 +1,6 @@
+{
+  "name": "tessl-academy/tuning-your-agent",
+  "version": "0.1.4",
+  "description": "Guided walkthroughs for the Tuning Your Agent course: review evals, task evals and scenarios, the optimizer, security review, continuous review in CI, comparing models for cost vs quality, and repo autopilot with Tessl Agent. Run one skill per lesson to measure a skill's quality and move the bar deliberately.",
+  "skills": "skills"
+}

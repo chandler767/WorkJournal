@@ -1,3 +1,4 @@
+<!-- Always-on rules for the git-hygiene plugin: loaded into the agent's context on every turn, so keep them short. -->
 # Git Hygiene
 
 TODO: Add instructions for the coding agents

@@ -1,5 +1,5 @@
 {
-  "name": "testing",
+  "name": "chandler-playground/testing",
   "mode": "vendored",
   "dependencies": {
     "tessl-academy/skill-foundations": {
@@ -13,10 +13,16 @@
       "source": "file:./work-journal/skills/work-journal"
     },
     "chandler-playground/git-hygiene": {
-      "version": "0.1.1"
+      "source": "file:./plugins/git-hygiene"
     },
     "tessl-academy/tuning-your-agent": {
       "version": "0.1.4"
+    },
+    "tessl-academy/code-review-loops": {
+      "version": "0.1.0"
+    },
+    "tessl-labs/factory-setup": {
+      "version": "0.8.1"
     }
   },
   "agents": [

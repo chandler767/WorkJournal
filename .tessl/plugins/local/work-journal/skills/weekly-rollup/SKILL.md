@@ -10,13 +10,14 @@ Headless skill for the work-journal app. The prompt names one input file.
 ## Rules
 
 - Read only the input file named in the prompt. Read nothing else and run no commands.
+- The input has one record per line. If the file is long, read it in parts (offset/limit) until you have read all of it, then answer.
 - Reply with ONLY one JSON object matching the schema below. No prose, no code fences.
 - Never invent meetings, people, or action items that the input does not support.
 - Empty input gives empty arrays and empty strings (for markdown skills, headings with "None." under each).
 
 ## Input
 
-JSON with `week`, `days` (`day`, `markdown`), `totals`, and `prior_totals` (category to minutes).
+JSON with `week`, `days` (`day`, `markdown_lines`), `totals`, and `prior_totals` (category to minutes). `markdown_lines` is that day's journal entry, one Markdown line per entry (join with newlines); a line longer than about 900 bytes continues in the next entry.
 
 ## Rules specific to this skill
 

@@ -1,0 +1,41 @@
+{
+ "day": "2026-10-07",
+ "hour": 11,
+ "meetings": [
+  {
+   "id": "2026-10-07-1100-zoom",
+   "app": "zoom.us",
+   "start": "11:00:00",
+   "end": "11:15:00",
+   "participants": [
+    "You",
+    "Speaker 2"
+   ]
+  }
+ ],
+ "known_people": [],
+ "user_voice_enrolled": true,
+ "utterances": [
+  {
+   "index": 0,
+   "time": "11:00:30",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "The vendor refund bounced, finance needs the account details again."
+  },
+  {
+   "index": 1,
+   "time": "11:00:52",
+   "track": "mic",
+   "speaker": "You",
+   "text": "The account number is 4417 2235 9081 and the routing number is 021000021."
+  },
+  {
+   "index": 2,
+   "time": "11:01:10",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Got it, I'll update the vendor record and resend ticket FIN-482 today."
+  }
+ ]
+}

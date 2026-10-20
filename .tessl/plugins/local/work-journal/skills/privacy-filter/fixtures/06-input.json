@@ -1,0 +1,80 @@
+{
+ "day": "2026-10-07",
+ "hour": 18,
+ "meetings": [
+  {
+   "id": "2026-10-07-1810-facetime",
+   "app": "FaceTime",
+   "start": "18:10:00",
+   "end": "18:14:00",
+   "participants": [
+    "You",
+    "Speaker 2"
+   ]
+  }
+ ],
+ "known_people": [
+  "Priya",
+  "Marco"
+ ],
+ "user_voice_enrolled": true,
+ "utterances": [
+  {
+   "index": 0,
+   "time": "18:05:00",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Pushed the hotfix branch, I'll open the PR tomorrow.",
+   "context": true
+  },
+  {
+   "index": 1,
+   "time": "18:10:05",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Hi sweetheart, it's Mom! Can you hear me?"
+  },
+  {
+   "index": 2,
+   "time": "18:10:12",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Hi Mom, yes, I can hear you."
+  },
+  {
+   "index": 3,
+   "time": "18:10:20",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Are you still coming for dinner on Sunday? Dad is making lasagna."
+  },
+  {
+   "index": 4,
+   "time": "18:10:31",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Yes, I'll be there around six, I'll bring a salad."
+  },
+  {
+   "index": 5,
+   "time": "18:10:45",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Wonderful. And call your grandmother, it's her birthday Thursday."
+  },
+  {
+   "index": 6,
+   "time": "18:10:58",
+   "track": "mic",
+   "speaker": "You",
+   "text": "I will. Love you, Mom, see you Sunday."
+  },
+  {
+   "index": 7,
+   "time": "18:11:04",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Love you too, bye!"
+  }
+ ]
+}
