@@ -1,0 +1,118 @@
+{
+  "context": "Evaluate a solution that adds in-person meeting detection to DetectMeetings based on sustained mic-only speech, with configurable thresholds and priority yielding to virtual meetings.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "in_person_meetings_detected",
+      "description": "DetectMeetings returns at least one meeting when mic speech is sufficiently dense and sustained, with no system audio present.",
+      "example": "With mic speech at 60% of a 5-minute window for 10 minutes, DetectMeetings returns one meeting.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "in_person_meeting_distinct_label",
+      "description": "In-person meetings are distinguishable from virtual meetings in the returned Meeting values (e.g., a distinct App field).",
+      "example": "Ground truth uses App: InPersonApp (\"In person\") as the label for detected in-person meetings.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "sparse_speech_rejected",
+      "description": "Mic activity that is too sparse or too brief does not produce an in-person meeting \u2014 detection has a minimum density and duration threshold.",
+      "example": "~8% mic speech ratio over 30 minutes produces no meeting; dense speech lasting only 3 minutes produces no meeting.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "system_speech_alone_rejected",
+      "description": "System audio alone (no mic speech) does not produce an in-person meeting.",
+      "example": "A SpeechSpan with Track==\"system\" covering 20 minutes results in zero meetings from DetectMeetings.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "yields_to_virtual_meetings",
+      "description": "When a detected in-person region overlaps an already-detected virtual meeting (app-based or two-way-speech), the in-person meeting does not duplicate it \u2014 the virtual meeting takes priority.",
+      "example": "Dense mic speech during an active Zoom session produces one meeting with App==\"zoom.us\", not two meetings.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "two_way_speech_not_in_person",
+      "description": "Concurrent mic and system speech (indicating a call) is treated as a virtual meeting, not an in-person meeting.",
+      "example": "When mic and system speech both run for 20 minutes, DetectMeetings returns a call meeting, not an InPersonApp meeting.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "screen_state_irrelevant",
+      "description": "In-person detection fires even when the computer is locked or idle \u2014 the detection is based on mic speech, not computer activity.",
+      "example": "Mic speech during loginwindow/KindIdle segments still produces an in-person meeting.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "config_knobs_respected",
+      "description": "Two new configuration knobs control detection: a minimum meeting duration and a minimum speech density ratio. Adjusting them changes detection outcomes as expected.",
+      "example": "Lowering InPersonSpeechRatio from 0.4 to 0.25 causes a previously-missed 30%-dense meeting to be detected; raising InPersonMinMinutes drops short meetings.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "config_struct_and_defaults",
+      "description": "New config knobs follow the existing Config struct and Default() pattern: fields added to config.Config, defaults set in Default(), validation added in Validate() with sensible bounds.",
+      "example": "InPersonMinMinutes and InPersonSpeechRatio added as typed fields with TOML tags; Default() sets them to 5 and 0.4; Validate() rejects out-of-range values.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "config_example_documented",
+      "description": "New config fields are documented in config.example.toml with a comment explaining their purpose and valid range.",
+      "example": "config.example.toml gains in_person_min_minutes and in_person_speech_ratio entries with inline range comments.",
+      "max_score": 1,
+      "category": "INTEGRATION"
+    },
+    {
+      "name": "detect_meetings_signature_unchanged",
+      "description": "The public DetectMeetings function signature is not changed \u2014 in-person detection is added within the existing function, not as a separate entry point.",
+      "example": "DetectMeetings(segs []Segment, speech []SpeechSpan, c config.Config) []Meeting \u2014 same signature, now also returns in-person meetings.",
+      "max_score": 1,
+      "category": "INTEGRATION"
+    },
+    {
+      "name": "nearby_in_person_regions_merged",
+      "description": "Two qualifying in-person regions separated by a short gap (less than 2 minutes) are merged into one meeting; a longer gap keeps them as separate meetings.",
+      "example": "Two dense mic blocks with ~90s gap become one meeting; the same blocks with a 10-minute gap become two meetings.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "config_validation_bounded",
+      "description": "The new config values are validated against sensible bounds \u2014 values outside the valid range are rejected by Validate().",
+      "example": "InPersonMinMinutes=0 or 121 causes Validate() to return an error; InPersonSpeechRatio=0.04 or 1.01 likewise.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "commit_type_is_feat",
+      "description": "The commit message in `COMMIT_MSG.txt` uses the Conventional Commits format and the type is `feat`, because the change adds new behavior: in-person meetings are now detected and logged.",
+      "example": "feat(activity): detect in-person meetings from mic activity",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "commit_subject_rules",
+      "description": "The first line of `COMMIT_MSG.txt` is in the imperative mood, starts with a lowercase letter after the type prefix, has no trailing period, and is at most 72 characters including the type prefix.",
+      "example": "'feat(activity): detect in-person meetings from mic activity' passes; 'Added stuff.' fails (past tense, capitalized, trailing period, no type).",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "commit_not_run",
+      "description": "The agent stages the changes and writes the proposed message to `COMMIT_MSG.txt`, but does not run `git commit`.",
+      "example": "`COMMIT_MSG.txt` exists at the repo root; `git log` has no new commit.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    }
+  ]
+}

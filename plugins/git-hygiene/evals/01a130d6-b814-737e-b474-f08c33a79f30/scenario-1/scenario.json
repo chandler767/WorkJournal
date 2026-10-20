@@ -1,0 +1,19 @@
+{
+  "description": "Add privacy-filter skill to work-journal plugin that identifies bystander and personal non-work conversations to drop, and sensitive identifiers to redact",
+  "fixtures": {
+    "codebase": {
+      "type": "commit",
+      "repoUrl": "https://github.com/chandler767/WorkJournal.git",
+      "ref": "8c26c99ed42f59e607d4e23fe1e89125f8c8d39e",
+      "installPath": ".",
+      "exclude": [
+        "*.mdc",
+        "*.md",
+        "tile.json",
+        "tessl.json",
+        ".tessl/",
+        ".tessl-plugin/plugin.json"
+      ]
+    }
+  }
+}

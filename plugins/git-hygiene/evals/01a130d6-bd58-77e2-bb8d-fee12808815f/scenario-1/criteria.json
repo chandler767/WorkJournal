@@ -1,0 +1,104 @@
+{
+  "context": "Fix reprocessing the current (in-progress) hour to produce a partial summary instead of failing, and replace raw 500 errors from the reprocess endpoint with contextual redirect notices on the day page.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "current_hour_reprocess_succeeds",
+      "description": "Reprocessing the currently-recording hour completes without error and produces a partial summary rather than returning process.ErrChunkNotReady or a 500 response.",
+      "example": "ReprocessHour detects that the requested day+hour equals the current local hour and calls the partial-pass path (ProcessCurrent) instead of the full transcribe+summarize pipeline.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "reprocess_failure_redirects_not_500",
+      "description": "When ReprocessHour returns an error, the web handler redirects (303) to the day page with a ?notice= query parameter rather than returning an HTTP 500.",
+      "example": "handleReprocess calls http.Redirect(w, r, \"/day/\"+day+\"?notice=\"+notice, http.StatusSeeOther) on error instead of http.Error with StatusInternalServerError.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "notice_shown_for_still_recording",
+      "description": "When the reprocess fails because an audio chunk is still being written, the day page displays a message indicating the hour is still being recorded and the user should try again later.",
+      "example": "The notice key \"reprocess-not-ready\" maps to \"That hour's audio is still being recorded \u2014 try again in a few minutes.\" in dayNotice.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "notice_shown_for_media_expired",
+      "description": "When the reprocess fails because the raw recordings were already removed by retention, the day page displays a message indicating the raw recordings are gone.",
+      "example": "The notice key \"reprocess-expired\" maps to \"Cannot reprocess: the hour's raw recordings were already removed.\" in dayNotice.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "notice_shown_for_general_failure",
+      "description": "When the reprocess fails for any other reason, the day page displays a message indicating processing failed and to check the log.",
+      "example": "The notice key \"reprocess-failed\" maps to \"Reprocessing failed \u2014 see the log.\" in dayNotice.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "reprocess_error_logged",
+      "description": "Reprocess failures are logged (including the day, hour, and error details) before the redirect, so they remain visible in the server log.",
+      "example": "log.Printf(\"web: reprocess %s %02d: %v\", day, hour, err) is called in handleReprocess before the redirect.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "uses_partial_pass_abstraction",
+      "description": "The current-hour branch uses the existing partial-pass pipeline method (the same one used for automatic in-progress summaries) rather than reimplementing skip logic for open chunks.",
+      "example": "ReprocessHour calls p.ProcessCurrent(ctx, now, time.Time{}) for the current hour, reusing the same code path as Jobs.ProcessNow and Jobs.ProcessCurrent.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "uses_notice_pattern",
+      "description": "The error handling follows the existing day-page notice pattern: a notice key is passed as a ?notice= query param and dayNotice maps it to display text.",
+      "example": "handleReprocess redirects with ?notice=reprocess-failed (etc.), and dayNotice gains matching cases \u2014 the same pattern used by handleProcessNow for process-failed.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "sentinel_error_distinction",
+      "description": "The error categorization distinguishes the audio-not-ready case and the media-expired case from generic failures using error identity checks (errors.Is) on the existing sentinel errors.",
+      "example": "errors.Is(err, process.ErrChunkNotReady) and errors.Is(err, scheduler.ErrMediaExpired) select the specific notice keys; all other errors fall through to the generic notice.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "current_hour_detection_uses_local_time",
+      "description": "The check that identifies whether the requested hour is the current in-progress hour uses local time (matching the time zone convention of the rest of the jobs layer).",
+      "example": "j.now().In(time.Local) is used when comparing day and hour against the current wall-clock time.",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "no_partial_pass_on_completed_hours",
+      "description": "Hours that are not the currently-recording hour still go through the full reprocess pipeline (transcribe + summarize), not the partial-pass path.",
+      "example": "The partial-pass branch is guarded by a condition on day == current day && hour == current hour; all other hours fall through to p.Transcribe.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "commit_type_is_fix",
+      "description": "The commit message in `COMMIT_MSG.txt` uses the Conventional Commits format and the type is `fix`, because the change corrects broken behavior: reprocessing the current hour returned a raw 500 error.",
+      "example": "fix(web): reprocess the in-progress hour as a partial pass",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "commit_subject_rules",
+      "description": "The first line of `COMMIT_MSG.txt` is in the imperative mood, starts with a lowercase letter after the type prefix, has no trailing period, and is at most 72 characters including the type prefix.",
+      "example": "'fix(web): reprocess the in-progress hour as a partial pass' passes; 'Added stuff.' fails (past tense, capitalized, trailing period, no type).",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "commit_not_run",
+      "description": "The agent stages the changes and writes the proposed message to `COMMIT_MSG.txt`, but does not run `git commit`.",
+      "example": "`COMMIT_MSG.txt` exists at the repo root; `git log` has no new commit.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    }
+  ]
+}

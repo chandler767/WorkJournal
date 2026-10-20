@@ -1,0 +1,19 @@
+{
+  "description": "Detect in-person meetings from mic-only conversation activity",
+  "fixtures": {
+    "codebase": {
+      "type": "commit",
+      "repoUrl": "https://github.com/chandler767/WorkJournal.git",
+      "ref": "4f304dfdb1e486786506fa5730563e74fd1a0f4b",
+      "installPath": ".",
+      "exclude": [
+        "*.mdc",
+        "*.md",
+        "tile.json",
+        "tessl.json",
+        ".tessl/",
+        ".tessl-plugin/plugin.json"
+      ]
+    }
+  }
+}
