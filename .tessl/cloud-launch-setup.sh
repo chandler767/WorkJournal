@@ -11,11 +11,15 @@ go_ok() {
   local v
   v="$(go env GOVERSION 2>/dev/null)" || return 1
   v="${v#go}"
-  [ "${v%%.*}" -gt 1 ] && return 0
-  local minor="${v#*.}"
-  minor="${minor%%.*}"
-  minor="${minor%%[!0-9]*}"
-  [ "${v%%.*}" -eq 1 ] && [ "${minor:-0}" -ge "$GO_MIN_MINOR" ]
+  v="${v%% *}"
+  local major="${v%%.*}" rest="${v#*.}"
+  local minor="${rest%%[!0-9]*}"
+  local suffix="${rest#"$minor"}"
+  [ "$major" -gt 1 ] && return 0
+  [ "$major" -eq 1 ] || return 1
+  [ "${minor:-0}" -gt "$GO_MIN_MINOR" ] && return 0
+  # Go orders a prerelease such as go1.26rc1 below go1.26.0, so only a final 1.26 release counts.
+  [ "${minor:-0}" -eq "$GO_MIN_MINOR" ] && { [ -z "$suffix" ] || [[ "$suffix" =~ ^\.[0-9]+$ ]]; }
 }
 
 echo "==> Checking for Go 1.${GO_MIN_MINOR} or newer"
@@ -29,10 +33,10 @@ else
     *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
   esac
   echo "==> Finding the latest stable Go release"
-  version="$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n 1)"
+  version="$(curl -fsSL --connect-timeout 20 --max-time 60 'https://go.dev/VERSION?m=text' | head -n 1)"
   echo "==> Installing ${version} for linux-${arch} into ~/.local/go"
   tmp="$(mktemp -d)"
-  curl -fsSL "https://go.dev/dl/${version}.linux-${arch}.tar.gz" -o "$tmp/go.tar.gz"
+  curl -fsSL --connect-timeout 20 --max-time 600 "https://go.dev/dl/${version}.linux-${arch}.tar.gz" -o "$tmp/go.tar.gz"
   rm -rf "$HOME/.local/go"
   tar -C "$HOME/.local" -xzf "$tmp/go.tar.gz"
   rm -rf "$tmp"

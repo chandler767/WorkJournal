@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request or branch cancels the run it replaces.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     # work-journal depends on the macOS-only sherpa-onnx binding, so test on macOS.
