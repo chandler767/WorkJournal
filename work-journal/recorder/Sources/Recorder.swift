@@ -74,7 +74,10 @@ final class Recorder {
                               onTogglePause: { [unowned self] in _ = paused ? resume() : pause() },
                               onAudioMode: { [unowned self] in setAudioMode($0) },
                               onQuit: { [unowned self] in quit() })
-            notifier = ReminderNotifier(onSwitchToAuto: { [unowned self] in setAudioMode(.auto) })
+            notifier = ReminderNotifier(onSwitchToAuto: { [unowned self] in
+                guard !stopping else { return } // quitting must not start the microphone again
+                setAudioMode(.auto)
+            })
         }
         log.append("start")
         monitor.onExcludedChange = { [unowned self] _ in apply() }
@@ -135,15 +138,20 @@ final class Recorder {
     /// the reminder when the call ends, after a while, or when the mode leaves Off.
     private func reminderTick() {
         guard let n = notifier, !stopping else { return }
+        // Only when Auto could record now, and never from an excluded context.
+        let allowed = audioAllowed && !monitor.excluded
         var source: CallSource?
-        if audioMode == .off && recordingAllowed { // the call signal costs CoreAudio queries
+        if audioMode == .off && allowed { // the call signal costs CoreAudio queries
             let front = monitor.frontmostApp
             source = InputUsage.otherProcessRecording(ourEngineRunning: mic.isRunning)
                 ?? (monitor.meeting ? CallSource(bundle: front.bundle, name: front.name) : nil)
         }
-        switch reminder.step(now: Date(), off: audioMode == .off, allowed: recordingAllowed, call: source != nil,
+        switch reminder.step(now: Date(), off: audioMode == .off, allowed: allowed, call: source != nil,
                              away: monitor.idle || sleeping) {
-        case .show(let kind)?: n.show(kind, app: source?.label ?? "")
+        case .show(let kind)?:
+            n.show(kind, app: source?.label ?? "", onFailure: { [unowned self] in
+                reminder.notShown(kind, now: Date())
+            })
         case .clear?: n.clear()
         case nil: break
         }

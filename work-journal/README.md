@@ -230,7 +230,8 @@ While audio is **Off**, the recorder reminds you with a notification to switch t
   after 2 minutes.
 
 Either reminder also clears as soon as audio leaves Off, and its **Switch to Auto** button
-switches it. No reminder is shown while paused. Allow notifications for WorkJournalRecorder
+switches it. No reminder is shown while paused, while an excluded app or window is in front, or
+while the disk guard has stopped audio. Allow notifications for WorkJournalRecorder
 when macOS asks (System Settings → Notifications).
 
 ## Meetings
