@@ -34,6 +34,9 @@ final class Recorder {
     private let listener = ConversationListener()
     /// The app behind an auto recording started (or continued) by a call.
     private var autoApp: CallSource?
+    /// Reminders to switch audio to Auto while it is Off (`run` only).
+    private var reminder = AudioReminder()
+    private var notifier: ReminderNotifier?
 
     init(options: RunOptions) {
         self.options = options
@@ -71,11 +74,13 @@ final class Recorder {
                               onTogglePause: { [unowned self] in _ = paused ? resume() : pause() },
                               onAudioMode: { [unowned self] in setAudioMode($0) },
                               onQuit: { [unowned self] in quit() })
+            notifier = ReminderNotifier(onSwitchToAuto: { [unowned self] in setAudioMode(.auto) })
         }
         log.append("start")
         monitor.onExcludedChange = { [unowned self] _ in apply() }
         monitor.onMeetingChange = { [unowned self] _ in apply() }
         monitor.onSleep = { [unowned self] in sleeping = true; apply() }
+        monitor.onIdleChange = { [unowned self] in reminderTick() }
         monitor.onWake = { [unowned self] in sleeping = false; apply() }
         monitor.onSwitch = { [unowned self] in capture.trigger(.appSwitch) }
         capture.onError = { [unowned self] msg in captureError = msg; report(msg) }
@@ -89,7 +94,10 @@ final class Recorder {
         }
         monitor.start()
         capture.start()
-        autoTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [unowned self] _ in autoTick() }
+        autoTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [unowned self] _ in
+            autoTick()
+            reminderTick()
+        }
         apply()
     }
 
@@ -119,6 +127,26 @@ final class Recorder {
         if micWanted(g) { mic.start() } else { mic.stop() }
         monitor.logsApps = !paused
         updateMenu()
+        reminderTick()
+    }
+
+    /// Audio Off, every 2 s and on every state change: reminds to switch to Auto when a call
+    /// looks like it started, or when activity starts again after a long idle or sleep; clears
+    /// the reminder when the call ends, after a while, or when the mode leaves Off.
+    private func reminderTick() {
+        guard let n = notifier, !stopping else { return }
+        var source: CallSource?
+        if audioMode == .off && recordingAllowed { // the call signal costs CoreAudio queries
+            let front = monitor.frontmostApp
+            source = InputUsage.otherProcessRecording(ourEngineRunning: mic.isRunning)
+                ?? (monitor.meeting ? CallSource(bundle: front.bundle, name: front.name) : nil)
+        }
+        switch reminder.step(now: Date(), off: audioMode == .off, allowed: recordingAllowed, call: source != nil,
+                             away: monitor.idle || sleeping) {
+        case .show(let kind)?: n.show(kind, app: source?.label ?? "")
+        case .clear?: n.clear()
+        case nil: break
+        }
     }
 
     /// Auto mode, every 2 s: a call (another process records from the microphone, or a meeting
@@ -277,6 +305,7 @@ final class Recorder {
         stopping = true
         autoResume?.invalidate()
         autoTimer?.invalidate()
+        notifier?.clear()
         systemWriter.close()
         micWriter.close()
         mic.stop()

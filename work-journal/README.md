@@ -221,6 +221,18 @@ microphone ("Audio: Auto · recording (Zoom)"). The recorder logs `audio_mode`,
 `audio_auto_start` (with the reason, `call` or `in_person`, and for a call the bundle id of
 the app that triggered it) and `audio_auto_stop` events to `activity.jsonl`.
 
+While audio is **Off**, the recorder reminds you with a notification to switch to Auto:
+
+- when a call looks like it started (a meeting app or window is in front, or another app is
+  using the microphone). The reminder clears when the call ends, and is not shown again
+  within 10 minutes;
+- when you come back after the Mac was idle (`idle_minutes`) or asleep. That reminder clears
+  after 2 minutes.
+
+Either reminder also clears as soon as audio leaves Off, and its **Switch to Auto** button
+switches it. No reminder is shown while paused. Allow notifications for WorkJournalRecorder
+when macOS asks (System Settings → Notifications).
+
 ## Meetings
 
 A meeting is time in a meeting app or window (`meeting_apps`, `meeting_title_keywords`), a
