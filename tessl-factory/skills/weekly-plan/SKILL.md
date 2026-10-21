@@ -50,11 +50,13 @@ Never add any label to it.
 
 ## Post at most one plan per week
 
-Before posting, read the issue's comments:
-`gh issue view <n> --json comments --jq '.comments[].body'`. If any comment
-contains `<!-- tessl-weekly-plan week=<week> -->`, this week's plan is already
-posted: stop without posting, and say so in the run output. A retried or
-repeated run must not post a second plan for the same week.
+Before posting, read every comment on the issue made since the start of
+`<week>`, following all pages:
+`gh api --paginate "repos/chandler767/WorkJournal/issues/<n>/comments?per_page=100&since=<week>T00:00:00Z" --jq '.[].body'`.
+If any of them contains `<!-- tessl-weekly-plan week=<week> -->`, this week's
+plan is already posted: stop without posting, and say so in the run output.
+If the command fails, stop without posting rather than risk a duplicate. A
+retried or repeated run must not post a second plan for the same week.
 
 ## What to post
 
