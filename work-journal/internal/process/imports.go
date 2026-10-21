@@ -135,8 +135,8 @@ func Import(paths config.Paths, st *store.Store, req ImportRequest, now time.Tim
 	if err != nil {
 		return store.MeetingRecord{}, err
 	}
-	if fi.IsDir() {
-		return store.MeetingRecord{}, fmt.Errorf("%s is a directory", req.Path)
+	if !fi.Mode().IsRegular() {
+		return store.MeetingRecord{}, fmt.Errorf("%s is not a regular file", req.Path)
 	}
 	if fi.Size() > MaxImportBytes {
 		return store.MeetingRecord{}, fmt.Errorf("the file is %d MB; the limit is 1 GB", fi.Size()>>20)
@@ -202,7 +202,8 @@ func newImportDir(paths config.Paths, st *store.Store, start time.Time) (string,
 	return "", "", fmt.Errorf("too many imports starting at %s", start.Format(time.RFC3339))
 }
 
-// placeFile moves (rename) or copies src to dst.
+// placeFile moves (rename) or copies src to dst. A copy stops with an
+// error past MaxImportBytes, in case src grew after it was checked.
 func placeFile(src, dst string, move bool) error {
 	if move {
 		if err := os.Rename(src, dst); err == nil {
@@ -218,7 +219,11 @@ func placeFile(src, dst string, move bool) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	n, err := io.Copy(out, io.LimitReader(in, MaxImportBytes+1))
+	if err == nil && n > MaxImportBytes {
+		err = errors.New("the file is over the 1 GB limit")
+	}
+	if err != nil {
 		out.Close()
 		return err
 	}

@@ -271,9 +271,11 @@ incoming connections. Open the address on the phone, enter the token once (the p
 it), then pick the recording, check the start time and add a title and context. The start
 time is filled in from the file's last-modified time less its length where the browser
 provides them, in the phone's time zone; correct it if it is off. Files up to 1 GB are
-accepted: `.m4a` (Voice Memos), `.mp3`, `.wav`, `.caf`, `.aac` and `.aif`, anything
-`afconvert` reads, but not video. The page says whether the upload worked. The recording
-is processed within a minute or so of the upload (summaries wait while Claude is paused
+accepted: `.m4a` (Voice Memos), `.mp3`, `.wav`, `.caf`, `.aac` and `.aif`/`.aiff`; other formats
+and video are refused. The page says whether the upload worked. Processing of the
+recording starts within a minute or so of the upload; it then takes as long as
+transcription, speaker identification and the summary need, which for a long recording is
+many minutes, and waits behind other processing (summaries also wait while Claude is paused
 for a [usage limit](#claude-usage-limits)).
 
 **From the Mac.** For a file AirDropped to the Mac, or to test:

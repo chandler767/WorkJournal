@@ -256,7 +256,6 @@ func TestParseStart(t *testing.T) {
 		{"2026-10-07T18:30", "America/New_York", time.Date(2026, 10, 7, 18, 30, 0, 0, ny)},
 		{"2026-10-07T18:30:15", "America/New_York", time.Date(2026, 10, 7, 18, 30, 15, 0, ny)},
 		{"2026-10-07T18:30:00-04:00", "", time.Date(2026, 10, 7, 22, 30, 0, 0, time.UTC)},
-		{"2026-10-07T18:30", "Not/AZone", time.Date(2026, 10, 7, 18, 30, 0, 0, time.Local)},
 	} {
 		got, err := ParseStart(c.v, c.tz)
 		if err != nil || !got.Equal(c.want) {
@@ -264,8 +263,14 @@ func TestParseStart(t *testing.T) {
 		}
 	}
 	for _, v := range []string{"", "yesterday", "18:30"} {
-		if _, err := ParseStart(v, ""); err == nil {
+		if _, err := ParseStart(v, "America/New_York"); err == nil {
 			t.Errorf("ParseStart(%q) accepted", v)
+		}
+	}
+	// A local time is never read on the Mac's clock.
+	for _, tz := range []string{"", "Not/AZone"} {
+		if _, err := ParseStart("2026-10-07T18:30", tz); err == nil {
+			t.Errorf("ParseStart with tz %q accepted", tz)
 		}
 	}
 }

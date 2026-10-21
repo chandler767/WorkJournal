@@ -48,7 +48,9 @@ func sweepImports(p config.Paths, st *store.Store, cutoff string) error {
 		if !e.IsDir() && strings.HasPrefix(id, ".upload-") {
 			// An upload cut off by a crash (see upload.Server.save).
 			if fi, ierr := e.Info(); ierr == nil && time.Since(fi.ModTime()) > 24*time.Hour {
-				os.Remove(filepath.Join(p.Imports(), id))
+				if rerr := os.Remove(filepath.Join(p.Imports(), id)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+					errs = append(errs, rerr)
+				}
 			}
 			continue
 		}

@@ -320,7 +320,8 @@ func field(part *multipart.Part, max int64) (string, error) {
 
 // ParseStart reads the form's start time: an RFC 3339 time, or a
 // datetime-local value ("2026-10-21T18:30") in the phone's IANA time zone
-// tz (the Mac's when tz is empty or unknown).
+// tz. A local value without a known tz is refused rather than read on the
+// Mac's clock, which may not be the phone's.
 func ParseStart(v, tz string) (time.Time, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -329,11 +330,10 @@ func ParseStart(v, tz string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t, nil
 	}
-	loc := time.Local
-	if tz != "" {
-		if l, err := time.LoadLocation(tz); err == nil {
-			loc = l
-		}
+	tz = strings.TrimSpace(tz)
+	loc, err := time.LoadLocation(tz)
+	if tz == "" || tz == "Local" || err != nil {
+		return time.Time{}, fmt.Errorf("Your browser did not send a time zone this Mac knows (%q), so the start time cannot be placed on your clock.", tz)
 	}
 	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
 		if t, err := time.ParseInLocation(layout, v, loc); err == nil {

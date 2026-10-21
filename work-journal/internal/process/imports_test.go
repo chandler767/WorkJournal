@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -125,12 +126,17 @@ func TestImportStoresFileAndNote(t *testing.T) {
 func TestImportRejects(t *testing.T) {
 	e, _ := importEnv(t)
 	start := time.Date(2026, 10, 7, 18, 30, 0, 0, ny)
+	fifo := filepath.Join(t.TempDir(), "pipe.m4a")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for name, req := range map[string]ImportRequest{
-		"video":          {Path: memo(t, "clip.mov"), Start: start},
-		"no extension":   {Path: memo(t, "memo"), Start: start},
-		"no start":       {Path: memo(t, "a.m4a")},
-		"missing file":   {Path: filepath.Join(t.TempDir(), "gone.m4a"), Start: start},
-		"title too long": {Path: memo(t, "a.m4a"), Start: start, Title: strings.Repeat("x", MaxImportTitle+1)},
+		"not a regular file": {Path: fifo, Start: start},
+		"video":              {Path: memo(t, "clip.mov"), Start: start},
+		"no extension":       {Path: memo(t, "memo"), Start: start},
+		"no start":           {Path: memo(t, "a.m4a")},
+		"missing file":       {Path: filepath.Join(t.TempDir(), "gone.m4a"), Start: start},
+		"title too long":     {Path: memo(t, "a.m4a"), Start: start, Title: strings.Repeat("x", MaxImportTitle+1)},
 	} {
 		if _, err := Import(e.paths, e.st, req, at(21, 0, 0)); err == nil {
 			t.Errorf("%s: imported", name)
