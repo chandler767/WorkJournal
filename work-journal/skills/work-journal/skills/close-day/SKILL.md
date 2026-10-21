@@ -19,7 +19,7 @@ Headless skill for the work-journal app. The prompt names one input file.
 
 JSON with `day`, `hours`, `meetings`, and `totals` (category to minutes).
 - Each hour is `{hour, narrative_lines, notes, main_focus, action_items}`. `narrative_lines` is a short account of the hour, split into pieces to join with spaces; it may be absent or `[]` for older hours. `notes` carry the specifics.
-- Each meeting is `{id, title, start, end, participants, summary_lines, decisions, action_items}`; join `summary_lines` with spaces to get its summary.
+- Each meeting is `{id, title, start, end, participants, summary_lines, decisions, action_items}`; join `summary_lines` with spaces to get its summary. `imported: true` marks a meeting the user recorded on their phone and imported (for example an in-person event away from the Mac).
 - Prefer the concrete details in the narrative and `notes` (files, tickets, people, decisions) over generic phrasing when writing the Summary and Timeline.
 
 ## Rules specific to this skill

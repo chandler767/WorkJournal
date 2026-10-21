@@ -244,6 +244,67 @@ uncounted.
 Isolated "You", "Thank you", "Bye" and similar lines that whisper invents on silence are
 dropped; the same words within 3 s of real speech on either track are kept.
 
+## Importing phone recordings
+
+When you are away from the Mac (a meetup, an in-person meeting), record on your phone, for
+example with Voice Memos, and import the recording afterwards. It goes through the same
+steps as recorded meeting audio (whisper, speaker identification, the privacy filter and
+redaction, then the meeting summary) and shows up as an **In person** meeting marked
+**imported**: on that day's dashboard page, in `list_meetings`, `get_meeting` and `search`
+over [MCP](#ask-your-journal), and in that day's journal entry. It covers its start time to
+the start plus the recording's length. A short note you add (a title, and context such as
+who was there, what the event was or what you care about) is given to the summary as your
+own note, never as something said in the meeting.
+
+**From the phone.** Turn on the upload page in `~/WorkJournal/config.toml` and restart
+`journal serve`:
+
+```toml
+upload_addr = "0.0.0.0:4748"
+upload_token = "a-long-random-secret"   # at least 16 characters; `openssl rand -hex 16` makes one
+```
+
+`journal serve` logs the address to open, for example
+`journal: phone upload page on http://192.168.1.23:4748`. The phone and the Mac must be on
+the same network (the same Wi-Fi), and macOS may ask once whether `journal` may accept
+incoming connections. Open the address on the phone, enter the token once (the phone keeps
+it), then pick the recording, check the start time and add a title and context. The start
+time is filled in from the file's last-modified time less its length where the browser
+provides them, in the phone's time zone; correct it if it is off. Files up to 1 GB are
+accepted: `.m4a` (Voice Memos), `.mp3`, `.wav`, `.caf`, `.aac` and `.aif`, anything
+`afconvert` reads, but not video. The page says whether the upload worked. The recording
+is processed within a minute or so of the upload (summaries wait while Claude is paused
+for a [usage limit](#claude-usage-limits)).
+
+**From the Mac.** For a file AirDropped to the Mac, or to test:
+
+```sh
+journal import ~/Downloads/"New Recording 3.m4a" --start 2026-10-21T18:30:00-04:00 \
+  --title "AI Tinkerers meetup" --context "Monthly meetup; Maya demoed. I care about speaker clustering."
+```
+
+`--start` is RFC 3339, with the time zone the recording was made in. The command copies the
+file in and processes it straight away.
+
+Each recording is kept in its own folder, `imports/<meeting id>/`: the audio and a
+`note.json` with your title, context and start time. Nothing there is ever mixed with the
+recorder's files. If processing fails, the recording is kept and the meeting's entry on the
+dashboard shows the error; a failure such as whisper or Claude not running is tried again
+an hour later, while a file `afconvert` cannot read stays as it is (import it again in
+another format). Imported audio is deleted after `retention_days`, like other raw audio,
+once it has been processed; its transcript, summary and note are kept.
+
+**Security model.** The upload page is a second listener, off unless `upload_addr` is set,
+and it serves only the upload form: never the dashboard, recordings, transcripts, search or
+MCP, which stay on the loopback-only dashboard. Every request to it needs `upload_token`;
+without it every route answers 401. `journal serve` refuses to start when `upload_addr` is
+set and `upload_token` is empty or shorter than 16 characters. The first visit asks for the
+token and keeps it in an HttpOnly, SameSite=Strict cookie, so it is never in a URL. The page
+is **plain HTTP, without TLS**: anyone on the same network who can watch its traffic could
+read the token and the recordings you upload. Use it only on a network you trust (home or
+office Wi-Fi, not a café's), and set `upload_addr = ""` to turn it off. Someone with the
+token can add recordings to your journal but cannot read anything from it.
+
 ## Speaker identification
 
 With `diarization = "sherpa"` (the default), each system-audio chunk is split into speaker
@@ -363,6 +424,11 @@ already-built recorder.
   `input_max_bytes` (default 70000), less screen text is sent; speech is never cut.
   Inputs are written one record per line so Claude can read large ones in parts.
 - The dashboard binds to loopback only; `journal serve` refuses any other `listen_addr`.
+  The optional phone upload page (`upload_addr`) is a separate listener that only accepts
+  recordings, behind `upload_token` (see [Importing phone recordings](#importing-phone-recordings)).
+- Imported recordings live in `imports/<id>/` (audio and `note.json`); their transcripts are
+  in `derived/imports/` and their whisper and speaker results in `cache/imports/`. Their
+  audio is deleted after `retention_days` once processed.
 
 ## More
 

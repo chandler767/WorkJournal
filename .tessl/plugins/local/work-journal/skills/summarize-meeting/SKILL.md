@@ -18,6 +18,7 @@ Headless skill for the work-journal app. The prompt names one input file.
 ## Input
 
 JSON with `meeting` (id, app, start, end, title), `transcript` (`t`, `speaker`, `text`), and `screens` (descriptions of on-screen content).
+An imported recording (audio the user recorded on their phone) may also have `user_note`: `{title, context_lines}`, the user's own note about the recording; join `context_lines` with spaces.
 
 ## Rules specific to this skill
 
@@ -26,6 +27,7 @@ JSON with `meeting` (id, app, start, end, title), `transcript` (`t`, `speaker`, 
 - `confidence` is 0-1; direct address or a clear label is high, a weak inference below 0.7. Do not guess from voice or role.
 - List every distinct speaker label in `participants`.
 - `summary`: 2-4 sentences. `decisions` and `action_items` only when stated; `owner` is `""` if unclear.
+- `user_note` is written by the user, not said in the meeting. Use it for context: what the event was, who was there, what the user cares about. Let it shape the summary's focus and help name speakers the note mentions when the transcript supports it, but never report as said or decided anything only the note states.
 - Empty transcript gives `{"participants":[],"summary":"","decisions":[],"action_items":[]}`.
 
 ## Output schema

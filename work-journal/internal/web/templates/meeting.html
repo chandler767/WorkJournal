@@ -4,7 +4,8 @@
   <h1>{{.Title}}</h1>
   <span></span>
 </nav>
-<p class="muted meeting-meta">{{.App}} · {{.Time}}</p>
+<p class="muted meeting-meta">{{.App}} · {{.Time}}{{if .Imported}} <span class="badge">imported</span>{{if .Processing}} <span class="badge">processing</span>{{end}}{{end}}</p>
+{{if .ImportError}}<div class="banner error" role="status">Processing failed: {{.ImportError}} The recording is kept.</div>{{end}}
 
 {{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
 {{if .DocNote}}<p class="muted">{{.DocNote}}</p>{{end}}

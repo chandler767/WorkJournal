@@ -22,10 +22,15 @@ type SearchHit struct {
 	Snippet string
 }
 
-// ReplaceText atomically replaces all indexed docs for the given day+hour.
+// notImported leaves out the docs of imported recordings, which are indexed
+// per import (ReplaceImportText), not per hour.
+const notImported = ` AND ref NOT IN (SELECT 'meeting/'||id FROM imports)`
+
+// ReplaceText atomically replaces all indexed docs for the given day+hour,
+// except those of imported recordings.
 func (s *Store) ReplaceText(day string, hour int, docs []TextDoc) error {
 	return s.tx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM docs_fts WHERE day=? AND hour=?`, day, hour); err != nil {
+		if _, err := tx.Exec(`DELETE FROM docs_fts WHERE day=? AND hour=?`+notImported, day, hour); err != nil {
 			return err
 		}
 		for _, d := range docs {
@@ -39,17 +44,35 @@ func (s *Store) ReplaceText(day string, hour int, docs []TextDoc) error {
 }
 
 // ReplaceTextKinds replaces the hour's indexed docs of the given kinds with
-// docs (which must be of those kinds), leaving other kinds alone.
+// docs (which must be of those kinds), leaving other kinds and imported
+// recordings alone.
 func (s *Store) ReplaceTextKinds(day string, hour int, kinds []string, docs []TextDoc) error {
 	return s.tx(func(tx *sql.Tx) error {
 		for _, k := range kinds {
-			if _, err := tx.Exec(`DELETE FROM docs_fts WHERE day=? AND hour=? AND kind=?`, day, hour, k); err != nil {
+			if _, err := tx.Exec(`DELETE FROM docs_fts WHERE day=? AND hour=? AND kind=?`+notImported, day, hour, k); err != nil {
 				return err
 			}
 		}
 		for _, d := range docs {
 			if _, err := tx.Exec(`INSERT INTO docs_fts(text,kind,day,hour,ts,ref) VALUES(?,?,?,?,?,?)`,
 				d.Text, d.Kind, day, hour, fmtTime(d.TS), d.Ref); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ReplaceImportText atomically replaces the indexed docs of imported
+// recording id (those whose Ref is meeting/<id>) with docs.
+func (s *Store) ReplaceImportText(id string, docs []TextDoc) error {
+	return s.tx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM docs_fts WHERE ref=?`, "meeting/"+id); err != nil {
+			return err
+		}
+		for _, d := range docs {
+			if _, err := tx.Exec(`INSERT INTO docs_fts(text,kind,day,hour,ts,ref) VALUES(?,?,?,?,?,?)`,
+				d.Text, d.Kind, d.Day, d.Hour, fmtTime(d.TS), d.Ref); err != nil {
 				return err
 			}
 		}

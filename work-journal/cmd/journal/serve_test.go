@@ -77,7 +77,7 @@ func TestServeSmoke(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() { errc <- serveOn(ctx, a, ln) }()
+	go func() { errc <- serveOn(ctx, a, ln, nil) }()
 
 	select {
 	case argv := <-launched:
@@ -132,5 +132,145 @@ func TestServeWarnsWhenSkillsMissing(t *testing.T) {
 	}
 	if w := startupWarnings(newTestApp(t)); len(w) != 0 {
 		t.Fatalf("warnings with skills present = %q", w)
+	}
+}
+
+func TestServeRefusesUploadWithoutToken(t *testing.T) {
+	for _, tok := range []string{"", "short-token-15ch"[:15]} {
+		a := newTestApp(t)
+		cfg := a.Cfg()
+		cfg.ListenAddr, cfg.UploadAddr, cfg.UploadToken = "127.0.0.1:0", "127.0.0.1:0", tok
+		a.cfg.set(cfg)
+		started := false
+		a.Supervisor.Start = func(context.Context, string, []string) (func() error, func(os.Signal) error, error) {
+			started = true
+			return nil, nil, errors.New("unused")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := runServe(ctx, a)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "upload_token") {
+			t.Errorf("token %q: err = %v", tok, err)
+		}
+		if started {
+			t.Errorf("token %q: recorder started despite refusal", tok)
+		}
+	}
+	// With upload_addr unset no token is needed.
+	cfg := config.Default()
+	if err := cfg.CheckUpload(); err != nil {
+		t.Errorf("default config: %v", err)
+	}
+	cfg.UploadAddr, cfg.UploadToken = "0.0.0.0:4748", strings.Repeat("x", config.MinUploadToken)
+	if err := cfg.CheckUpload(); err != nil {
+		t.Errorf("16-character token: %v", err)
+	}
+}
+
+// TestServeUploadListener runs serve with the upload page on a second
+// listener: it answers 401 without the token, serves only the upload page
+// with it, and the dashboard stays on its own listener.
+func TestServeUploadListener(t *testing.T) {
+	a := newTestApp(t)
+	cfg := a.Cfg()
+	cfg.UploadToken = "correct-horse-battery-staple"
+	a.cfg.set(cfg)
+	ctl := &fakeControl{}
+	a.Control, a.Jobs.Control, a.Server.Control = ctl, ctl, ctl
+	a.Runner.Exec = media.Runner(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("claude disabled in tests")
+	})
+	a.Supervisor.Start = func(ctx context.Context, bin string, args []string) (func() error, func(os.Signal) error, error) {
+		done := make(chan struct{})
+		var once sync.Once
+		return func() error { <-done; return nil }, func(os.Signal) error { once.Do(func() { close(done) }); return nil }, nil
+	}
+	a.Supervisor.StopTimeout = 10 * time.Millisecond
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- serveOn(ctx, a, ln, up) }()
+
+	get := func(addr, path string, cookie bool) int {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "http://"+addr+path, nil)
+		if cookie {
+			req.AddCookie(&http.Cookie{Name: "journal_upload", Value: cfg.UploadToken})
+		}
+		var resp *http.Response
+		for i := 0; i < 50; i++ {
+			if resp, err = http.DefaultClient.Do(req); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	day := "/day/" + config.DayKey(time.Now())
+	for _, p := range []string{"/", day, "/meeting/2026-10-07-0900-zoom", "/media/2026-10-07/audio/0900-mic.m4a", "/static/app.css"} {
+		if code := get(up.Addr().String(), p, false); code != http.StatusUnauthorized {
+			t.Errorf("upload listener %s without token: %d", p, code)
+		}
+	}
+	if code := get(up.Addr().String(), "/", true); code != http.StatusOK {
+		t.Errorf("upload page with token: %d", code)
+	}
+	for _, p := range []string{day, "/media/2026-10-07/audio/0900-mic.m4a", "/static/app.css", "/search"} {
+		if code := get(up.Addr().String(), p, true); code != http.StatusNotFound {
+			t.Errorf("upload listener %s with token: %d, want 404", p, code)
+		}
+	}
+	if code := get(ln.Addr().String(), day, false); code != http.StatusOK {
+		t.Errorf("dashboard: %d", code)
+	}
+	if code := get(ln.Addr().String(), "/upload", false); code == http.StatusOK {
+		t.Errorf("dashboard serves the upload route")
+	}
+
+	cancel()
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("serve returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not stop")
+	}
+	if c, err := net.Dial("tcp", up.Addr().String()); err == nil {
+		c.Close()
+		t.Error("upload listener still open after shutdown")
+	}
+}
+
+func TestUploadURL(t *testing.T) {
+	lan := []net.IP{net.ParseIP("192.168.1.23")}
+	for _, c := range []struct {
+		addr string
+		lan  []net.IP
+		want string
+	}{
+		{"0.0.0.0:4748", lan, "http://192.168.1.23:4748"},
+		{"[::]:4748", lan, "http://192.168.1.23:4748"},
+		{"10.0.0.5:4748", lan, "http://10.0.0.5:4748"},
+		{"0.0.0.0:4748", nil, "http://<this Mac's IP address>:4748"},
+	} {
+		addr, err := net.ResolveTCPAddr("tcp", c.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := uploadURL(addr, c.lan); got != c.want {
+			t.Errorf("uploadURL(%s) = %q, want %q", c.addr, got, c.want)
+		}
 	}
 }

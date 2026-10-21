@@ -7,6 +7,11 @@ type MeetingRecord struct {
 	Start, End  time.Time
 	App, Title  string
 	SummaryJSON string
+	// Imported is set for a meeting made from an imported recording (see
+	// ImportRecord); ImportStatus and ImportError are its processing state.
+	// UpsertMeeting ignores all three.
+	Imported                  bool
+	ImportStatus, ImportError string
 }
 
 func (s *Store) UpsertMeeting(m MeetingRecord) error {
@@ -19,9 +24,10 @@ func (s *Store) UpsertMeeting(m MeetingRecord) error {
 func scanMeeting(r scanner) (MeetingRecord, error) {
 	var m MeetingRecord
 	var st, en string
-	if err := r.Scan(&m.ID, &m.Day, &st, &en, &m.App, &m.Title, &m.SummaryJSON); err != nil {
+	if err := r.Scan(&m.ID, &m.Day, &st, &en, &m.App, &m.Title, &m.SummaryJSON, &m.ImportStatus, &m.ImportError); err != nil {
 		return m, err
 	}
+	m.Imported = m.ImportStatus != ""
 	var err error
 	if m.Start, err = parseTime(st); err != nil {
 		return m, err
@@ -30,10 +36,14 @@ func scanMeeting(r scanner) (MeetingRecord, error) {
 	return m, err
 }
 
-const meetingCols = `id,day,start,end,app,title,summary_json`
+// meetingFrom selects meetingCols: every meeting, with its import's state.
+const (
+	meetingCols = `m.id,m.day,m.start,m.end,m.app,m.title,m.summary_json,coalesce(i.status,''),coalesce(i.error,'')`
+	meetingFrom = ` FROM meetings m LEFT JOIN imports i ON i.id=m.id`
+)
 
 func (s *Store) Meeting(id string) (MeetingRecord, bool, error) {
-	m, err := scanMeeting(s.db.QueryRow(`SELECT `+meetingCols+` FROM meetings WHERE id=?`, id))
+	m, err := scanMeeting(s.db.QueryRow(`SELECT `+meetingCols+meetingFrom+` WHERE m.id=?`, id))
 	if isNoRows(err) {
 		return MeetingRecord{}, false, nil
 	}
@@ -44,7 +54,7 @@ func (s *Store) Meeting(id string) (MeetingRecord, bool, error) {
 }
 
 func (s *Store) MeetingsOn(day string) ([]MeetingRecord, error) {
-	rows, err := s.db.Query(`SELECT `+meetingCols+` FROM meetings WHERE day=? ORDER BY start`, day)
+	rows, err := s.db.Query(`SELECT `+meetingCols+meetingFrom+` WHERE m.day=? ORDER BY m.start`, day)
 	if err != nil {
 		return nil, err
 	}

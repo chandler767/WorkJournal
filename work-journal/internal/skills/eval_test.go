@@ -129,6 +129,11 @@ func check(t *testing.T, name string, out any) {
 		if len(priya) != 1 || priya[0].Speaker != "Remote 1" {
 			t.Errorf("want exactly one participant named Priya (Remote 1), got %+v", m.Participants)
 		}
+	case "summarize-meeting/04": // imported recording with the user's note
+		m := out.(*MeetingSummary)
+		if !strings.Contains(strings.ToLower(m.Summary), "cluster") {
+			t.Errorf("summary misses the note's focus (speaker clustering): %q", m.Summary)
+		}
 	case "privacy-filter/01": // bystanders' weekend chat while the user is silent
 		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4, 5, 6}, "bystander")
 	case "privacy-filter/02": // coworkers' personal chat in a meeting

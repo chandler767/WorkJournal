@@ -10,7 +10,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"workjournal/internal/config"
 	"workjournal/internal/process"
 	"workjournal/internal/scheduler"
 	"workjournal/internal/skills"
@@ -40,6 +39,11 @@ type meetingPage struct {
 	Notice                    string
 	CanName                   bool
 	DocNote                   string
+	// Imported marks a meeting made from an imported recording; ImportError
+	// is its last processing failure and Processing that it is not
+	// processed yet.
+	Imported, Processing bool
+	ImportError          string
 }
 
 // notices maps the ?notice= flag to fixed text; unknown values show nothing.
@@ -72,9 +76,10 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.Cfg()
 	p := meetingPage{Title: m.Title, ID: m.ID, Day: m.Day, App: m.App,
-		Time:    wallclock.Span(m.Start, m.End),
-		Notice:  notices[r.URL.Query().Get("notice")],
-		CanName: cfg.Diarization != "off"}
+		Time:     wallclock.Span(m.Start, m.End),
+		Notice:   notices[r.URL.Query().Get("notice")],
+		CanName:  cfg.Diarization != "off",
+		Imported: m.Imported, Processing: m.ImportStatus == store.StatusPending, ImportError: m.ImportError}
 	if m.SummaryJSON != "" {
 		if err := json.Unmarshal([]byte(m.SummaryJSON), &p.Summary); err == nil {
 			p.HasSummary = true
@@ -95,12 +100,9 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 			Display: process.SpeakerDisplay(parts[i].Speaker, &parts[i], cfg.NameConfidenceThreshold)})
 	}
 
-	// Walk every hour the meeting touches, keeping utterances in [Start, End].
-	for _, t := range process.HourStarts(m.Start, m.End, m.Start.Location()) {
-		doc, err := process.Load(s.Paths.DerivedHour(config.DayKey(t), t.Hour()))
-		if err != nil {
-			continue // hour not processed yet; the page shows what exists
-		}
+	// Every derived doc holding the meeting's speech, keeping utterances in
+	// [Start, End]; an hour not processed yet has none.
+	for _, doc := range process.MeetingDocs(s.Paths, m) {
 		for _, u := range doc.Transcript {
 			if u.Start.Before(m.Start) || u.Start.After(m.End) {
 				continue

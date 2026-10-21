@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,9 +55,10 @@ func (f *fakeJobs) Rollup(_ context.Context, w string) error {
 	}
 	return nil
 }
-func (f *fakeJobs) Retain(context.Context) error        { return f.rec("retain") }
-func (f *fakeJobs) DiskCheck(context.Context) error     { return f.rec("disk") }
-func (f *fakeJobs) SyncAudioMode(context.Context) error { return f.rec("audio") }
+func (f *fakeJobs) Retain(context.Context) error         { return f.rec("retain") }
+func (f *fakeJobs) DiskCheck(context.Context) error      { return f.rec("disk") }
+func (f *fakeJobs) SyncAudioMode(context.Context) error  { return f.rec("audio") }
+func (f *fakeJobs) ProcessImports(context.Context) error { return f.rec("imports") }
 func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, s, n string) error {
 	return f.rec("enroll " + m + s + n)
 }
@@ -93,7 +95,7 @@ func newSchedJ(t *testing.T) (*Scheduler, *fakeJobs, *store.Store, journals) {
 func (f *fakeJobs) without() []string {
 	var out []string
 	for _, c := range f.calls {
-		if c != "disk" && c != "audio" {
+		if c != "disk" && c != "audio" && c != "imports" {
 			out = append(out, c)
 		}
 	}
@@ -115,6 +117,18 @@ func kv(t *testing.T, st *store.Store, key string) string {
 		t.Fatal(err)
 	}
 	return v
+}
+
+func TestTickProcessesImportsEveryTick(t *testing.T) {
+	s, j, _ := newSched(t)
+	ctx := context.Background()
+	for _, m := range []int{2, 3, 30} {
+		j.calls = nil
+		s.Tick(ctx, at("2026-10-07", 9, m))
+		if !slices.Contains(j.calls, "imports") {
+			t.Fatalf("09:%02d: imports not processed: %v", m, j.calls)
+		}
+	}
 }
 
 func TestTickProcessesOncePerHour(t *testing.T) {
