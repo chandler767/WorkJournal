@@ -30,7 +30,8 @@ func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, 
 }
 
 // sweepImports deletes the audio of imported recordings that started on a
-// day before cutoff, with their processing cache, keeping the note sidecar.
+// day before cutoff, with their processing cache, keeping the note sidecar,
+// and uploads a crash cut off more than a day ago.
 // An import not processed yet (pending, or with no import record) is kept.
 // The day is the id's prefix (<day>-<HHMM>-imported).
 func sweepImports(p config.Paths, st *store.Store, cutoff string) error {
@@ -44,6 +45,13 @@ func sweepImports(p config.Paths, st *store.Store, cutoff string) error {
 	var errs []error
 	for _, e := range entries {
 		id := e.Name()
+		if !e.IsDir() && strings.HasPrefix(id, ".upload-") {
+			// An upload cut off by a crash (see upload.Server.save).
+			if fi, ierr := e.Info(); ierr == nil && time.Since(fi.ModTime()) > 24*time.Hour {
+				os.Remove(filepath.Join(p.Imports(), id))
+			}
+			continue
+		}
 		if !e.IsDir() || len(id) < 10 {
 			continue
 		}

@@ -271,9 +271,20 @@ func TestSweepRemovesOldImportedAudio(t *testing.T) {
 	mk("2026-10-03-0900-imported", store.StatusPending)     // old, not processed yet: kept
 	mk("2026-10-04-0900-imported", "")                      // no record (import interrupted): kept
 	mk("2026-10-14-0900-imported", store.StatusDone)        // recent: kept
+	stale, fresh := filepath.Join(p.Imports(), ".upload-1"), filepath.Join(p.Imports(), ".upload-2")
+	for _, f := range []string{stale, fresh} {
+		if err := os.WriteFile(f, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(stale, old, old)
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
 	if _, err := Sweep(p, st, now, 7); err != nil {
 		t.Fatal(err)
+	}
+	if exists(stale) || !exists(fresh) {
+		t.Errorf("cut-off uploads: stale kept %v, fresh kept %v", exists(stale), exists(fresh))
 	}
 	for id, gone := range map[string]bool{
 		"2026-10-01-1830-imported": true, "2026-10-02-0900-imported": true,
