@@ -12,12 +12,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"workjournal/internal/config"
+	"workjournal/internal/process"
 	"workjournal/internal/retention"
 )
 
@@ -32,6 +34,11 @@ commands:
   process [--day D --hour H]  process pending hours, or reprocess one hour
   close-day [--day D]         write the day's journal entry (default today)
   rollup [--week W]           write the weekly rollup (default this week)
+  import FILE --start TIME [--title T] [--context C]
+                              import a recording made away from the Mac (a phone
+                              memo) as an in-person meeting starting at TIME
+                              (RFC 3339, e.g. 2026-10-21T18:30:00-04:00), and
+                              process it now
   autostart on|off|status     run serve at login (on also starts it now; off stops it)
   mcp                         serve the journal read-only to Claude clients (MCP over stdio)
 
@@ -63,7 +70,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	hour := fset.Int("hour", -1, "hour 0-23")
 	week := fset.String("week", "", "ISO week YYYY-Www")
 	rebuild := fset.Bool("rebuild", false, "setup: rebuild the recorder even if it is built")
-	if err := fset.Parse(rest); err != nil {
+	start := fset.String("start", "", "import: when the recording started (RFC 3339)")
+	title := fset.String("title", "", "import: the meeting's title")
+	note := fset.String("context", "", "import: your note about the recording")
+	if err := fset.Parse(interspersed(rest)); err != nil {
 		return 2
 	}
 	if !allowed(cmd, fset) {
@@ -111,6 +121,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if d, err = defaultAutostartDeps(*cfgPath, cfg); err == nil {
 			err = runAutostart(fset.Arg(0), d, stdout)
 		}
+	case "import":
+		if fset.NArg() != 1 || *start == "" {
+			fmt.Fprintf(stderr, "journal import: want one FILE and --start\n%s", usage)
+			return 2
+		}
+		var t time.Time
+		if t, err = time.Parse(time.RFC3339, *start); err != nil {
+			fmt.Fprintf(stderr, "journal import: --start must be RFC 3339 (e.g. 2026-10-21T18:30:00-04:00), got %q\n", *start)
+			return 2
+		}
+		err = runImport(ctx, cfg, *cfgPath, loc, process.ImportRequest{Path: fset.Arg(0), Start: t, Title: *title, Context: *note}, stdout)
 	case "serve", "process", "close-day", "rollup":
 		err = runApp(ctx, cmd, cfg, *cfgPath, loc, *day, *hour, *week)
 	default:
@@ -126,7 +147,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // allowed reports whether every flag set on the command line applies to cmd.
 func allowed(cmd string, fset *flag.FlagSet) bool {
-	extra := map[string][]string{"setup": {"rebuild"}, "process": {"day", "hour"}, "close-day": {"day"}, "rollup": {"week"}}[cmd]
+	extra := map[string][]string{"setup": {"rebuild"}, "process": {"day", "hour"}, "close-day": {"day"}, "rollup": {"week"},
+		"import": {"start", "title", "context"}}[cmd]
 	ok := true
 	fset.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -145,6 +167,58 @@ func allowed(cmd string, fset *flag.FlagSet) bool {
 		ok = false
 	})
 	return ok
+}
+
+// interspersed moves the arguments that are not flags (or flag values) to
+// the end, so `journal import FILE --start T` parses like
+// `journal import --start T FILE`. Every flag but --rebuild takes a value.
+func interspersed(args []string) []string {
+	var flags, rest []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return append(append(flags, args[i:]...), rest...)
+		case !strings.HasPrefix(a, "-") || a == "-":
+			rest = append(rest, a)
+		default:
+			flags = append(flags, a)
+			name := strings.TrimLeft(a, "-")
+			if !strings.Contains(name, "=") && name != "rebuild" && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		}
+	}
+	return append(flags, rest...)
+}
+
+// runImport stores the recording as an imported meeting and processes it
+// (process.Pipeline.ProcessImports). A processing failure is reported but
+// the import stays: serve tries it again, and its meeting shows the error.
+func runImport(ctx context.Context, cfg config.Config, cfgPath string, loc Locations, req process.ImportRequest, stdout io.Writer) error {
+	a, err := Build(cfg, Options{ConfigPath: cfgPath, Loc: loc})
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	m, err := process.Import(a.Paths, a.Store, req, time.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "imported %s as meeting %s; processing it now\n", req.Path, m.ID)
+	if err := a.Jobs.ProcessImports(ctx); err != nil {
+		return fmt.Errorf("processing failed (the recording is kept and serve tries again): %w", err)
+	}
+	rec, _, err := a.Store.Import(m.ID)
+	if err != nil {
+		return err
+	}
+	if rec.Error != "" {
+		return fmt.Errorf("%s: %s", rec.Status, rec.Error)
+	}
+	fmt.Fprintf(stdout, "done: http://%s/meeting/%s\n", cfg.ListenAddr, m.ID)
+	return nil
 }
 
 func runApp(ctx context.Context, cmd string, cfg config.Config, cfgPath string, loc Locations, day string, hour int, week string) error {

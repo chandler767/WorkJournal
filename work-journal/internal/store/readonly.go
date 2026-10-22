@@ -25,5 +25,27 @@ func OpenReadOnly(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
 	}
+	if err := tempImports(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
+}
+
+// tempImports stands in an empty temporary imports table when the database
+// predates it (serve has not run since the upgrade), so the meeting queries
+// work; it lives in memory and writes nothing to the file.
+func tempImports(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='imports'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	if _, err := db.Exec(`PRAGMA query_only=0`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`CREATE TEMP TABLE imports (id TEXT PRIMARY KEY, status TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)`)
+	if _, qerr := db.Exec(`PRAGMA query_only=1`); err == nil {
+		err = qerr
+	}
+	return err
 }

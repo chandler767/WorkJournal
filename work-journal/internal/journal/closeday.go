@@ -44,6 +44,8 @@ type (
 		Summary      []string            `json:"summary_lines"` // skills.TextLines
 		Decisions    []string            `json:"decisions"`
 		ActionItems  []skills.ActionItem `json:"action_items"`
+		// Imported: made from a recording the user imported (phone audio).
+		Imported bool `json:"imported,omitempty"`
 	}
 )
 
@@ -85,7 +87,7 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 	}
 	for _, m := range meetings {
 		mi := meetingInput{ID: m.ID, Title: m.Title, Start: wallclock.Clock(m.Start), End: wallclock.Clock(m.End),
-			Participants: []string{}, Decisions: []string{}, ActionItems: []skills.ActionItem{}}
+			Participants: []string{}, Decisions: []string{}, ActionItems: []skills.ActionItem{}, Imported: m.Imported}
 		var ms skills.MeetingSummary
 		if m.SummaryJSON != "" {
 			if err := json.Unmarshal([]byte(m.SummaryJSON), &ms); err != nil {

@@ -19,6 +19,8 @@ var ErrMediaExpired = errors.New("raw media expired")
 // Jobs is the work the scheduler triggers.
 type Jobs interface {
 	ProcessPending(ctx context.Context) error
+	// ProcessImports processes imported recordings not processed yet.
+	ProcessImports(ctx context.Context) error
 	// ProcessCurrent summarizes the in-progress hour so far.
 	ProcessCurrent(ctx context.Context) error
 	// ProcessNow asks the recorder to finish its current files, then
@@ -112,6 +114,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	s.step("audio mode", s.Jobs.SyncAudioMode(ctx))
 	paused := s.claudePause(ctx, now)
 	s.process(ctx, now)
+	s.step("process imports", s.Jobs.ProcessImports(ctx))
 	s.partial(ctx, now, cfg)
 	if !paused {
 		s.closeDays(ctx, now, cfg)

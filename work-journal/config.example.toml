@@ -30,7 +30,13 @@ ocr_chars_per_hour = 30000       # 5000-200000: on-screen text sent to Claude pe
 input_max_bytes = 70000          # 10000-2000000: skill inputs over this size send less on-screen text
 pause_on_usage_limit = true      # when Claude's usage limit is hit, stop asking Claude until it resets
 min_free_gb = 5
-listen_addr = "127.0.0.1:4747"
+listen_addr = "127.0.0.1:4747"   # the dashboard; loopback only
+# Phone upload page: a second listener, off by default, that serves only a page for uploading a
+# recording from your phone's browser (see README "Importing phone recordings"). Every request needs
+# upload_token. It never serves the dashboard, recordings or transcripts. Plain HTTP: use it only on
+# a network you trust.
+upload_addr = ""                 # e.g. "0.0.0.0:4748" to listen on the LAN; "" is off
+upload_token = ""                # required with upload_addr: at least 16 characters, e.g. `openssl rand -hex 16`
 meeting_min_two_way_minutes = 2
 # In-person meetings: mic-only conversation (nobody on a call) where your mic hears speech
 # for at least in_person_speech_ratio of a rolling 5-minute window, lasting in_person_min_minutes.

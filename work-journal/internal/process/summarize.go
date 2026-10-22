@@ -86,6 +86,12 @@ type (
 		} `json:"meeting"`
 		Transcript []lineInput `json:"transcript"`
 		Screens    []string    `json:"screens"`
+		// UserNote is the user's own note about an imported recording.
+		UserNote *userNote `json:"user_note,omitempty"`
+	}
+	userNote struct {
+		Title   string   `json:"title"`
+		Context []string `json:"context_lines"` // skills.TextLines
 	}
 )
 
@@ -419,6 +425,12 @@ func (s *SkillSummarizer) meetingInput(doc *HourDoc, m activity.Meeting) (in mee
 		docs = append(docs, d)
 	}
 	docs = append(docs, doc)
+	return s.encodeMeeting(in, docs, m)
+}
+
+// encodeMeeting adds the speech and screen text of docs within m to in and
+// encodes it (see meetingInput).
+func (s *SkillSummarizer) encodeMeeting(in meetingInput, docs []*HourDoc, m activity.Meeting) (_ meetingInput, b []byte, over bool, err error) {
 	in.Transcript, in.Screens = []lineInput{}, []string{}
 	within := func(t time.Time) bool { return !t.Before(m.Start) && !t.After(m.End) }
 	var screens []media.ScreenText
@@ -437,6 +449,34 @@ func (s *SkillSummarizer) meetingInput(doc *HourDoc, m activity.Meeting) (in mee
 	in.Transcript = splitLines(in.Transcript)
 	b, over, err = s.fitOCR(screens, func(ocr []string) any { in.Screens = ocr; return in })
 	return in, b, over, err
+}
+
+// SummarizeImport runs summarize-meeting on an imported recording's
+// meeting m, its speech in doc, with the user's note, and saves the summary
+// and participants. Invalid output is skills.ErrInvalidOutput.
+func (s *SkillSummarizer) SummarizeImport(ctx context.Context, doc *HourDoc, m activity.Meeting, note ImportNote) (skills.MeetingSummary, error) {
+	var in meetingInput
+	in.Meeting.ID, in.Meeting.App, in.Meeting.Title = m.ID, m.App, m.Title
+	in.Meeting.Start, in.Meeting.End = m.Start.Format(time.RFC3339), m.End.Format(time.RFC3339)
+	if note.Title != "" || note.Context != "" {
+		in.UserNote = &userNote{Title: note.Title, Context: skills.TextLines(note.Context)}
+	}
+	in, b, over, err := s.encodeMeeting(in, []*HourDoc{doc}, m)
+	if err != nil {
+		return skills.MeetingSummary{}, err
+	}
+	if over {
+		s.logOversized(doc, "summarize-meeting", b)
+	}
+	path, err := s.writeInput(doc, "summarize-meeting", "-"+m.ID, b)
+	if err != nil {
+		return skills.MeetingSummary{}, err
+	}
+	var ms skills.MeetingSummary
+	if err := s.Runner.Run(ctx, "summarize-meeting", path, &ms); err != nil {
+		return skills.MeetingSummary{}, err
+	}
+	return ms, s.saveMeeting(doc.Day, m, ms, in.Transcript)
 }
 
 func clock(d time.Duration) string {

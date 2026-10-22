@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Canonical WAV parameters of ToWav16k's output.
@@ -215,4 +216,23 @@ func WriteWav16k(path string, pcm []byte) error {
 		b = append(b, 0)
 	}
 	return os.WriteFile(path, b, 0o644)
+}
+
+// Wav16kDuration returns how long the 16 kHz mono 16-bit PCM WAV at path
+// plays, from its data chunk's size.
+func Wav16kDuration(path string) (time.Duration, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	_, n, _, err := parseWav16k(f, fi.Size())
+	if err != nil {
+		return 0, fmt.Errorf("wav %s: %w", path, err)
+	}
+	return time.Duration(n) * time.Second / (wavRate * wavChannels * wavBits / 8), nil
 }

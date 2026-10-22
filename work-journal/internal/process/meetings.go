@@ -123,7 +123,8 @@ func appendSpeech(dst []activity.SpeechSpan, us []media.Utterance) []activity.Sp
 // recorded, and deletes the day's meeting records that overlap the hour but
 // are no longer detected (detection changed as more audio arrived, or a
 // meeting turned out to have one voice), with their participants. A meeting
-// with a participant the user confirmed is never deleted.
+// with a participant the user confirmed, or made from an imported
+// recording, is never deleted.
 func (p *Pipeline) upsertMeetings(doc *HourDoc) error {
 	day, ms := doc.Day, doc.Meetings
 	for _, m := range ms {
@@ -148,7 +149,7 @@ func (p *Pipeline) upsertMeetings(doc *HourDoc) error {
 		return err
 	}
 	for _, r := range recs {
-		if !w.overlaps(r.Start, r.End, false) ||
+		if r.Imported || !w.overlaps(r.Start, r.End, false) ||
 			slices.ContainsFunc(ms, func(m activity.Meeting) bool { return m.ID == r.ID }) {
 			continue
 		}
