@@ -85,3 +85,13 @@ open -n recorder/build/WorkJournalRecorder.app --args run \
 - [ ] The meeting page shows the other voices as `Speaker 1`, `Speaker 2`, … (not "others"), and each label mostly follows one person.
 - [ ] Name a speaker on the meeting page: `voices/<name>.json` appears, that speaker's lines in the meeting show the name, and the name appears in Settings → Voice profiles.
 - [ ] Record a second call with the same person: their lines get the name automatically. If they do not, or a different person gets it, note the cosine scores and revisit `voice_match_threshold` (0.60 came from the spike's Mandarin and synthetic samples, see docs/spike-diarization.md).
+
+## 10. Audio reminder while audio is off
+
+- [ ] Menu bar → Audio: Off. Allow notifications for WorkJournalRecorder if macOS asks.
+- [ ] Open a meeting window (for example a Zoom test meeting): an "Audio is off" notification names the app (or says "A call" when macOS does not report which app uses the microphone) and has a **Switch to Auto** button. Leave the meeting: the notification disappears from Notification Center.
+- [ ] Join again within 10 minutes: no second reminder.
+- [ ] Start a call and press **Switch to Auto**: the menu shows Audio: Auto (recording) and the reminder is gone.
+- [ ] With audio Off, leave the Mac idle for `--idle-minutes`, then move the mouse: a "Welcome back" reminder appears and clears itself after 2 minutes.
+- [ ] Paused, with audio Off: no reminder for a call.
+- [ ] With audio Off and an excluded app (for example 1Password) in front during a call: no reminder, and stderr does not name the app.
