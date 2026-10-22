@@ -88,6 +88,11 @@
         },
         "event.pull_request.head.ref": {
           "matches": "^tessl/"
+        },
+        "event.sender.login": {
+          "not": {
+            "equals": "tessl-app[bot]"
+          }
         }
       },
       "concurrency": {
