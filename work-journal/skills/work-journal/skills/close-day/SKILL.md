@@ -20,6 +20,7 @@ Headless skill for the work-journal app. The prompt names one input file.
 JSON with `day`, `hours`, `meetings`, and `totals` (category to minutes).
 - Each hour is `{hour, narrative_lines, notes, main_focus, action_items}`. `narrative_lines` is a short account of the hour, split into pieces to join with spaces; it may be absent or `[]` for older hours. `notes` carry the specifics.
 - Each meeting is `{id, title, start, end, participants, summary_lines, decisions, action_items}`; join `summary_lines` with spaces to get its summary. `imported: true` marks a meeting the user recorded on their phone and imported (for example an in-person event away from the Mac).
+- `user_notes`: notes the user wrote for the journal, each `{kind, from, to, title, context_lines}`. Join `context_lines` with spaces. `from`/`to` (`HH:MM`, `to` exclusive) is the time range a note covers; both are absent for a note on the whole day. They may be `[]`.
 - Prefer the concrete details in the narrative and `notes` (files, tickets, people, decisions) over generic phrasing when writing the Summary and Timeline.
 
 ## Rules specific to this skill
@@ -28,6 +29,7 @@ JSON with `day`, `hours`, `meetings`, and `totals` (category to minutes).
 - Summary: 2-4 sentences. Timeline: one bullet per hour with notes. Time by category: a bullet per category with hours and minutes, from `totals` only.
 - Meetings: title, time, and one-line outcome from the input. Action items: collected from hours and meetings, with owner.
 - Open threads: unresolved items the input supports; otherwise `None.`
+- `user_notes` are the user's own words, not recordings. Use a `context` note to explain and name the work the hours and meetings show, and put a context note on the whole day into the Summary where it adds something; never add hours, time, meetings or action items that only a note supports, and never change `totals`. Follow a `correction` as the user's statement (a speaker it names, speech it says to disregard: leave that out).
 - Use `None.` under any section with no data. Add no other headings.
 
 ## Output schema

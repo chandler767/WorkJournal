@@ -128,12 +128,14 @@ Claude is told to treat them as untrusted data, and the dashboard shows no image
 or the journals and keeps only links into the dashboard itself; a Content-Security-Policy
 stops every page from loading anything from another site.
 
-The same tools are available to any Claude client through `journal mcp`, a read-only MCP
-server over stdio. It opens the database read-only, so it runs safely beside `journal serve`.
-It returns only what the dashboard shows: summaries, privacy-filtered transcripts (removed
-speech appears only as "4 min of non-work audio removed"; hours whose privacy check failed
-show that note, not speech), meetings, time totals and the journal entries. It never returns
-raw recordings, screenshots, file paths, `cache/`, voice profiles or privacy decisions.
+The same tools are available to any Claude client through `journal mcp`, an MCP server over
+stdio. It opens the database read-only, so it runs safely beside `journal serve`; its one
+write tool, `add_note`, can only add a [note](#tell-the-journal) and never edits or deletes
+anything (Ask does not get it). It returns only what the dashboard shows: summaries,
+privacy-filtered transcripts (removed speech appears only as "4 min of non-work audio
+removed"; hours whose privacy check failed show that note, not speech), meetings, time
+totals, the journal entries and your notes. It never returns raw recordings, screenshots,
+file paths, `cache/`, voice profiles or privacy decisions.
 
 | Tool | What it returns |
 | --- | --- |
@@ -144,6 +146,8 @@ raw recordings, screenshots, file paths, `cache/`, voice profiles or privacy dec
 | `get_meeting(id, include_transcript?, offset?)` | summary, decisions, action items, participants; the transcript on request, paged |
 | `time_report(from, to, group_by)` | minutes by `category`, `day` or `app` |
 | `get_week(week)` | the weekly rollup and minutes per category for each day |
+| `list_notes(date, offset?)` | the notes you wrote on that day: id, kind, time range and text |
+| `add_note(date, kind, text, from?, to?)` | adds a context note or a correction (see [Tell the journal](#tell-the-journal)); the only write |
 
 Dates are `YYYY-MM-DD`, `today` or `yesterday`; weeks are `YYYY-Www` (e.g. `2026-W41`).
 Each response is capped at about 40 KB; a cut response says which offset to ask for next.
@@ -171,6 +175,49 @@ Add `--config /path/to/config.toml` after `mcp` if your config is not
 
 `go test -tags=ask -run TestAskEval ./internal/mcpserver/` checks real answers over a
 fixture day (it needs a logged-in `claude`).
+
+## Tell the journal
+
+You can add what the recordings miss, or correct what they got wrong, with a note on an
+hour, a time range within a day, or a whole day. There are two kinds:
+
+- **Context**: free text or a pasted document, such as "this was the Cloudflare planning
+  call". It goes to the hour and meeting summaries for the time it covers, and to the day's
+  journal entry (and so to the weekly rollup), and search finds it. It is your note, never a
+  recording: it adds no time to any category and cannot create or name a meeting on its
+  own. A context note that names people does not name a speaker unless the transcript ties
+  the name to that speaker.
+- **Correction**: an instruction about what was recorded, such as "13:10–13:20 was people
+  next to me, not me; disregard it" or "the person called Speaker 2 at 15:00 is Maya". It
+  goes to the [privacy filter](#privacy) as a strong hint for the speech it covers, and to
+  the summaries as your own statement. Speech a correction says to disregard is removed
+  just like the filter's own removals: it never reaches `derived/`, search, meeting
+  detection, notes or the journal, and the hour page shows "speech removed by your note".
+
+Add a note in the **Tell the journal** box on an hour or day page (kind, an optional time
+range, and a large text box for pasting). Existing notes are listed there with edit and
+delete. From the terminal:
+
+```sh
+journal note add --date 2026-10-21 --kind correction --from 13:10 --to 13:20 \
+  --text "people next to me, not me; disregard it"
+journal note add --date 2026-10-21 --kind context --file ~/Desktop/planning-notes.md
+journal note list --date 2026-10-21
+```
+
+or from a Claude chat with the MCP `add_note` tool. A note is at most 100 KB of text;
+binary files are refused.
+
+Saving, changing or deleting a note queues the hours it covers, and `journal serve` picks
+them up within a minute: a correction clears those hours' cached privacy decisions (as
+Reprocess does) and processes them again; a context note has them summarized again. If
+the day's journal entry or that week's rollup is already written, it is written again.
+Hours not processed yet just read the note when they are. **A correction cannot bring back
+audio that retention has already deleted**: once `raw/<day>/` is gone (after
+`retention_days`), the note is still saved and the summaries are written again with it,
+but the transcript stays as it was. Notes are things you wrote, not recordings, so
+retention never removes them; they live in `journal.db`. With the privacy filter turned off
+(`privacy_filter = false`) a correction still reaches the summaries but removes no speech.
 
 ## Screen capture
 
@@ -404,7 +451,8 @@ already-built recorder.
   are kept per utterance in `cache/<day>/privacy.json`, so the in-progress hour's passes
   send only new speech (with up to two minutes of earlier speech as context). To decide,
   Claude does see that speech once; its input file is deleted right after the run. Reprocess clears
-  the hour's decisions, so a wrong removal can be undone. If Claude cannot run, nothing
+  the hour's decisions, so a wrong removal can be undone, and a [correction](#tell-the-journal)
+  you write tells the filter what to remove (or keep) for the time it covers. If Claude cannot run, nothing
   about the hour is written and it is retried later; if its answer is invalid, the hour is
   marked needs review with its speech withheld ("Speech not shown: privacy check failed",
   no summary) until you reprocess it. Raw audio is not

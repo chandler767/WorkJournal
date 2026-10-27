@@ -1,0 +1,75 @@
+{
+ "day": "2026-10-07",
+ "hour": 13,
+ "meetings": [
+  {
+   "id": "2026-10-07-1310-in-person",
+   "app": "In person",
+   "start": "13:10:00",
+   "end": "13:19:00",
+   "participants": [
+    "Speaker 2",
+    "Speaker 3"
+   ]
+  }
+ ],
+ "known_people": [
+  "Priya"
+ ],
+ "user_voice_enrolled": true,
+ "user_notes": [
+  {
+   "kind": "correction",
+   "from": "13:10",
+   "to": "13:20",
+   "title": "",
+   "context_lines": [
+    "13:10-13:20 was people at the next desk talking, not me; disregard it."
+   ]
+  }
+ ],
+ "utterances": [
+  {
+   "index": 0,
+   "time": "13:05:12",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Okay, so the retry has to wrap the whole fetch, not just the parse."
+  },
+  {
+   "index": 1,
+   "time": "13:10:04",
+   "track": "mic",
+   "speaker": "Speaker 2",
+   "text": "Did the deploy of the billing service go out this morning?"
+  },
+  {
+   "index": 2,
+   "time": "13:10:15",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "Yes, but the export job is still timing out on large accounts."
+  },
+  {
+   "index": 3,
+   "time": "13:10:31",
+   "track": "mic",
+   "speaker": "Speaker 2",
+   "text": "Let's raise the worker timeout and look at it after lunch."
+  },
+  {
+   "index": 4,
+   "time": "13:18:50",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "Sounds good, I'll open a ticket."
+  },
+  {
+   "index": 5,
+   "time": "13:21:40",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Now run the tests again with the race detector."
+  }
+ ]
+}
