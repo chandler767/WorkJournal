@@ -57,6 +57,7 @@ type hourPage struct {
 	DocNote                    string
 	Removed                    []string // one neutral line per removed span
 	Withheld                   bool     // the privacy check failed: no speech shown
+	Notes                      notesBox
 	Rev                        string
 }
 
@@ -143,6 +144,10 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 		}
 		p.Segments = append(p.Segments, segRow{Start: g.Start.Format(time.RFC3339Nano), Clock: wallclock.Clock(g.Start),
 			App: g.App, Title: g.Title, Category: g.Category, Source: g.Source, Dur: g.End.Sub(g.Start), Color: colorOf(colors, g.Category)})
+	}
+	if p.Notes, err = s.notesBoxFor(day, hour, r.URL.Query()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	render(w, "hour", p)
 }

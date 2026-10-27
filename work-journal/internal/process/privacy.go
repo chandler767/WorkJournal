@@ -66,8 +66,8 @@ type (
 		// KnownPeople are the enrolled voices' names (coworkers named on
 		// meeting pages); UserVoiceEnrolled says whether the user's own
 		// voice is, i.e. whether "You" can appear in an in-person meeting.
-		KnownPeople       []string      `json:"known_people"`
-		UserVoiceEnrolled bool          `json:"user_voice_enrolled"`
+		KnownPeople       []string `json:"known_people"`
+		UserVoiceEnrolled bool     `json:"user_voice_enrolled"`
 		// UserNotes are the user's corrections covering the hour
 		// (notes.Corrections).
 		UserNotes  []skills.UserNote `json:"user_notes"`

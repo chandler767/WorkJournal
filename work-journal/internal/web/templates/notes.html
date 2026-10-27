@@ -1,0 +1,32 @@
+{{define "notesbox"}}
+<section class="tell" id="notes">
+  <h2>Tell the journal</h2>
+  {{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
+  {{if .Error}}<div class="banner" role="alert">Note not saved: {{.Error}}</div>{{end}}
+  {{range .Notes}}
+  <details class="user-note" id="note-{{.ID}}">
+    <summary><span class="badge{{if .Correction}} warn{{end}}">{{.Kind}}</span> <span class="muted">{{.Range}} · {{.Source}}{{if .Edited}} · edited{{end}}</span><span class="note-text">{{.Text}}</span></summary>
+    <form method="post" action="/notes/{{.ID}}" class="note-form">
+      <input type="hidden" name="return" value="{{$.ReturnPath}}">
+      <label>Kind <select name="kind"><option value="context"{{if not .Correction}} selected{{end}}>Context</option><option value="correction"{{if .Correction}} selected{{end}}>Correction</option></select></label>
+      <label>From <input name="from" value="{{.From}}" placeholder="HH:MM" pattern="[0-2][0-9]:[0-5][0-9]" size="5"></label>
+      <label>To <input name="to" value="{{.To}}" placeholder="HH:MM" pattern="[0-2][0-9]:[0-5][0-9]" size="5"></label>
+      <textarea name="text" rows="6" required aria-label="Note text">{{.Text}}</textarea>
+      <button type="submit">Save</button>
+    </form>
+    <form method="post" action="/notes/{{.ID}}/delete"><input type="hidden" name="return" value="{{$.ReturnPath}}"><button type="submit" class="secondary">Delete</button></form>
+  </details>
+  {{end}}
+  <form method="post" action="/notes" class="note-form">
+    <input type="hidden" name="date" value="{{.Date}}">
+    <input type="hidden" name="return" value="{{.ReturnPath}}">
+    <label>Kind <select name="kind"><option value="context">Context</option><option value="correction">Correction</option></select></label>
+    <label>From <input name="from" value="{{.From}}" placeholder="HH:MM" pattern="[0-2][0-9]:[0-5][0-9]" size="5"></label>
+    <label>To <input name="to" value="{{.To}}" placeholder="HH:MM" pattern="[0-2][0-9]:[0-5][0-9]" size="5"></label>
+    <span class="muted">{{if .Hour}}Clear both for the whole day.{{else}}Leave empty for the whole day.{{end}}</span>
+    <textarea name="text" rows="6" required aria-label="Note text" placeholder="Context: &quot;this was the Cloudflare planning call&quot;, or paste a doc. Correction: &quot;disregard speech 13:10–13:20, it was people next to me&quot;."></textarea>
+    <button type="submit">Save note</button>
+  </form>
+  {{if .RawGone}}<p class="muted">This day's raw recordings were already removed, so a correction can change the summaries but not the transcript.</p>{{end}}
+</section>
+{{end}}

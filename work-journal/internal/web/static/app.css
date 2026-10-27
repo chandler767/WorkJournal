@@ -129,3 +129,7 @@ mark { background: var(--warn-bg); color: var(--warn-text); padding: 0 .15rem; b
 }
 .meeting-meta { margin: .3rem 0 0; }
 .import-error { color: var(--bad-text); background: var(--bad-bg); padding: 0 .3rem; border-radius: 3px; font-size: .9rem; }
+.tell .note-form { display: flex; flex-wrap: wrap; gap: .4rem .8rem; align-items: center; margin: .5rem 0; }
+.tell .note-form textarea { flex-basis: 100%; font: inherit; padding: .4rem .5rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; resize: vertical; }
+.user-note > summary { cursor: pointer; }
+.user-note .note-text { display: block; white-space: pre-wrap; max-height: 6em; overflow: hidden; }
