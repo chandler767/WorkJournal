@@ -22,6 +22,7 @@ JSON object with exactly these fields:
 - `meetings`: array of `{id, app, start, end, participants}` (`start`/`end` are `HH:MM:SS`). `participants` are the speaker labels heard in the meeting and names stored for it. `app` is the meeting app (e.g. `zoom.us`), or `In person` for a conversation detected only from voices near the laptop.
 - `known_people`: names of people whose voices the user has enrolled (coworkers met in meetings).
 - `user_voice_enrolled`: whether the user's own voice is enrolled. If false, the user's speech inside an `In person` meeting is labelled `Speaker N` like everyone else's.
+- `user_notes`: corrections the user wrote about this recording, as `{kind, from, to, title, context_lines}`: `kind` is `correction`, `from`/`to` (`HH:MM`, `to` exclusive) the time range it covers, both absent for the whole day; join `context_lines` with spaces. Usually `[]`.
 - `utterances`: array of `{index, time, track, speaker, text, context}` in time order. `time` is `HH:MM:SS`. `track` is `mic` (the laptop microphone: the user and anyone nearby) or `system` (audio the computer played: calls, videos). `You` is the user. `others`, `Speaker N` and `Speaker ?` are unidentified voices; a name is a known voice. `context: true` lines were judged earlier and are given so you can follow the conversation. Never put a context line in `redact`. A `drop` range may include context lines when they belong to a conversation that the new lines now show is removable (e.g. a chat that started ambiguously); do not drop context lines for any other reason.
 
 ## Rules specific to this skill
@@ -39,8 +40,13 @@ Keep (never drop):
 - Single remarks, dictation, and anything about work, tools, customers, code or the company.
 - When unsure, keep. Only drop what the text clearly supports.
 
+User corrections (`user_notes`):
+- A correction is the user's own statement about what was recorded, and outranks your own judgement for the utterances it covers (those whose `time` is in its range). When it says to disregard, remove or ignore speech (for example "13:10-13:20 was people next to me, not me; disregard it"), drop every non-context utterance in its range with `reason` `user_note` and `confidence` 1, even work talk and even when you would keep it. Drop context lines only as the rules above allow.
+- Follow what a correction states as fact (for example "Speaker 2 at 15:00 is my brother" makes that call `personal_non_work`; "the voices at 11:00 are my teammates" makes them coworkers, so keep).
+- Never drop an utterance outside a correction's range because of it, and never use `user_note` as a reason without a correction asking for it.
+
 Ranges and confidence:
-- `from` and `to` are utterance indexes, inclusive, of consecutive utterances of one dropped conversation; `reason` is `bystander` or `personal_non_work`.
+- `from` and `to` are utterance indexes, inclusive, of consecutive utterances of one dropped conversation; `reason` is `bystander`, `personal_non_work`, or `user_note` (only for a correction, see above).
 - `confidence` 0-1: 0.9+ when the text plainly shows it (e.g. "love you, mom"); 0.5-0.7 when it is a judgement call. Do not drop below 0.5; keep instead.
 
 Redact (`redact`), for every non-context utterance you keep:
@@ -84,7 +90,8 @@ Redact (`redact`), for every non-context utterance you keep:
             "type": "string",
             "enum": [
               "bystander",
-              "personal_non_work"
+              "personal_non_work",
+              "user_note"
             ]
           },
           "confidence": {

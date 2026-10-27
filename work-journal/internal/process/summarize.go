@@ -19,6 +19,7 @@ import (
 	"workjournal/internal/categorize"
 	"workjournal/internal/config"
 	"workjournal/internal/media"
+	"workjournal/internal/notes"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
 )
@@ -51,6 +52,8 @@ type (
 		Meetings   []meetingBrief `json:"meetings"`
 		Transcript []lineInput    `json:"transcript"`
 		OCR        []string       `json:"ocr"`
+		// UserNotes are the user's notes covering the hour (notes.ForHour).
+		UserNotes []skills.UserNote `json:"user_notes"`
 	}
 	segmentInput struct {
 		Index    int     `json:"index"`
@@ -87,11 +90,9 @@ type (
 		Transcript []lineInput `json:"transcript"`
 		Screens    []string    `json:"screens"`
 		// UserNote is the user's own note about an imported recording.
-		UserNote *userNote `json:"user_note,omitempty"`
-	}
-	userNote struct {
-		Title   string   `json:"title"`
-		Context []string `json:"context_lines"` // skills.TextLines
+		UserNote *skills.UserNote `json:"user_note,omitempty"`
+		// UserNotes are the user's notes covering the meeting (notes.ForSpan).
+		UserNotes []skills.UserNote `json:"user_notes,omitempty"`
 	}
 )
 
@@ -384,6 +385,11 @@ func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) ([]byte, bool, 
 		in.Transcript = append(in.Transcript, lineInput{Speaker: speaker(u), Text: u.Text})
 	}
 	in.Transcript = splitLines(in.Transcript)
+	ns, err := s.Store.NotesOn(doc.Day)
+	if err != nil {
+		return nil, false, fmt.Errorf("notes: %w", err)
+	}
+	in.UserNotes = notes.ForHour(ns, doc.Hour)
 	return s.fitOCR(doc.Screens, func(ocr []string) any { in.OCR = ocr; return in })
 }
 
@@ -447,6 +453,20 @@ func (s *SkillSummarizer) encodeMeeting(in meetingInput, docs []*HourDoc, m acti
 		}
 	}
 	in.Transcript = splitLines(in.Transcript)
+	ns, err := s.Store.NotesOn(config.DayKey(m.Start))
+	if err != nil {
+		return in, nil, false, fmt.Errorf("notes: %w", err)
+	}
+	if day := config.DayKey(m.End); day != config.DayKey(m.Start) {
+		more, err := s.Store.NotesOn(day)
+		if err != nil {
+			return in, nil, false, fmt.Errorf("notes: %w", err)
+		}
+		ns = append(ns, more...)
+	}
+	if un := notes.ForSpan(ns, m.Start, m.End); len(un) > 0 {
+		in.UserNotes = un
+	}
 	b, over, err = s.fitOCR(screens, func(ocr []string) any { in.Screens = ocr; return in })
 	return in, b, over, err
 }
@@ -459,7 +479,7 @@ func (s *SkillSummarizer) SummarizeImport(ctx context.Context, doc *HourDoc, m a
 	in.Meeting.ID, in.Meeting.App, in.Meeting.Title = m.ID, m.App, m.Title
 	in.Meeting.Start, in.Meeting.End = m.Start.Format(time.RFC3339), m.End.Format(time.RFC3339)
 	if note.Title != "" || note.Context != "" {
-		in.UserNote = &userNote{Title: note.Title, Context: skills.TextLines(note.Context)}
+		in.UserNote = &skills.UserNote{Title: note.Title, Context: skills.TextLines(note.Context)}
 	}
 	in, b, over, err := s.encodeMeeting(in, []*HourDoc{doc}, m)
 	if err != nil {

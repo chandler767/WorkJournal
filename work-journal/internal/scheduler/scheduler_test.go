@@ -59,6 +59,7 @@ func (f *fakeJobs) Retain(context.Context) error         { return f.rec("retain"
 func (f *fakeJobs) DiskCheck(context.Context) error      { return f.rec("disk") }
 func (f *fakeJobs) SyncAudioMode(context.Context) error  { return f.rec("audio") }
 func (f *fakeJobs) ProcessImports(context.Context) error { return f.rec("imports") }
+func (f *fakeJobs) ProcessNotes(context.Context) error   { return f.rec("notes") }
 func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, s, n string) error {
 	return f.rec("enroll " + m + s + n)
 }
@@ -91,11 +92,12 @@ func newSchedJ(t *testing.T) (*Scheduler, *fakeJobs, *store.Store, journals) {
 	}, j, st, js
 }
 
-// without returns calls excluding the per-tick disk check.
+// without returns calls excluding the per-tick jobs (disk check, audio
+// mode, imports, notes).
 func (f *fakeJobs) without() []string {
 	var out []string
 	for _, c := range f.calls {
-		if c != "disk" && c != "audio" && c != "imports" {
+		if c != "disk" && c != "audio" && c != "imports" && c != "notes" {
 			out = append(out, c)
 		}
 	}

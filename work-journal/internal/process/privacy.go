@@ -16,6 +16,7 @@ import (
 
 	"workjournal/internal/activity"
 	"workjournal/internal/media"
+	"workjournal/internal/notes"
 	"workjournal/internal/skills"
 )
 
@@ -48,8 +49,12 @@ const redactedMark = "[redacted]"
 type RemovedSpan struct {
 	Start  time.Time `json:"start"`
 	End    time.Time `json:"end"`
-	Reason string    `json:"reason"` // "bystander" or "personal_non_work"
+	Reason string    `json:"reason"` // "bystander", "personal_non_work" or ReasonUserNote
 }
+
+// ReasonUserNote is the removal reason of speech a correction the user
+// wrote told the filter to disregard.
+const ReasonUserNote = "user_note"
 
 // Skill input shapes, matching the "Input" section of privacy-filter's
 // SKILL.md.
@@ -63,7 +68,10 @@ type (
 		// voice is, i.e. whether "You" can appear in an in-person meeting.
 		KnownPeople       []string      `json:"known_people"`
 		UserVoiceEnrolled bool          `json:"user_voice_enrolled"`
-		Utterances        []privacyLine `json:"utterances"`
+		// UserNotes are the user's corrections covering the hour
+		// (notes.Corrections).
+		UserNotes  []skills.UserNote `json:"user_notes"`
+		Utterances []privacyLine     `json:"utterances"`
 	}
 	privacyMeeting struct {
 		ID           string   `json:"id"`
@@ -157,7 +165,7 @@ func (p *Pipeline) privacyOn() bool {
 // cached one. A skill failure is returned as is: skills.ErrUnavailable is
 // transient (nothing is written, the hour is retried); on
 // skills.ErrInvalidOutput the final pass withholds the hour's speech.
-func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us []media.Utterance, meetings []activity.Meeting) (map[string]privacyDecision, error) {
+func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us []media.Utterance, meetings []activity.Meeting) (_ map[string]privacyDecision, err error) {
 	cache := p.loadPrivacyCache(day)
 	var undecided []time.Time
 	for _, u := range us {
@@ -170,6 +178,9 @@ func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us [
 	}
 	in := privacyInput{Day: day, Hour: hour, Meetings: p.privacyMeetings(us, meetings), Utterances: []privacyLine{}}
 	in.KnownPeople, in.UserVoiceEnrolled = p.knownPeople()
+	if in.UserNotes, err = p.corrections(day, us); err != nil {
+		return nil, err
+	}
 	var sent []media.Utterance // sent[i] is line i
 	for _, u := range us {
 		_, decided := cache.Lines[privacyKey(u)]
@@ -278,6 +289,20 @@ func (p *Pipeline) privacyMeetings(us []media.Utterance, meetings []activity.Mee
 	return out
 }
 
+// corrections returns the user's corrections on day that cover the speech
+// us (in time order). Saving one clears the decisions it covers, so they
+// are asked again with it.
+func (p *Pipeline) corrections(day string, us []media.Utterance) ([]skills.UserNote, error) {
+	if len(us) == 0 {
+		return []skills.UserNote{}, nil
+	}
+	ns, err := p.Store.NotesOn(day)
+	if err != nil {
+		return nil, fmt.Errorf("notes: %w", err)
+	}
+	return notes.Corrections(ns, us[0].Start, us[len(us)-1].End), nil
+}
+
 // knownPeople returns the enrolled voices' names other than the user's, and
 // whether the user's own voice ("me") is enrolled.
 func (p *Pipeline) knownPeople() ([]string, bool) {
@@ -321,8 +346,10 @@ func (p *Pipeline) applyPrivacy(us []media.Utterance, dec map[string]privacyDeci
 	return kept, removedSpans(us, dropped)
 }
 
+// dropped reports whether d removes its utterance: dropped with at least
+// privacy_drop_confidence, or because the user's correction said so.
 func (p *Pipeline) dropped(d privacyDecision) bool {
-	return d.Drop && d.Confidence >= p.Cfg.PrivacyDropConfidence
+	return d.Drop && (d.Confidence >= p.Cfg.PrivacyDropConfidence || d.Reason == ReasonUserNote)
 }
 
 // withoutDropped returns the utterances of us (unlabelled speech, for

@@ -243,7 +243,7 @@ func TestSummarizerHourInputShape(t *testing.T) {
 		`"meetings":[{"app":"zoom.us","end":"10:55","id":"2026-10-07-1050-zoom-us","start":"10:50"}],` +
 		`"ocr":["Agenda"],` +
 		`"segments":[{"app":"zoom.us","category":"","index":0,"minutes":20,"start":"10:10","title":"Zoom Meeting"},{"app":"Code","category":"Break/Idle","index":2,"minutes":5,"start":"10:40","title":"main.go"}],` +
-		`"transcript":[{"speaker":"You","text":"hello"},{"speaker":"Speaker 1","text":"hi"}]}`
+		`"transcript":[{"speaker":"You","text":"hello"},{"speaker":"Speaker 1","text":"hi"}],"user_notes":[]}`
 	if string(b) != want {
 		t.Fatalf("summarize-hour input\n got %s\nwant %s", b, want)
 	}

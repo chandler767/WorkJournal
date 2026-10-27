@@ -7,7 +7,7 @@ import (
 )
 
 // TextDoc is one full-text-indexed document. Kind is one of
-// transcript|ocr|note|meeting.
+// transcript|ocr|note|meeting|user_note (a context note the user wrote).
 type TextDoc struct {
 	Kind string
 	Day  string
@@ -23,8 +23,9 @@ type SearchHit struct {
 }
 
 // notImported leaves out the docs of imported recordings, which are indexed
-// per import (ReplaceImportText), not per hour.
-const notImported = ` AND ref NOT IN (SELECT 'meeting/'||id FROM imports)`
+// per import (ReplaceImportText), and the user's notes (indexed per note),
+// not per hour.
+const notImported = ` AND ref NOT IN (SELECT 'meeting/'||id FROM imports) AND kind<>'` + KindUserNote + `'`
 
 // ReplaceText atomically replaces all indexed docs for the given day+hour,
 // except those of imported recordings.

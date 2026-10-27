@@ -21,6 +21,8 @@ type Jobs interface {
 	ProcessPending(ctx context.Context) error
 	// ProcessImports processes imported recordings not processed yet.
 	ProcessImports(ctx context.Context) error
+	// ProcessNotes reprocesses what saved, changed or deleted notes queued.
+	ProcessNotes(ctx context.Context) error
 	// ProcessCurrent summarizes the in-progress hour so far.
 	ProcessCurrent(ctx context.Context) error
 	// ProcessNow asks the recorder to finish its current files, then
@@ -117,6 +119,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	s.step("process imports", s.Jobs.ProcessImports(ctx))
 	s.partial(ctx, now, cfg)
 	if !paused {
+		s.step("process notes", s.Jobs.ProcessNotes(ctx))
 		s.closeDays(ctx, now, cfg)
 		s.rollups(ctx, now, cfg)
 	}
