@@ -401,14 +401,14 @@ func TestServerListsReadOnlyToolsAndCalls(t *testing.T) {
 	var names []string
 	for _, tl := range tools.Tools {
 		names = append(names, tl.Name)
-		if tl.Annotations == nil || !tl.Annotations.ReadOnlyHint {
+		if (tl.Annotations == nil || !tl.Annotations.ReadOnlyHint) && !slices.Contains(WriteToolNames, tl.Name) {
 			t.Errorf("%s: not marked read-only", tl.Name)
 		}
 		if tl.InputSchema == nil {
 			t.Errorf("%s: no input schema", tl.Name)
 		}
 	}
-	want := slices.Sorted(slices.Values(ToolNames))
+	want := slices.Sorted(slices.Values(append(slices.Clone(ToolNames), WriteToolNames...)))
 	if got := strings.Join(slices.Sorted(slices.Values(names)), ","); got != strings.Join(want, ",") {
 		t.Fatalf("tools %s, want %s", got, strings.Join(want, ","))
 	}

@@ -106,7 +106,7 @@ func (j *Journal) link(path string) string {
 // hitPath maps an index Ref to a dashboard path, or "" for an unknown one.
 func hitPath(ref string) string {
 	switch {
-	case strings.HasPrefix(ref, "hour/"):
+	case strings.HasPrefix(ref, "hour/"), strings.HasPrefix(ref, "day/"):
 	case strings.HasPrefix(ref, "meeting/") && meetingIDRE.MatchString(strings.TrimPrefix(ref, "meeting/")):
 	default:
 		return ""

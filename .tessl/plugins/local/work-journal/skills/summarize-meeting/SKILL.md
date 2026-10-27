@@ -19,6 +19,7 @@ Headless skill for the work-journal app. The prompt names one input file.
 
 JSON with `meeting` (id, app, start, end, title), `transcript` (`t`, `speaker`, `text`), and `screens` (descriptions of on-screen content).
 An imported recording (audio the user recorded on their phone) may also have `user_note`: `{title, context_lines}`, the user's own note about the recording; join `context_lines` with spaces.
+Any meeting may also have `user_notes`: notes the user wrote for the journal, each `{kind, from, to, title, context_lines}`. Join `context_lines` with spaces. `from`/`to` (`HH:MM`, `to` exclusive) is the time range a note covers; both are absent for a note on the whole day. Treat a `context` note like `user_note`.
 
 ## Rules specific to this skill
 
@@ -28,6 +29,7 @@ An imported recording (audio the user recorded on their phone) may also have `us
 - List every distinct speaker label in `participants`.
 - `summary`: 2-4 sentences. `decisions` and `action_items` only when stated; `owner` is `""` if unclear.
 - `user_note` is written by the user, not said in the meeting. Use it for context: what the event was, who was there, what the user cares about. Let it shape the summary's focus, but never report as said or decided anything only the note states. A person the note names becomes a speaker's name only when that speaker introduces themselves by it in the transcript. Being addressed by name never names anyone (Speaker 1 asking "Maya, what do you think?" does not say which speaker is Maya), and a matching topic (the note says Maya demoed, a speaker talks about a demo) is not enough, so `name` stays `""`.
+- A `correction` in `user_notes` is the user's own statement about what was recorded and can be used as given: a correction that explicitly names a speaker ("Speaker 2 at 15:00 is Maya") names that speaker, with confidence 1. Speech a correction says to disregard is left out of the summary.
 - Empty transcript gives `{"participants":[],"summary":"","decisions":[],"action_items":[]}`.
 
 ## Output schema

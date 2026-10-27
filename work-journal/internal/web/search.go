@@ -53,10 +53,10 @@ func splitMarks(snip string) []markSeg {
 }
 
 // hitLink builds the link for an index Ref, or "" when the Ref is not a
-// known internal page (hour/… or meeting/<id>).
+// known internal page (hour/…, day/… for a note, or meeting/<id>).
 func hitLink(ref string) string {
 	switch {
-	case strings.HasPrefix(ref, "hour/"):
+	case strings.HasPrefix(ref, "hour/"), strings.HasPrefix(ref, "day/"):
 	case strings.HasPrefix(ref, "meeting/") && meetingIDRE.MatchString(strings.TrimPrefix(ref, "meeting/")):
 	default:
 		return ""

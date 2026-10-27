@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,9 +37,10 @@ type hourRow struct {
 	// Reprocess is offered only where it helps: needs_review, partial and
 	// transcribed (stuck before summarizing) hours.
 	Reprocess bool
-	// Removed: the privacy filter removed some of the hour's speech.
-	Removed bool
-	Summary skills.HourSummary
+	// Removed: the privacy filter removed some of the hour's speech;
+	// RemovedByNote: some of it because the user's correction said so.
+	Removed, RemovedByNote bool
+	Summary                skills.HourSummary
 }
 
 type meetingRow struct {
@@ -81,6 +83,7 @@ type dayPage struct {
 	Hours                   []hourRow
 	Meetings                []meetingRow
 	Timeline                string
+	Notes                   notesBox
 	Rev                     string
 }
 
@@ -150,6 +153,7 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		if !row.Empty {
 			if doc, err := process.Load(s.Paths.DerivedHour(day, h.Hour)); err == nil {
 				row.Removed = len(doc.Removed) > 0
+				row.RemovedByNote = slices.ContainsFunc(doc.Removed, func(r process.RemovedSpan) bool { return r.Reason == process.ReasonUserNote })
 			}
 		}
 		p.Hours = append(p.Hours, row)
@@ -186,6 +190,10 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Timeline = mustJSON(buildTimeline(day, segs, colors))
+	if p.Notes, err = s.notesBoxFor(day, -1, r.URL.Query()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	render(w, "day", p)
 }
 

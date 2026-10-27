@@ -29,7 +29,12 @@ func OpenReadOnly(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
 	}
-	return &Store{db: db}, nil
+	temp, err := tempNotes(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: open read-only %s: %w", path, err)
+	}
+	return &Store{db: db, tempNotes: temp}, nil
 }
 
 // tempImports stands in an empty temporary imports table when the database
@@ -48,4 +53,39 @@ func tempImports(db *sql.DB) error {
 		err = qerr
 	}
 	return err
+}
+
+// tempNotes is tempImports for the notes table; it reports whether it
+// made the stand-in. A writer (add_note, serve) can create main.notes
+// later, which notesTable then reads instead.
+func tempNotes(db *sql.DB) (bool, error) {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='notes'`).Scan(&n); err != nil || n > 0 {
+		return false, err
+	}
+	if _, err := db.Exec(`PRAGMA query_only=0`); err != nil {
+		return false, err
+	}
+	_, err := db.Exec(`CREATE TEMP TABLE notes (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, day TEXT NOT NULL, start TEXT NOT NULL DEFAULT '',
+		end TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+	if _, qerr := db.Exec(`PRAGMA query_only=1`); err == nil {
+		err = qerr
+	}
+	return err == nil, err
+}
+
+// notesTable is the notes table to read: temp.notes (tempNotes) only while
+// the database itself still has none.
+func (s *Store) notesTable() (string, error) {
+	if !s.tempNotes {
+		return "notes", nil
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM main.sqlite_master WHERE type='table' AND name='notes'`).Scan(&n); err != nil {
+		return "", err
+	}
+	if n > 0 {
+		return "main.notes", nil
+	}
+	return "temp.notes", nil
 }

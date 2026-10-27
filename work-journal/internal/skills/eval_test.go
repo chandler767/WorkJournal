@@ -162,6 +162,49 @@ func check(t *testing.T, name string, out any) {
 		}
 	case "privacy-filter/06": // a FaceTime call with Mom about dinner: both tracks; line 0 is context
 		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4, 5, 6, 7}, "personal_non_work")
+	case "privacy-filter/07": // coworkers' work talk the user's correction says to disregard
+		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4}, "user_note")
+	case "privacy-filter/08": // a correction to disregard one bystander in a work call drops only them
+		checkDrops(t, out.(*PrivacyResult), []int{2, 3}, "user_note")
+	case "privacy-filter/09": // a correction saying who a caller is, on a work call, drops nothing
+		checkDrops(t, out.(*PrivacyResult), nil, "")
+	case "privacy-filter/10": // a correction calls a known coworker the user's brother: their personal chat is kept
+		checkDrops(t, out.(*PrivacyResult), nil, "")
+	case "summarize-hour/04": // context note says what the call was
+		h := out.(*HourSummary)
+		all := strings.ToLower(h.Narrative + " " + strings.Join(h.Notes, " ") + " " + h.MainFocus)
+		if !strings.Contains(all, "cloudflare") {
+			t.Errorf("summary misses the note's context (Cloudflare): %+v", *h)
+		}
+		checkDetailedHour(t, h, 14, []string{"Cloudflare", "Europe", "region"})
+	case "summarize-meeting/05": // a context note alone names no speaker
+		m := out.(*MeetingSummary)
+		if !strings.Contains(strings.ToLower(m.Summary), "cloudflare") {
+			t.Errorf("summary misses the note's context (Cloudflare): %q", m.Summary)
+		}
+		for _, p := range m.Participants {
+			if p.Name != "" && p.Speaker != "You" {
+				t.Errorf("named a speaker from a context note alone: %+v", p)
+			}
+		}
+	case "summarize-meeting/06": // a correction names Speaker 2
+		m := out.(*MeetingSummary)
+		for _, p := range m.Participants {
+			switch {
+			case p.Speaker == "Speaker 2" && !strings.HasPrefix(p.Name, "Maya"):
+				t.Errorf("Speaker 2 named %q, want Maya from the correction", p.Name)
+			case p.Speaker == "Speaker 1" && p.Name != "":
+				t.Errorf("Speaker 1 named %q without a cue", p.Name)
+			}
+		}
+	case "close-day/04": // context notes on the day and on an hour
+		md := out.(*Markdown).Markdown
+		if !strings.Contains(strings.ToLower(md), "launch review") {
+			t.Errorf("entry misses the whole-day note (launch review): %s", md)
+		}
+		if strings.Count(md, "## ") != 6 {
+			t.Errorf("want the six headings: %s", md)
+		}
 	case "privacy-filter/05": // ambiguous: kept
 		checkDrops(t, out.(*PrivacyResult), nil, "")
 	case "summarize-meeting/02": // no name cues

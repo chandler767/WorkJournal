@@ -26,6 +26,9 @@ var schema string
 // Store is a handle to the journal database.
 type Store struct {
 	db *sql.DB
+	// tempNotes is set on a read-only store opened on a database that
+	// predated notes (see tempNotes).
+	tempNotes bool
 }
 
 // Open opens (creating if needed) the database at path and applies the schema.

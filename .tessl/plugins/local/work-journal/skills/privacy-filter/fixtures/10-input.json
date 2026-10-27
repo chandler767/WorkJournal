@@ -1,0 +1,60 @@
+{
+ "day": "2026-10-07",
+ "hour": 15,
+ "meetings": [
+  {
+   "id": "2026-10-07-1500-zoom",
+   "app": "Zoom",
+   "start": "15:00:00",
+   "end": "15:20:00",
+   "participants": [
+    "Sam"
+   ]
+  }
+ ],
+ "known_people": [
+  "Sam"
+ ],
+ "user_voice_enrolled": true,
+ "user_notes": [
+  {
+   "kind": "correction",
+   "from": "15:00",
+   "to": "15:20",
+   "title": "",
+   "context_lines": [
+    "Speaker 2 at 15:00 is my brother Sam."
+   ]
+  }
+ ],
+ "utterances": [
+  {
+   "index": 0,
+   "time": "15:00:10",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Before we start, are you still coming to Mom's birthday dinner on Saturday?"
+  },
+  {
+   "index": 1,
+   "time": "15:00:30",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Yes, I'll bring the cake. Did you book the restaurant?"
+  },
+  {
+   "index": 2,
+   "time": "15:00:50",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Booked for seven. The kids are excited to see you."
+  },
+  {
+   "index": 3,
+   "time": "15:01:10",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Great, see you all then."
+  }
+ ]
+}

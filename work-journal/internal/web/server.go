@@ -100,6 +100,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /process-now", s.sameOrigin(s.handleProcessNow))
 	mux.HandleFunc("POST /claude/resume", s.sameOrigin(s.handleClaudeResume))
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
+	mux.HandleFunc("POST /notes", s.sameOrigin(s.handleNoteAdd))
+	mux.HandleFunc("POST /notes/{id}", s.sameOrigin(s.handleNoteUpdate))
+	mux.HandleFunc("POST /notes/{id}/delete", s.sameOrigin(s.handleNoteDelete))
 	mux.HandleFunc("POST /segment/category", s.sameOrigin(s.handleSegmentCategory))
 	mux.HandleFunc("POST /meeting/{id}/speaker", s.sameOrigin(s.handleSpeaker))
 	return localHostOnly(withCSP(mux))
@@ -311,7 +314,7 @@ func fmtDur(d time.Duration) string {
 // render executes the named page inside the layout, buffering so a template
 // error becomes a clean 500 instead of a half-written page.
 func render(w http.ResponseWriter, page string, data any) {
-	t, err := template.New(page).Funcs(funcs).ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html")
+	t, err := template.New(page).Funcs(funcs).ParseFS(templateFS, "templates/layout.html", "templates/notes.html", "templates/"+page+".html")
 	if err != nil {
 		http.Error(w, "template: "+err.Error(), http.StatusInternalServerError)
 		return

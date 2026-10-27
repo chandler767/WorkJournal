@@ -94,6 +94,7 @@ func (f *fakeJobs) Retain(context.Context) error         { return nil }
 func (f *fakeJobs) DiskCheck(context.Context) error      { return nil }
 func (f *fakeJobs) SyncAudioMode(context.Context) error  { return nil }
 func (f *fakeJobs) ProcessImports(context.Context) error { return nil }
+func (f *fakeJobs) ProcessNotes(context.Context) error   { return nil }
 func (f *fakeJobs) EnrollSpeaker(_ context.Context, m, sp, n string) error {
 	f.enrolled = append(f.enrolled, [3]string{m, sp, n})
 	if f.enrollSaw != nil {

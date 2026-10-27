@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"workjournal/internal/config"
+	"workjournal/internal/notes"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
 	"workjournal/internal/wallclock"
@@ -27,6 +28,8 @@ type (
 		Hours    []hourInput    `json:"hours"`
 		Meetings []meetingInput `json:"meetings"`
 		Totals   map[string]int `json:"totals"`
+		// UserNotes are all the user's notes on the day (notes.Inputs).
+		UserNotes []skills.UserNote `json:"user_notes"`
 	}
 	hourInput struct {
 		Hour        int                 `json:"hour"`
@@ -111,6 +114,11 @@ func CloseDay(ctx context.Context, r skills.Runner, st *store.Store, p config.Pa
 	if in.Totals, err = minuteTotals(st, day, day); err != nil {
 		return err
 	}
+	ns, err := st.NotesOn(day)
+	if err != nil {
+		return err
+	}
+	in.UserNotes = notes.Inputs(ns)
 	path := filepath.Join(filepath.Dir(p.DerivedHour(day, 0)), ".inputs", "close-day.json")
 	var out skills.Markdown
 	if err := runSkill(ctx, r, "close-day", path, in, &out); err != nil {

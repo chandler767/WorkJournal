@@ -1,0 +1,58 @@
+{
+ "day": "2026-10-07",
+ "hour": 15,
+ "meetings": [
+  {
+   "id": "2026-10-07-1500-facetime",
+   "app": "FaceTime",
+   "start": "15:00:00",
+   "end": "15:20:00",
+   "participants": [
+    "Speaker 2"
+   ]
+  }
+ ],
+ "known_people": [],
+ "user_voice_enrolled": true,
+ "user_notes": [
+  {
+   "kind": "correction",
+   "from": "15:00",
+   "to": "15:20",
+   "title": "",
+   "context_lines": [
+    "Speaker 2 at 15:00 is my brother."
+   ]
+  }
+ ],
+ "utterances": [
+  {
+   "index": 0,
+   "time": "15:00:10",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "Our checkout is returning 502s from the payments API since the deploy this morning."
+  },
+  {
+   "index": 1,
+   "time": "15:00:40",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Which region? Send me the request IDs and I'll check our gateway logs."
+  },
+  {
+   "index": 2,
+   "time": "15:01:15",
+   "track": "system",
+   "speaker": "Speaker 2",
+   "text": "EU only. I'll paste the IDs in the support ticket now."
+  },
+  {
+   "index": 3,
+   "time": "15:02:00",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Thanks, I'll roll back the gateway config if it's ours."
+  }
+ ]
+}

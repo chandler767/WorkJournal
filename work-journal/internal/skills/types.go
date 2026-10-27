@@ -52,6 +52,19 @@ type MeetingSummary struct {
 	ActionItems  []ActionItem  `json:"action_items"`
 }
 
+// UserNote is something the user wrote for the journal, as the skills
+// receive it: the note on an imported recording, or a note added on the
+// dashboard, from the CLI or over MCP. Kind is "context" or "correction"
+// and From/To (HH:MM) the time range it covers, all "" for an imported
+// recording's note; Kind is set and From/To "" for a note on a whole day.
+type UserNote struct {
+	Kind    string   `json:"kind,omitempty"`
+	From    string   `json:"from,omitempty"`
+	To      string   `json:"to,omitempty"`
+	Title   string   `json:"title"`
+	Context []string `json:"context_lines"` // TextLines
+}
+
 // Markdown is the close-day and weekly-rollup output.
 type Markdown struct {
 	Markdown string `json:"markdown"`
@@ -62,7 +75,7 @@ type Markdown struct {
 type DropRange struct {
 	From       int     `json:"from"`
 	To         int     `json:"to"`
-	Reason     string  `json:"reason"` // "bystander" or "personal_non_work"
+	Reason     string  `json:"reason"` // "bystander", "personal_non_work" or "user_note"
 	Confidence float64 `json:"confidence"`
 }
 

@@ -60,3 +60,32 @@ CREATE TABLE IF NOT EXISTS imports (
   error TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
+
+-- A note the user wrote about a day (start and end ''), or a time range on
+-- it (HH:MM on the recorded clock, end exclusive). kind is context or
+-- correction; source is dashboard, mcp, cli or import. Notes are not
+-- recordings: retention never removes them.
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  day TEXT NOT NULL,
+  start TEXT NOT NULL DEFAULT '',
+  end TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_day ON notes(day);
+
+-- Work a note change queued, which serve runs on its next tick: hours to
+-- summarize again (redo summary) or to reprocess with their privacy
+-- decisions cleared (redo privacy), and with hour -1 the day's journal entry
+-- and its week's rollup, rewritten when already written.
+CREATE TABLE IF NOT EXISTS note_queue (
+  day TEXT NOT NULL,
+  hour INTEGER NOT NULL,
+  redo TEXT NOT NULL DEFAULT '',
+  seq INTEGER NOT NULL DEFAULT 0, -- bumped on every queueing
+  PRIMARY KEY (day, hour)
+);

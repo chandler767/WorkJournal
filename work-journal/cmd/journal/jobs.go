@@ -132,9 +132,20 @@ func (j *Jobs) ProcessNow(ctx context.Context) (time.Time, error) {
 func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
+	return j.reprocess(ctx, day, hour)
+}
+
+// reprocess is ReprocessHour with heavy held.
+func (j *Jobs) reprocess(ctx context.Context, day string, hour int) error {
 	if _, err := os.Stat(j.Paths.RawDay(day)); errors.Is(err, fs.ErrNotExist) {
 		return j.resummarize(ctx, day, hour)
 	} else if err != nil {
+		return err
+	}
+	p := j.pipeline()
+	// Ask the privacy filter again, so a wrong removal can be undone. This
+	// comes first: a pending hour (below) has its decisions cleared already.
+	if err := p.ForgetPrivacy(day, hour); err != nil {
 		return err
 	}
 	rec, _, err := j.Store.Hour(day, hour)
@@ -143,11 +154,6 @@ func (j *Jobs) ReprocessHour(ctx context.Context, day string, hour int) error {
 	}
 	rec.Day, rec.Hour, rec.Status, rec.UpdatedAt = day, hour, store.StatusPending, j.now()
 	if err := j.Store.UpsertHour(rec); err != nil {
-		return err
-	}
-	p := j.pipeline()
-	// Ask the privacy filter again, so a wrong removal can be undone.
-	if err := p.ForgetPrivacy(day, hour); err != nil {
 		return err
 	}
 	if now := j.now().In(time.Local); day == config.DayKey(now) && hour == now.Hour() {
@@ -180,6 +186,109 @@ func (j *Jobs) resummarize(ctx context.Context, day string, hour int) error {
 	}
 	doc.Day, doc.Hour, doc.Status = day, hour, store.StatusTranscribed
 	return p.Summarize.SummarizeHour(ctx, doc)
+}
+
+// ProcessNotes runs the work saved notes queued (store.NoteQueue), oldest
+// day first: a correction's hours are reprocessed with their privacy
+// decisions cleared (only summarized again once retention removed the raw
+// recordings), a context note's hours summarized again, and then the day's
+// journal entry and its week's rollup written again where they already
+// were. Hours never processed need nothing: they read the notes when they
+// are. Work that fails stays queued for the next tick, and the rest of its
+// day waits: a meeting summarized in a later hour reads the earlier ones,
+// and the journal reads them all.
+func (j *Jobs) ProcessNotes(ctx context.Context) error {
+	queue, err := j.Store.NoteQueue()
+	if err != nil || len(queue) == 0 {
+		return err
+	}
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
+	var errs []error
+	failed := map[string]bool{}
+	for _, q := range queue {
+		if ctx.Err() != nil {
+			return errors.Join(append(errs, ctx.Err())...)
+		}
+		var err error
+		switch {
+		case failed[q.Day]:
+			continue
+		case q.Hour < 0:
+			err = j.rewriteJournals(ctx, q.Day)
+		default:
+			err = j.redoHour(ctx, q)
+		}
+		if err != nil {
+			failed[q.Day] = true
+			errs = append(errs, fmt.Errorf("notes: %s %s: %w", q.Day, queueLabel(q), err))
+			continue
+		}
+		if err := j.Store.DoneNoteQueue(q); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func queueLabel(q store.NoteQueueItem) string {
+	if q.Hour < 0 {
+		return "journal"
+	}
+	return fmt.Sprintf("%02d:00", q.Hour)
+}
+
+// redoHour runs one queued hour (see ProcessNotes).
+func (j *Jobs) redoHour(ctx context.Context, q store.NoteQueueItem) error {
+	rec, ok, err := j.Store.Hour(q.Day, q.Hour)
+	if err != nil {
+		return err
+	}
+	now := j.now().In(time.Local)
+	current := q.Day == config.DayKey(now) && q.Hour == now.Hour()
+	switch {
+	case !ok && !current:
+		return nil // processed later, with the notes
+	case q.Redo == store.RedoPrivacy, ok && rec.Status == store.StatusPending:
+		// Only reprocess leaves an hour pending, so a pending hour is one
+		// whose reprocessing was interrupted: finish it.
+		err = j.reprocess(ctx, q.Day, q.Hour)
+		if errors.Is(err, scheduler.ErrMediaExpired) {
+			return nil // nothing left to change
+		}
+		return err
+	case rec.Status == store.StatusPartial || current:
+		return nil // its next pass sees the notes (the input changed)
+	}
+	err = j.resummarize(ctx, q.Day, q.Hour)
+	if errors.Is(err, scheduler.ErrMediaExpired) {
+		return nil
+	}
+	return err
+}
+
+// rewriteJournals writes day's journal entry again, and then its week's
+// rollup, each only if it is already written.
+func (j *Jobs) rewriteJournals(ctx context.Context, day string) error {
+	if !exists(j.Paths.DailyJournal(day)) {
+		return nil
+	}
+	if err := journal.CloseDay(ctx, j.Runner, j.Store, j.Paths, day, nil); err != nil {
+		return err
+	}
+	t, err := time.ParseInLocation("2006-01-02", day, time.Local)
+	if err != nil {
+		return err
+	}
+	if week := config.WeekKey(t); exists(j.Paths.WeeklyJournal(week)) {
+		return journal.Rollup(ctx, j.Runner, j.Store, j.Paths, week)
+	}
+	return nil
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // CloseDay processes pending hours first, at most once per hour (the

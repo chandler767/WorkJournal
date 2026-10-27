@@ -14,11 +14,14 @@ import (
 
 // RemovedNotices describes the spans the privacy filter removed, without
 // reason or content: "4 min of non-work audio removed (13:12–13:16)". Spans
-// less than a minute apart read as one.
+// less than a minute apart read as one. Speech the user's correction
+// removed reads "removed by your note" and is not merged with the filter's
+// own removals.
 func RemovedNotices(spans []RemovedSpan) []string {
 	var merged []RemovedSpan
 	for _, r := range spans {
-		if n := len(merged); n > 0 && r.Start.Sub(merged[n-1].End) < time.Minute {
+		if n := len(merged); n > 0 && r.Start.Sub(merged[n-1].End) < time.Minute &&
+			(r.Reason == ReasonUserNote) == (merged[n-1].Reason == ReasonUserNote) {
 			if r.End.After(merged[n-1].End) {
 				merged[n-1].End = r.End
 			}
@@ -29,10 +32,14 @@ func RemovedNotices(spans []RemovedSpan) []string {
 	var out []string
 	for _, r := range merged {
 		span := wallclock.Span(r.Start, r.End)
+		what := "non-work audio removed"
+		if r.Reason == ReasonUserNote {
+			what = "speech removed by your note"
+		}
 		if d := r.End.Sub(r.Start); d < time.Minute {
-			out = append(out, "Under a minute of non-work audio removed ("+span+")")
+			out = append(out, "Under a minute of "+what+" ("+span+")")
 		} else {
-			out = append(out, fmt.Sprintf("%d min of non-work audio removed (%s)", int(math.Round(d.Minutes())), span))
+			out = append(out, fmt.Sprintf("%d min of %s (%s)", int(math.Round(d.Minutes())), what, span))
 		}
 	}
 	return out
