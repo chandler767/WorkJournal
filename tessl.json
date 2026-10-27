@@ -30,6 +30,21 @@
     "codex",
     "claude-code"
   ],
+  "verify": {
+    "groups": {
+      "media-runner": {
+        "path": "verifiers/media-runner.json",
+        "level": "error",
+        "include": [
+          "work-journal/internal/media/*.go"
+        ],
+        "exclude": [
+          "work-journal/internal/media/exec.go",
+          "work-journal/internal/media/*_test.go"
+        ]
+      }
+    }
+  },
   "actions": {
     "implement-github-issue": {
       "skill": "tessl-labs/factory#implement-github-issue",
