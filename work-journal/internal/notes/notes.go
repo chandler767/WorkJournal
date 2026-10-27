@@ -281,3 +281,61 @@ func Range(n store.NoteRecord) string {
 	}
 	return n.Start + "–" + n.End
 }
+
+// Add validates and saves a new note from source, queueing the work it
+// needs.
+func Add(st *store.Store, d Draft, source string, now time.Time) (store.NoteRecord, error) {
+	n, err := Validate(d)
+	if err != nil {
+		return n, err
+	}
+	n.Source, n.CreatedAt, n.UpdatedAt = source, now, now
+	q, err := Queue(st, &n)
+	if err != nil {
+		return n, err
+	}
+	n.ID, err = st.AddNote(n, q)
+	return n, err
+}
+
+// ErrNotFound is returned for a note id that does not exist.
+var ErrNotFound = errors.New("no such note")
+
+// Update replaces note id's kind, range and text (its day stays), queueing
+// the work for both the old and the new version.
+func Update(st *store.Store, id int64, d Draft, now time.Time) (store.NoteRecord, error) {
+	old, ok, err := st.Note(id)
+	if err != nil {
+		return store.NoteRecord{}, err
+	}
+	if !ok {
+		return store.NoteRecord{}, ErrNotFound
+	}
+	d.Day = old.Day
+	n, err := Validate(d)
+	if err != nil {
+		return n, err
+	}
+	n.ID, n.Source, n.CreatedAt, n.UpdatedAt = id, old.Source, old.CreatedAt, now
+	q, err := Queue(st, &old, &n)
+	if err != nil {
+		return n, err
+	}
+	return n, st.UpdateNote(n, q)
+}
+
+// Delete removes note id, queueing the work to undo it.
+func Delete(st *store.Store, id int64) (store.NoteRecord, error) {
+	old, ok, err := st.Note(id)
+	if err != nil {
+		return old, err
+	}
+	if !ok {
+		return old, ErrNotFound
+	}
+	q, err := Queue(st, &old)
+	if err != nil {
+		return old, err
+	}
+	return old, st.DeleteNote(id, q)
+}

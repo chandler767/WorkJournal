@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"workjournal/internal/config"
+	"workjournal/internal/notes"
 	"workjournal/internal/process"
 	"workjournal/internal/retention"
 )
@@ -39,6 +40,11 @@ commands:
                               memo) as an in-person meeting starting at TIME
                               (RFC 3339, e.g. 2026-10-21T18:30:00-04:00), and
                               process it now
+  note add --date D --kind context|correction [--from HH:MM --to HH:MM] (--text T | --file F)
+                              tell the journal something: context for the summaries
+                              and the daily entry, or a correction to recorded
+                              speech (serve reprocesses the hours it covers)
+  note list --date D          list the day's notes
   autostart on|off|status     run serve at login (on also starts it now; off stops it)
   mcp                         serve the journal read-only to Claude clients (MCP over stdio)
 
@@ -73,6 +79,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	start := fset.String("start", "", "import: when the recording started (RFC 3339)")
 	title := fset.String("title", "", "import: the meeting's title")
 	note := fset.String("context", "", "import: your note about the recording")
+	date := fset.String("date", "", "note: the day YYYY-MM-DD")
+	kind := fset.String("kind", "", "note: context or correction")
+	from := fset.String("from", "", "note: start of the time range HH:MM")
+	to := fset.String("to", "", "note: end of the time range HH:MM")
+	text := fset.String("text", "", "note: the note's text")
+	file := fset.String("file", "", "note: read the note's text from a file")
 	if err := fset.Parse(interspersed(rest)); err != nil {
 		return 2
 	}
@@ -132,6 +144,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		err = runImport(ctx, cfg, *cfgPath, loc, process.ImportRequest{Path: fset.Arg(0), Start: t, Title: *title, Context: *note}, stdout)
+	case "note":
+		if fset.NArg() != 1 || (fset.Arg(0) != "add" && fset.Arg(0) != "list") {
+			fmt.Fprintf(stderr, "journal note: want add or list\n%s", usage)
+			return 2
+		}
+		err = runNote(cfg, fset.Arg(0), notes.Draft{Kind: *kind, Day: *date, From: *from, To: *to, Text: *text}, *file, stdout)
 	case "serve", "process", "close-day", "rollup":
 		err = runApp(ctx, cmd, cfg, *cfgPath, loc, *day, *hour, *week)
 	default:
@@ -148,7 +166,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // allowed reports whether every flag set on the command line applies to cmd.
 func allowed(cmd string, fset *flag.FlagSet) bool {
 	extra := map[string][]string{"setup": {"rebuild"}, "process": {"day", "hour"}, "close-day": {"day"}, "rollup": {"week"},
-		"import": {"start", "title", "context"}}[cmd]
+		"import": {"start", "title", "context"}, "note": {"date", "kind", "from", "to", "text", "file"}}[cmd]
 	ok := true
 	fset.Visit(func(f *flag.Flag) {
 		switch f.Name {
