@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"workjournal/internal/activity"
-	"workjournal/internal/config"
 	"workjournal/internal/media"
 	"workjournal/internal/process"
 	"workjournal/internal/skills"
@@ -99,7 +98,9 @@ func (j *Journal) Search(a SearchArgs) (string, error) {
 	withheld := map[string]bool{}
 	var items []string
 	for _, h := range hits {
-		if h.Kind == "transcript" || h.Kind == "ocr" {
+		// An imported recording's transcript (Ref meeting/<id>) is indexed
+		// only when not withheld; the hour's doc does not speak for it.
+		if (h.Kind == "transcript" || h.Kind == "ocr") && strings.HasPrefix(h.Ref, "hour/") {
 			key := fmt.Sprintf("%s/%02d", h.Day, h.Hour)
 			w, seen := withheld[key]
 			if !seen {
@@ -180,7 +181,7 @@ func (j *Journal) GetDay(a DayArgs) (string, error) {
 		b.WriteString("No meetings.\n")
 	}
 	for _, m := range meets {
-		line := fmt.Sprintf("- %s %s (%s) — id %s", clockSpan(m.Start, m.End), m.Title, m.App, m.ID)
+		line := fmt.Sprintf("- %s %s (%s) — id %s", clockSpan(m.Start, m.End), m.Title, meetingKind(m), m.ID)
 		if ms, ok := meetingSummary(m); ok && ms.Summary != "" {
 			line += " — " + firstLine(ms.Summary, 200)
 		}
@@ -413,6 +414,15 @@ func meetingSummary(m store.MeetingRecord) (skills.MeetingSummary, bool) {
 	return s, true
 }
 
+// meetingKind is how a meeting's source reads in a listing: its app, and
+// for an imported recording "imported" too.
+func meetingKind(m store.MeetingRecord) string {
+	if m.Imported {
+		return m.App + ", imported"
+	}
+	return m.App
+}
+
 // participants returns the display names of m's speakers and the records by
 // speaker label.
 func (j *Journal) participants(id string) ([]string, []store.ParticipantRecord, map[string]*store.ParticipantRecord, error) {
@@ -457,7 +467,7 @@ func (j *Journal) ListMeetings(a ListMeetingsArgs) (string, error) {
 			}) {
 				continue
 			}
-			line := fmt.Sprintf("- %s %s · %s (%s) · id %s", m.Day, clockSpan(m.Start, m.End), m.Title, m.App, m.ID)
+			line := fmt.Sprintf("- %s %s · %s (%s) · id %s", m.Day, clockSpan(m.Start, m.End), m.Title, meetingKind(m), m.ID)
 			if len(names) > 0 {
 				line += " · with " + strings.Join(names, ", ")
 			}
@@ -496,7 +506,13 @@ func (j *Journal) GetMeeting(a MeetingArgs) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\nWhen: %s %s (%s)\nId: %s\nDashboard: %s\n", m.Title, m.Day, clockSpan(m.Start, m.End), m.App, m.ID, j.link("/meeting/"+m.ID))
+	fmt.Fprintf(&b, "# %s\nWhen: %s %s (%s)\nId: %s\nDashboard: %s\n", m.Title, m.Day, clockSpan(m.Start, m.End), meetingKind(m), m.ID, j.link("/meeting/"+m.ID))
+	if m.Imported {
+		b.WriteString("Imported: recorded on the user's phone and imported, not by the Mac recorder.\n")
+		if m.ImportError != "" {
+			b.WriteString("Processing failed: " + m.ImportError + "\n")
+		}
+	}
 	if len(names) > 0 {
 		b.WriteString("Participants: " + strings.Join(names, ", ") + "\n")
 	}
@@ -516,13 +532,13 @@ func (j *Journal) GetMeeting(a MeetingArgs) (string, error) {
 	}
 
 	var lines []string
-	for _, t := range process.HourStarts(m.Start, m.End, m.Start.Location()) {
-		doc, err := process.Load(j.Paths.DerivedHour(config.DayKey(t), t.Hour()))
-		if err != nil {
+	for _, doc := range process.MeetingDocs(j.Paths, m) {
+		if doc.SpeechWithheld && m.Imported {
+			b.WriteString("Speech of this recording is withheld (the privacy check failed).\n")
 			continue
 		}
 		if doc.SpeechWithheld {
-			fmt.Fprintf(&b, "Speech of %s %02d:00 is withheld (the privacy check failed).\n", config.DayKey(t), t.Hour())
+			fmt.Fprintf(&b, "Speech of %s %02d:00 is withheld (the privacy check failed).\n", doc.Day, doc.Hour)
 			continue
 		}
 		for _, l := range process.RemovedNotices(doc.Removed) {

@@ -43,6 +43,8 @@ type hourRow struct {
 
 type meetingRow struct {
 	ID, Title, App, Time string
+	Imported, Processing bool
+	ImportError          string
 }
 
 type tlSeg struct {
@@ -171,7 +173,8 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range meets {
 		p.Meetings = append(p.Meetings, meetingRow{ID: m.ID, Title: m.Title, App: m.App,
-			Time: wallclock.Span(m.Start, m.End)})
+			Time: wallclock.Span(m.Start, m.End), Imported: m.Imported,
+			Processing: m.ImportStatus == store.StatusPending, ImportError: m.ImportError})
 	}
 	for i, j := 0, len(p.Meetings)-1; i < j; i, j = i+1, j-1 {
 		p.Meetings[i], p.Meetings[j] = p.Meetings[j], p.Meetings[i]

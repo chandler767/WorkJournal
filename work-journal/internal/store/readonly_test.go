@@ -81,3 +81,40 @@ func TestSearchRangeFiltersDaysAndPages(t *testing.T) {
 		t.Fatalf("Search found %d, want 6", len(all))
 	}
 }
+
+// A database from before imported recordings has no imports table; the
+// read-only store (journal mcp before serve ran again) still lists meetings.
+func TestOpenReadOnlyOlderSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "j.db")
+	w, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.UpsertMeeting(MeetingRecord{ID: "2026-10-07-0900-zoom", Day: "2026-10-07", Start: at("2026-10-07", 9, 0), End: at("2026-10-07", 9, 30), App: "zoom.us"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.db.Exec(`DROP TABLE imports`); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	r, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	ms, err := r.MeetingsOn("2026-10-07")
+	if err != nil || len(ms) != 1 || ms[0].Imported {
+		t.Fatalf("MeetingsOn = %+v, %v", ms, err)
+	}
+	if err := r.SetKV("k", "v"); err == nil {
+		t.Fatal("read-only store writable after the temp table")
+	}
+	w, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if _, ok, err := w.Import("x"); err != nil || ok {
+		t.Fatalf("schema not applied on the next Open: %v %v", ok, err)
+	}
+}

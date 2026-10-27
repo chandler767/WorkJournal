@@ -50,3 +50,13 @@ CREATE TABLE IF NOT EXISTS kv (
 CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
   text, kind UNINDEXED, day UNINDEXED, hour UNINDEXED, ts UNINDEXED, ref UNINDEXED
 );
+
+-- An imported recording (journal import or the phone upload page): its id is
+-- the id of the meeting it becomes; status is pending, done or needs_review,
+-- and error is the last processing failure ('' when none).
+CREATE TABLE IF NOT EXISTS imports (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  error TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);

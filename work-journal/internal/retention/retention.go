@@ -20,9 +20,79 @@ import (
 // Sweep deletes raw/<day>/ directories older than days before now, together
 // with the day's processing cache (cache/<day>/). A day that still has an
 // hour in pending, transcribed or partial is kept, since its raw media is
-// still needed; directories whose names are not dates are ignored. It returns
-// the removed day keys, oldest first.
+// still needed; directories whose names are not dates are ignored. The
+// audio of imported recordings is swept the same way (sweepImports). It
+// returns the removed day keys, oldest first.
 func Sweep(p config.Paths, st *store.Store, now time.Time, days int) ([]string, error) {
+	ierr := sweepImports(p, st, config.DayKey(now.AddDate(0, 0, -days)))
+	removed, err := sweepRaw(p, st, now, days)
+	return removed, errors.Join(err, ierr)
+}
+
+// sweepImports deletes the audio of imported recordings that started on a
+// day before cutoff, with their processing cache, keeping the note sidecar,
+// and uploads a crash cut off more than a day ago.
+// An import not processed yet (pending, or with no import record) is kept.
+// The day is the id's prefix (<day>-<HHMM>-imported).
+func sweepImports(p config.Paths, st *store.Store, cutoff string) error {
+	entries, err := os.ReadDir(p.Imports())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		id := e.Name()
+		if !e.IsDir() && strings.HasPrefix(id, ".upload-") {
+			// An upload cut off by a crash (see upload.Server.save).
+			if fi, ierr := e.Info(); ierr == nil && time.Since(fi.ModTime()) > 24*time.Hour {
+				if rerr := os.Remove(filepath.Join(p.Imports(), id)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+					errs = append(errs, rerr)
+				}
+			}
+			continue
+		}
+		if !e.IsDir() || len(id) < 10 {
+			continue
+		}
+		if _, perr := time.Parse("2006-01-02", id[:10]); perr != nil || id[:10] >= cutoff {
+			continue
+		}
+		rec, ok, ierr := st.Import(id)
+		if ierr != nil {
+			errs = append(errs, fmt.Errorf("import %s: %w", id, ierr))
+			continue
+		}
+		if !ok || rec.Status == store.StatusPending {
+			continue
+		}
+		files, rerr := os.ReadDir(p.Import(id))
+		if rerr != nil {
+			errs = append(errs, rerr)
+			continue
+		}
+		for _, f := range files {
+			if f.Name() == importNote {
+				continue
+			}
+			if rerr := os.RemoveAll(filepath.Join(p.Import(id), f.Name())); rerr != nil {
+				errs = append(errs, rerr)
+			}
+		}
+		if rerr := os.Remove(p.ImportCache(id)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			errs = append(errs, rerr)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// importNote is an import's sidecar (process.ImportNote), kept after its
+// audio is removed.
+const importNote = "note.json"
+
+func sweepRaw(p config.Paths, st *store.Store, now time.Time, days int) ([]string, error) {
 	rawRoot := filepath.Dir(p.RawDay("x"))
 	entries, err := os.ReadDir(rawRoot)
 	if errors.Is(err, os.ErrNotExist) {

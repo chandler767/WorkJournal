@@ -242,3 +242,59 @@ func TestSweepKeepsPartialDayAndRemovesCacheWithRaw(t *testing.T) {
 		t.Fatal("cache not removed together with raw")
 	}
 }
+
+func TestSweepRemovesOldImportedAudio(t *testing.T) {
+	p, st := setup(t)
+	mk := func(id, status string) {
+		t.Helper()
+		for _, f := range []string{"audio.m4a", "note.json"} {
+			path := filepath.Join(p.Import(id), f)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(p.ImportCache(id)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(p.ImportCache(id), []byte("{}"), 0o600)
+		if status != "" {
+			if err := st.UpsertImport(store.ImportRecord{ID: id, Status: status, UpdatedAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk("2026-10-01-1830-imported", store.StatusDone)        // old, processed: audio goes
+	mk("2026-10-02-0900-imported", store.StatusNeedsReview) // old, failed for good: audio goes
+	mk("2026-10-03-0900-imported", store.StatusPending)     // old, not processed yet: kept
+	mk("2026-10-04-0900-imported", "")                      // no record (import interrupted): kept
+	mk("2026-10-14-0900-imported", store.StatusDone)        // recent: kept
+	stale, fresh := filepath.Join(p.Imports(), ".upload-1"), filepath.Join(p.Imports(), ".upload-2")
+	for _, f := range []string{stale, fresh} {
+		if err := os.WriteFile(f, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(stale, old, old)
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	if _, err := Sweep(p, st, now, 7); err != nil {
+		t.Fatal(err)
+	}
+	if exists(stale) || !exists(fresh) {
+		t.Errorf("cut-off uploads: stale kept %v, fresh kept %v", exists(stale), exists(fresh))
+	}
+	for id, gone := range map[string]bool{
+		"2026-10-01-1830-imported": true, "2026-10-02-0900-imported": true,
+		"2026-10-03-0900-imported": false, "2026-10-04-0900-imported": false, "2026-10-14-0900-imported": false,
+	} {
+		if exists(filepath.Join(p.Import(id), "audio.m4a")) == gone || exists(p.ImportCache(id)) == gone {
+			t.Errorf("%s: audio or cache kept=%v, want removed=%v", id, !gone, gone)
+		}
+		if !exists(filepath.Join(p.Import(id), "note.json")) {
+			t.Errorf("%s: note removed", id)
+		}
+	}
+}

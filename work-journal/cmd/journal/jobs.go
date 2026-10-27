@@ -42,7 +42,7 @@ type Jobs struct {
 	Logf       func(string, ...any)
 
 	// heavy serializes the pipeline and journal jobs (ProcessPending,
-	// ProcessCurrent, ProcessNow, ReprocessHour, CloseDay, Rollup): the
+	// ProcessImports, ProcessCurrent, ProcessNow, ReprocessHour, CloseDay, Rollup): the
 	// scheduler, the dashboard and the CLI may trigger them concurrently and
 	// they share hours and files.
 	heavy sync.Mutex
@@ -86,6 +86,13 @@ func (j *Jobs) ProcessPending(ctx context.Context) error {
 	j.heavy.Lock()
 	defer j.heavy.Unlock()
 	return j.pipeline().ProcessPending(ctx)
+}
+
+// ProcessImports processes the imported recordings not processed yet.
+func (j *Jobs) ProcessImports(ctx context.Context) error {
+	j.heavy.Lock()
+	defer j.heavy.Unlock()
+	return j.pipeline().ProcessImports(ctx)
 }
 
 // ProcessCurrent summarizes the in-progress hour up to now.

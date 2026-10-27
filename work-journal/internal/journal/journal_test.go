@@ -398,3 +398,35 @@ func TestCloseDayMeetingKeepsRecordedZone(t *testing.T) {
 		t.Errorf("meeting times = %v", got)
 	}
 }
+
+func TestCloseDayIncludesImportedMeeting(t *testing.T) {
+	st, p := setup(t)
+	seedDay(t, st, "2026-10-07")
+	if err := st.UpsertMeeting(store.MeetingRecord{ID: "2026-10-07-1830-imported", Day: "2026-10-07", Start: at("2026-10-07", 18, 30),
+		End: at("2026-10-07", 18, 36), App: "In person", Title: "AI Tinkerers meetup",
+		SummaryJSON: `{"participants":[],"summary":"Maya demoed.","decisions":[],"action_items":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertImport(store.ImportRecord{ID: "2026-10-07-1830-imported", Status: store.StatusDone, UpdatedAt: at("2026-10-07", 19, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{md: "ok"}
+	if err := CloseDay(context.Background(), r, st, p, "2026-10-07", nil); err != nil {
+		t.Fatal(err)
+	}
+	var in struct {
+		Meetings []struct {
+			ID       string   `json:"id"`
+			Title    string   `json:"title"`
+			Summary  []string `json:"summary_lines"`
+			Imported bool     `json:"imported"`
+		} `json:"meetings"`
+	}
+	if err := json.Unmarshal(r.input, &in); err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Meetings) != 2 || in.Meetings[0].Imported || !in.Meetings[1].Imported || in.Meetings[1].Title != "AI Tinkerers meetup" ||
+		!reflect.DeepEqual(in.Meetings[1].Summary, []string{"Maya demoed."}) {
+		t.Errorf("meetings = %+v", in.Meetings)
+	}
+}

@@ -38,6 +38,27 @@ func (p Paths) Cache() string { return filepath.Join(p.Root, "cache") }
 // CacheDay is the cache of one day; retention removes it with raw/<day>.
 func (p Paths) CacheDay(day string) string { return filepath.Join(p.Cache(), day) }
 
+// Imports holds imported recordings (journal import, the phone upload
+// page), one folder per recording: imports/<id>/ with the audio and its
+// note.json sidecar. It is apart from raw/, so the recorder's chunks and
+// hour processing never see it.
+func (p Paths) Imports() string { return filepath.Join(p.Root, "imports") }
+
+// Import is the folder of one imported recording.
+func (p Paths) Import(id string) string { return filepath.Join(p.Imports(), id) }
+
+// ImportDoc is the derived record of an imported recording: its labelled,
+// filtered transcript, as an HourDoc of the hour it starts in.
+func (p Paths) ImportDoc(id string) string {
+	return filepath.Join(p.Root, "derived", "imports", id+".json")
+}
+
+// ImportCache is the processing cache of an imported recording (whisper
+// output, diarization and voice embeddings), kept outside derived/.
+func (p Paths) ImportCache(id string) string {
+	return filepath.Join(p.Cache(), "imports", id+".json")
+}
+
 func (p Paths) Voices() string { return filepath.Join(p.Root, "voices") }
 func (p Paths) Models() string { return filepath.Join(p.Root, "models") }
 func (p Paths) Logs() string   { return filepath.Join(p.Root, "logs") }
@@ -50,7 +71,7 @@ func (p Paths) Ensure() error {
 	for _, d := range []string{
 		p.Root, p.Voices(), p.Models(), p.Logs(),
 		filepath.Join(p.Root, "raw"), filepath.Join(p.Root, "derived"),
-		filepath.Join(p.Root, "journal"),
+		filepath.Join(p.Root, "journal"), p.Imports(),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err

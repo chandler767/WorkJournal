@@ -118,7 +118,7 @@ func check(t *testing.T, name string, out any) {
 				}
 			}
 		}
-	case "summarize-meeting/01": // "Thanks, Priya" cue + on-screen "Priya N."
+	case "summarize-meeting/01": // on-screen "Priya N." label; "Thanks, Priya" alone names no one
 		m := out.(*MeetingSummary)
 		var priya []Participant
 		for _, p := range m.Participants {
@@ -128,6 +128,17 @@ func check(t *testing.T, name string, out any) {
 		}
 		if len(priya) != 1 || priya[0].Speaker != "Remote 1" {
 			t.Errorf("want exactly one participant named Priya (Remote 1), got %+v", m.Participants)
+		}
+	case "summarize-meeting/04": // imported recording with the user's note
+		m := out.(*MeetingSummary)
+		if !strings.Contains(strings.ToLower(m.Summary), "cluster") {
+			t.Errorf("summary misses the note's focus (speaker clustering): %q", m.Summary)
+		}
+		// The note names Maya, but no transcript cue ties her to a speaker.
+		for _, p := range m.Participants {
+			if strings.Contains(p.Name, "Maya") {
+				t.Errorf("named a speaker from the note alone: %+v", p)
+			}
 		}
 	case "privacy-filter/01": // bystanders' weekend chat while the user is silent
 		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4, 5, 6}, "bystander")

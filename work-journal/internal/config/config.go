@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -45,6 +46,8 @@ type Config struct {
 	PauseOnUsageLimit            bool              `toml:"pause_on_usage_limit"`
 	MinFreeGB                    int               `toml:"min_free_gb"`
 	ListenAddr                   string            `toml:"listen_addr"`
+	UploadAddr                   string            `toml:"upload_addr"`
+	UploadToken                  string            `toml:"upload_token"`
 	MeetingMinTwoWayMinutes      int               `toml:"meeting_min_two_way_minutes"`
 	InPersonMinMinutes           int               `toml:"in_person_min_minutes"`
 	InPersonSpeechRatio          float64           `toml:"in_person_speech_ratio"`
@@ -232,6 +235,29 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.DataDir) {
 		return fmt.Errorf("data_dir must be an absolute path (or start with ~/), got %q", c.DataDir)
+	}
+	return nil
+}
+
+// MinUploadToken is the shortest upload_token accepted.
+const MinUploadToken = 16
+
+// CheckUpload reports why the phone upload listener cannot start: with
+// upload_addr set, upload_token must be at least MinUploadToken characters.
+// An empty upload_addr (the listener off) is always fine. `journal serve`
+// refuses to start on this error; other commands do not use the listener.
+func (c Config) CheckUpload() error {
+	if c.UploadAddr == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(c.UploadAddr); err != nil {
+		return fmt.Errorf("upload_addr %q: %w", c.UploadAddr, err)
+	}
+	if n := len([]rune(c.UploadToken)); n < MinUploadToken {
+		if n == 0 {
+			return fmt.Errorf("upload_addr is set but upload_token is empty; set upload_token to a secret of at least %d characters (or remove upload_addr)", MinUploadToken)
+		}
+		return fmt.Errorf("upload_token is %d characters; it must be at least %d while upload_addr is set", n, MinUploadToken)
 	}
 	return nil
 }
