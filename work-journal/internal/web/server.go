@@ -4,6 +4,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"workjournal/internal/capture"
@@ -46,7 +48,16 @@ type Server struct {
 	// SkillsMissing is set when no installed Claude Code skills were found:
 	// hours then cannot be summarized and the day page says so.
 	SkillsMissing bool
-	nowFn         func() time.Time // test hook; time.Now when nil
+	// Ask answers /ask questions (Claude with only the journal MCP tools);
+	// nil disables the Ask box.
+	Ask   Asker
+	nowFn func() time.Time // test hook; time.Now when nil
+
+	askMu      sync.Mutex
+	askRunning *askEntry // the question being answered; nil when idle
+	askWG      sync.WaitGroup
+	askBase    context.Context // parent of every ask; cancelled by CloseAsks
+	askStop    context.CancelFunc
 }
 
 func (s *Server) now() time.Time {
@@ -74,6 +85,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /week/{week}", s.handleWeek)
 	mux.HandleFunc("POST /week/{week}/rollup", s.sameOrigin(s.handleWeekRollup))
 	mux.HandleFunc("GET /search", s.handleSearch)
+	mux.HandleFunc("GET /ask", s.handleAskPage)
+	mux.HandleFunc("POST /ask", s.sameOrigin(s.handleAsk))
+	mux.HandleFunc("GET /api/rev/ask", s.handleRevAsk)
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings", s.sameOrigin(s.handleSettingsSave))
 	mux.HandleFunc("POST /settings/restart-recorder", s.sameOrigin(s.handleRestartRecorder))
@@ -88,7 +102,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /hour/{date}/{hh}/reprocess", s.sameOrigin(s.handleReprocess))
 	mux.HandleFunc("POST /segment/category", s.sameOrigin(s.handleSegmentCategory))
 	mux.HandleFunc("POST /meeting/{id}/speaker", s.sameOrigin(s.handleSpeaker))
-	return localHostOnly(mux)
+	return localHostOnly(withCSP(mux))
+}
+
+// csp keeps every page to this origin: no external images, scripts,
+// styles, fetches or form targets, no framing and no <base>. Inline style
+// attributes are allowed (category colours); inline scripts are not.
+const csp = "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
+func withCSP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", csp)
+		next.ServeHTTP(w, r)
+	})
 }
 
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)

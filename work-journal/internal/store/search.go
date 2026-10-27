@@ -69,12 +69,30 @@ func quoteQuery(q string) string {
 
 // Search runs a ranked full-text query. Empty queries return no hits.
 func (s *Store) Search(q string, limit int) ([]SearchHit, error) {
+	return s.SearchRange(q, "", "", limit, 0)
+}
+
+// SearchRange is Search limited to the inclusive day range (an empty bound
+// is open), skipping the first offset hits.
+func (s *Store) SearchRange(q, fromDay, toDay string, limit, offset int) ([]SearchHit, error) {
 	match := quoteQuery(q)
 	if match == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT kind,day,hour,ts,ref,text,snippet(docs_fts,0,'[',']','…',12)
-		FROM docs_fts WHERE docs_fts MATCH ? ORDER BY bm25(docs_fts) LIMIT ?`, match, limit)
+	query := `SELECT kind,day,hour,ts,ref,text,snippet(docs_fts,0,'[',']','…',12)
+		FROM docs_fts WHERE docs_fts MATCH ?`
+	args := []any{match}
+	if fromDay != "" {
+		query += ` AND day>=?`
+		args = append(args, fromDay)
+	}
+	if toDay != "" {
+		query += ` AND day<=?`
+		args = append(args, toDay)
+	}
+	query += ` ORDER BY bm25(docs_fts) LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,8 @@ package web
 import (
 	"net/http"
 	"strings"
+
+	"workjournal/internal/wallclock"
 )
 
 const searchLimit = 50
@@ -75,7 +77,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, h := range hits {
-			p.Hits = append(p.Hits, searchHitRow{Kind: h.Kind, Day: h.Day, When: h.TS.Local().Format("15:04"),
+			p.Hits = append(p.Hits, searchHitRow{Kind: h.Kind, Day: h.Day, When: wallclock.Clock(h.TS),
 				Link: hitLink(h.Ref), Segs: splitMarks(h.Snippet)})
 		}
 	}

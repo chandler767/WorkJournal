@@ -107,6 +107,12 @@ input[type=text], input[type=search] { font: inherit; padding: .3rem .5rem; back
 .search { display: flex; gap: .5rem; margin: 1rem 0; }
 .search input { flex: 1; }
 .hit { margin: .6rem 0; } .hit p { margin: .1rem 0; }
+.ask-box textarea { flex: 1; font: inherit; padding: .4rem .5rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; resize: vertical; min-width: 0; }
+.ask-box input { min-width: 0; }
+.qa { margin: 1rem 0; }
+.qa.highlight .journal { border-color: var(--accent); }
+.qa .question { font-weight: 600; margin: 0 0 .3rem; }
+.qa .answer-error { color: var(--bad-text); background: var(--bad-bg); padding: .5rem .7rem; border-radius: var(--radius); margin: 0; }
 mark { background: var(--warn-bg); color: var(--warn-text); padding: 0 .15rem; border-radius: 3px; }
 .settings label { display: block; margin: .6rem 0; }
 .settings input[type=number], .settings input[type=text], .settings select { display: block; margin-top: .2rem; font: inherit; padding: .3rem .5rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }

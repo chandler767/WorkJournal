@@ -1,0 +1,7 @@
+{
+  "name": "chandler-agent/WorkJournal-factory",
+  "version": "0.1.0",
+  "description": "This repository's own Tessl factory skills, such as the weekly plan.",
+  "private": true,
+  "skills": ["skills/weekly-plan"]
+}

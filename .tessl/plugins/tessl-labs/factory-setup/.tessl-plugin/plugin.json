@@ -1,0 +1,6 @@
+{
+  "name": "tessl-labs/factory-setup",
+  "version": "0.8.1",
+  "description": "Set up, explain, and change a Tessl factory on a repository: pick automations that fit how you work, such as shipping tickets as pull requests, answering reviews and fixing checks on those pull requests, code review, and scheduled jobs, and prepare the repository for agents.",
+  "skills": ["skills/factory-setup", "skills/prepare-repo"]
+}

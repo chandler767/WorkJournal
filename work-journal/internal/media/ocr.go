@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"workjournal/internal/activity"
 )
 
 // ScreenText is the OCR text of one screenshot.
@@ -41,7 +43,7 @@ type FileOCR interface {
 }
 
 // OCR implements OCR. Time comes from raw/<day>/screens/HHMMSS.jpg in the
-// local zone; unparseable names are skipped. Empty texts are dropped and
+// day's recording zone; unparseable names are skipped. Empty texts are dropped and
 // consecutive identical texts collapse to the first.
 func (r RecorderOCR) OCR(ctx context.Context, files []string) ([]ScreenText, error) {
 	entries, err := r.run(ctx, files)
@@ -51,8 +53,9 @@ func (r RecorderOCR) OCR(ctx context.Context, files []string) ([]ScreenText, err
 	var out []ScreenText
 	last := ""
 	have := false
+	zones := map[string]activity.ZoneTimeline{} // by day directory, read once
 	for _, e := range entries {
-		t, err := screenTime(e.File)
+		t, err := screenTime(e.File, zones)
 		if err != nil {
 			log.Printf("media: skipping %s: %v", e.File, err)
 			continue
@@ -102,8 +105,21 @@ func (r RecorderOCR) run(ctx context.Context, files []string) ([]ocrEntry, error
 	return all, nil
 }
 
-func screenTime(file string) (time.Time, error) {
-	day := filepath.Base(filepath.Dir(filepath.Dir(file)))
+// screenTime is the time of raw/<day>/screens/HHMMSS.jpg, a wall clock in
+// the zone the day was recorded in (its activity log, read once per day
+// into zones; time.Local without).
+func screenTime(file string, zones map[string]activity.ZoneTimeline) (time.Time, error) {
+	dayDir := filepath.Dir(filepath.Dir(file))
+	day := filepath.Base(dayDir)
 	stem := strings.TrimSuffix(filepath.Base(file), ".jpg")
-	return time.ParseInLocation("2006-01-02 150405", day+" "+stem, time.Local)
+	wall, err := time.ParseInLocation("2006-01-02 150405", day+" "+stem, time.UTC)
+	if err != nil {
+		return time.Time{}, err
+	}
+	z, ok := zones[dayDir]
+	if !ok {
+		z = activity.LoadZoneTimeline(filepath.Join(dayDir, "activity.jsonl"), time.Local)
+		zones[dayDir] = z
+	}
+	return time.ParseInLocation("2006-01-02 150405", day+" "+stem, z.At(wall))
 }

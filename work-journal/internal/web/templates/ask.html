@@ -1,0 +1,33 @@
+{{define "content"}}
+<div id="page-rev" hidden data-rev="{{.Rev}}" data-rev-url="/api/rev/ask"{{if .Pending}} data-poll-ms="{{.PollMS}}"{{end}}></div>
+<h1>Ask your journal</h1>
+{{if not .Available}}
+<p class="muted">Ask is not available: it needs <code>journal serve</code> started from a built <code>journal</code> binary.</p>
+{{else}}
+{{if .Notice}}<div class="banner" role="status">{{.Notice}}</div>{{end}}
+{{if .ClaudePause}}<div class="banner claude-paused" role="alert">{{.ClaudePause}}. Questions wait too — use <strong>Ask anyway</strong> to try this one now (summaries stay paused).</div>{{end}}
+<form class="search ask-box" method="post" action="/ask" aria-label="Ask your journal">
+  <textarea name="q" rows="2" maxlength="1000" required aria-label="Question about your journal" placeholder="e.g. How long was I in meetings yesterday? What did we decide about the release?">{{.Question}}</textarea>
+  {{if .ClaudePause}}<input type="hidden" name="force" value="1"><button type="submit">Ask anyway</button>{{else}}<button type="submit">Ask</button>{{end}}
+</form>
+{{if and .ClaudePause .Question}}<p class="muted">Not asked yet, because Claude is paused.</p>{{end}}
+<p class="muted">Claude answers from your journal only (summaries, transcripts, meetings, time), using the read-only journal tools. Answers can take a minute.</p>
+{{with .Pending}}
+<section class="qa pending" aria-live="polite">
+  <p class="question">{{.Question}}</p>
+  <p class="muted">Thinking… asked {{.When}}. This page updates when the answer is ready.</p>
+</section>
+{{end}}
+{{if .History}}
+<section>
+  <h2>Recent questions</h2>
+  {{range .History}}
+  <article class="qa{{if .Highlight}} highlight{{end}}" id="q-{{.ID}}">
+    <p class="question">{{.Question}} <span class="muted">· {{.When}}</span></p>
+    {{if .Error}}<p class="answer-error">{{.Error}}</p>{{else}}<div class="journal">{{.Answer}}</div>{{end}}
+  </article>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+{{end}}

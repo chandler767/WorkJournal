@@ -1,7 +1,7 @@
 ---
 name: commit-conventions
 description: |
-  Use when the user asks for a commit message or wants help summarizing staged changes. Generates a Conventional Commits–formatted message from a diff.
+  Use when the user asks for a commit message or wants help summarizing staged changes, e.g. "write a commit" or "git commit message". Reads the staged diff, picks the Conventional Commits type (feat, fix, refactor, docs, test, perf, chore), and writes an imperative subject of at most 72 characters, adding a body only for breaking changes, migrations or security fixes.
 ---
 
 # commit-conventions

@@ -1,0 +1,83 @@
+{
+  "context": "Fix: afconvert writes extensible WAV headers that sherpa-onnx cannot read; ToWav16k must normalize the header to standard PCM after conversion.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "canonical_pcm_header_produced",
+      "description": "WAV files produced by the conversion function have a standard PCM header (format tag 0x0001, 16-byte fmt chunk) rather than an extensible or non-standard header, making them readable by the speaker diarizer.",
+      "example": "NormalizeWav16k rewrites an extensible 0xFFFE header and any extra chunks into a 44-byte RIFF/WAVE/fmt(16)/data layout with tag 0x0001.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "samples_preserved",
+      "description": "The audio samples in the output WAV are identical to those in the afconvert-produced file \u2014 only the header/metadata is changed, not the PCM data.",
+      "example": "parseWav16k finds the data chunk offset; NormalizeWav16k copies exactly n bytes of sample data from that offset into the new file.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "already_canonical_is_noop",
+      "description": "If the WAV file already has a standard PCM header requiring no changes, the normalization step returns without modifying the file.",
+      "example": "parseWav16k returns canonical=true and NormalizeWav16k returns nil immediately without writing any temp file.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "error_leaves_file_untouched",
+      "description": "If the input WAV is not 16 kHz mono 16-bit PCM (wrong rate, channels, bit depth, or unsupported format), normalization returns an error and the original file is left unchanged.",
+      "example": "NormalizeWav16k writes to a temp file and only renames on success; on any parse or write error the temp file is removed and the original is untouched.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "normalization_called_after_conversion",
+      "description": "The normalization step runs as part of the conversion pipeline \u2014 callers that invoke the WAV conversion function get a normalized file without needing to call a separate function.",
+      "example": "ToWav16k calls NormalizeWav16k on the output path after afconvert succeeds, so the normalized file is what the rest of the pipeline receives.",
+      "max_score": 1,
+      "category": "INTEGRATION"
+    },
+    {
+      "name": "uses_runner_for_afconvert",
+      "description": "The conversion step continues to invoke afconvert through the existing Runner abstraction, keeping the function testable without spawning real processes.",
+      "example": "ToWav16k accepts a Runner parameter and passes it to the afconvert invocation; NormalizeWav16k operates on the file directly since it does not invoke external tools.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "atomic_file_replacement",
+      "description": "When the WAV file must be rewritten, the replacement is performed atomically \u2014 using a temporary file in the same directory followed by a rename \u2014 so a partial write never leaves a corrupt file.",
+      "example": "NormalizeWav16k creates a temp file via os.CreateTemp in the same directory and calls os.Rename at the end; the deferred os.Remove cleans up on failure.",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "error_names_the_file",
+      "description": "When normalization fails, the error message includes the path of the problematic WAV file so callers can identify which file caused the failure.",
+      "example": "NormalizeWav16k wraps parse errors with fmt.Errorf(\"wav %s: %w\", path, err).",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "commit_type_is_fix",
+      "description": "The commit message in `COMMIT_MSG.txt` uses the Conventional Commits format and the type is `fix`, because the change corrects behavior that was broken (the diarizer could not read converted WAV files).",
+      "example": "fix(media): normalize afconvert WAV headers to plain PCM",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "commit_subject_rules",
+      "description": "The first line of `COMMIT_MSG.txt` is in the imperative mood, starts with a lowercase letter after the type prefix, has no trailing period, and is at most 72 characters including the type prefix.",
+      "example": "'fix(media): normalize afconvert WAV headers to plain PCM' passes; 'Fixed WAV headers.' fails (past tense, capitalized, trailing period, no type).",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "commit_not_run",
+      "description": "The agent stages the changes and writes the proposed message to `COMMIT_MSG.txt`, but does not run `git commit`.",
+      "example": "`COMMIT_MSG.txt` exists at the repo root; `git log` has no new commit.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    }
+  ]
+}

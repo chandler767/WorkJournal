@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"workjournal/internal/config"
 	"workjournal/internal/retention"
 )
@@ -31,6 +33,7 @@ commands:
   close-day [--day D]         write the day's journal entry (default today)
   rollup [--week W]           write the weekly rollup (default this week)
   autostart on|off|status     run serve at login (on also starts it now; off stops it)
+  mcp                         serve the journal read-only to Claude clients (MCP over stdio)
 
 common flags:
   --config PATH   config file (default ~/WorkJournal/config.toml)
@@ -68,6 +71,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
+	defer stop()
+
+	if cmd == "mcp" {
+		// Needs no source tree: Claude clients start it from anywhere.
+		if err := runMCP(ctx, *cfgPath, &mcp.StdioTransport{}); err != nil {
+			fmt.Fprintf(stderr, "journal mcp: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "journal: %v\n", err)
@@ -78,9 +93,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "journal: %v\n", err)
 		return 1
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
-	defer stop()
 
 	switch cmd {
 	case "setup":
@@ -118,8 +130,12 @@ func allowed(cmd string, fset *flag.FlagSet) bool {
 	ok := true
 	fset.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "config", "repo":
+		case "config":
 			return
+		case "repo":
+			if cmd != "mcp" {
+				return
+			}
 		}
 		for _, e := range extra {
 			if f.Name == e {

@@ -116,14 +116,15 @@ func overlap(from, to, s, e time.Time) float64 {
 }
 
 // otherHourChunks returns the cached diarization of meeting m's chunks
-// outside the hour [start, end): the system track, and for an in-person
+// named outside the hour that start begins: the system track, and for an in-person
 // meeting the mic track too. A chunk without a current, diarized cache entry
 // is left out.
 func (p *Pipeline) otherHourChunks(m activity.Meeting, start, end time.Time) []diarChunk {
 	length := time.Duration(p.Cfg.AudioChunkMinutes) * time.Minute
 	var out []diarChunk
-	s, e := m.Start.In(time.Local), m.End.In(time.Local)
-	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.Local); !d.After(e); d = d.AddDate(0, 0, 1) {
+	loc := m.Start.Location() // the meeting's recorded wall clock
+	s, e := m.Start, m.End.In(loc)
+	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, loc); !d.After(e); d = d.AddDate(0, 0, 1) {
 		day := config.DayKey(d)
 		all, err := p.chunks(day)
 		if err != nil {
@@ -134,8 +135,8 @@ func (p *Pipeline) otherHourChunks(m activity.Meeting, start, end time.Time) []d
 			if c.track == "mic" && m.App != activity.InPersonApp {
 				continue
 			}
-			if !c.start.Before(start) && c.start.Before(end) {
-				continue // this hour's: the caller has them
+			if sameHour(c.start, config.DayKey(start), start.Hour()) {
+				continue // named in this hour: the caller has them
 			}
 			cend := c.start.Add(length)
 			for _, n := range all[i+1:] {
@@ -309,10 +310,6 @@ func (p *Pipeline) relabelMeetings(doc *HourDoc) error {
 	if sp == nil {
 		return nil
 	}
-	hourStart, _, err := hourBounds(doc.Day, doc.Hour)
-	if err != nil {
-		return err
-	}
 	chunksOf := map[string][]chunk{}
 	for k, m := range sp.meetings {
 		heard := map[string]bool{}
@@ -324,18 +321,18 @@ func (p *Pipeline) relabelMeetings(doc *HourDoc) error {
 			}
 		}
 		note(doc)
-		s := m.Start.In(time.Local)
-		for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, time.Local); !t.After(m.End); t = t.Add(time.Hour) {
-			if t.Equal(hourStart) {
+		s := m.Start // its recorded wall clock names the derived hours
+		for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, s.Location()); !t.After(m.End); t = t.Add(time.Hour) {
+			day := config.DayKey(t)
+			if day == doc.Day && t.Hour() == doc.Hour {
 				continue
 			}
-			day := config.DayKey(t)
 			path := p.Paths.DerivedHour(day, t.Hour())
 			d, err := Load(path)
 			if err != nil {
 				continue
 			}
-			if t.Before(hourStart) {
+			if day < doc.Day || (day == doc.Day && t.Hour() < doc.Hour) { // an earlier hour
 				all, ok := chunksOf[day]
 				if !ok {
 					if all, err = p.chunks(day); err != nil {

@@ -1,0 +1,19 @@
+{
+  "description": "Add change-driven screen capture settings (min gap, idle backstop, sensitivity, app-switch toggle) to the Settings page and wire them to the recorder",
+  "fixtures": {
+    "codebase": {
+      "type": "commit",
+      "repoUrl": "https://github.com/chandler767/WorkJournal.git",
+      "ref": "02b23b3af51c14ff668b63bd4087a010f9beb6c2",
+      "installPath": ".",
+      "exclude": [
+        "*.mdc",
+        "*.md",
+        "tile.json",
+        "tessl.json",
+        ".tessl/",
+        ".tessl-plugin/plugin.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "tessl-academy/tuning-your-agent",
+  "version": "0.1.4",
+  "summary": "Guided walkthroughs for the Tuning Your Agent course: review evals, task evals and scenarios, the optimizer, security review, continuous review in CI, comparing models for cost vs quality, and repo autopilot with Tessl Agent. Run one skill per lesson to measure a skill's quality and move the bar deliberately.",
+  "skills": {
+    "01-reviewing-skills-with-review-evals": {
+      "path": "skills/01-reviewing-skills-with-review-evals/SKILL.md"
+    },
+    "02-task-evals-and-scenarios": {
+      "path": "skills/02-task-evals-and-scenarios/SKILL.md"
+    },
+    "03-optimizing-a-skill": {
+      "path": "skills/03-optimizing-a-skill/SKILL.md"
+    },
+    "04-reviewing-skills-for-security": {
+      "path": "skills/04-reviewing-skills-for-security/SKILL.md"
+    },
+    "05-continuous-review-in-ci": {
+      "path": "skills/05-continuous-review-in-ci/SKILL.md"
+    },
+    "06-comparing-models-for-cost-and-quality": {
+      "path": "skills/06-comparing-models-for-cost-and-quality/SKILL.md"
+    },
+    "07-repo-autopilot-with-tessl-agent": {
+      "path": "skills/07-repo-autopilot-with-tessl-agent/SKILL.md"
+    }
+  },
+  "private": false
+}

@@ -53,14 +53,17 @@ func Open(path string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-func fmtTime(t time.Time) string { return t.Local().Format(time.RFC3339Nano) }
+// Times are stored and read back in the offset they carry, which for journal
+// data is the recording zone: converting to the Mac's current zone would
+// move a meeting recorded in London (10:05+01:00) to 05:05 in New York.
+func fmtTime(t time.Time) string { return t.Format(time.RFC3339Nano) }
 
 func parseTime(v string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339Nano, v)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("store: parse time %q: %w", v, err)
 	}
-	return t.Local(), nil
+	return t, nil
 }
 
 // tx runs fn in a transaction, committing on success.

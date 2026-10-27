@@ -1,0 +1,66 @@
+{
+ "day": "2026-10-07",
+ "hour": 9,
+ "meetings": [
+  {
+   "id": "2026-10-07-0900-zoom",
+   "app": "zoom.us",
+   "start": "09:00:00",
+   "end": "09:20:00",
+   "participants": [
+    "You",
+    "Priya",
+    "Marco"
+   ]
+  }
+ ],
+ "known_people": [
+  "Priya",
+  "Marco"
+ ],
+ "user_voice_enrolled": true,
+ "utterances": [
+  {
+   "index": 0,
+   "time": "09:00:20",
+   "track": "system",
+   "speaker": "Priya",
+   "text": "Morning! How was your weekend, Marco?"
+  },
+  {
+   "index": 1,
+   "time": "09:00:27",
+   "track": "system",
+   "speaker": "Marco",
+   "text": "Great, we finally went to the lake house, the kids loved the kayaks."
+  },
+  {
+   "index": 2,
+   "time": "09:00:35",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Oh nice, my family wants to do that next summer."
+  },
+  {
+   "index": 3,
+   "time": "09:00:44",
+   "track": "system",
+   "speaker": "Priya",
+   "text": "Ha, okay, let's get going. Standup: I'm on the billing export bug."
+  },
+  {
+   "index": 4,
+   "time": "09:01:10",
+   "track": "system",
+   "speaker": "Marco",
+   "text": "I'm finishing the onboarding emails, should be in review today."
+  },
+  {
+   "index": 5,
+   "time": "09:01:30",
+   "track": "mic",
+   "speaker": "You",
+   "text": "I'll pair with Priya on the export after this."
+  }
+ ]
+}

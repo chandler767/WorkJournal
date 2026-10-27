@@ -1,0 +1,19 @@
+{
+  "description": "Fix reprocessing the in-progress hour to use a partial pass and show user-friendly error notices on failure",
+  "fixtures": {
+    "codebase": {
+      "type": "commit",
+      "repoUrl": "https://github.com/chandler767/WorkJournal.git",
+      "ref": "89292696b23a79e68659a69874342c797bf8f1b4",
+      "installPath": ".",
+      "exclude": [
+        "*.mdc",
+        "*.md",
+        "tile.json",
+        "tessl.json",
+        ".tessl/",
+        ".tessl-plugin/plugin.json"
+      ]
+    }
+  }
+}

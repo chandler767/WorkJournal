@@ -1,0 +1,97 @@
+{
+  "context": "Evaluates whether a solution correctly adds four change-driven screen capture config fields (min gap, idle backstop, sensitivity, app-switch toggle) to the config struct, validates them, exposes them in the Settings web UI, and passes them to the recorder as CLI arguments.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "settings_page_renders_capture_fields",
+      "description": "The Settings page GET response includes form controls for all four screen capture settings (minimum gap, idle backstop, sensitivity, and app-switch toggle), pre-populated with their current configured values.",
+      "example": "The settings.html template adds a 'Screen capture' section with number inputs for screenshot_min_gap_sec and screenshot_idle_backstop_sec, a select for screen_change_sensitivity, and a select for capture_on_app_switch, all showing the values from the current config.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "settings_save_persists_values",
+      "description": "Submitting the settings form with new screen capture values saves them to the config file so they are reflected in subsequent GET requests.",
+      "example": "handleSettingsSave reads the four new form fields, applyForm parses them into the Config struct, Validate checks them, and SaveCfg writes the result.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "invalid_values_rejected",
+      "description": "Submitting out-of-range numeric values or an unrecognized sensitivity string returns an error response (HTTP 400) naming the offending field, and does not modify the saved config.",
+      "example": "Config.Validate() rejects screenshot_min_gap_sec outside 1\u201360, screenshot_idle_backstop_sec outside 10\u2013600, and screen_change_sensitivity not in {low, medium, high}; the settings handler renders the error back to the user.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "recorder_receives_capture_args",
+      "description": "When the recorder is (re)started, the new screen capture settings are passed as CLI arguments to the recorder binary so it actually applies them.",
+      "example": "RecorderArgs builds --min-gap, --idle-backstop, --change-sensitivity, and --capture-on-switch flags from the corresponding Config fields, and the old --interval flag is not passed.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "config_fields_have_sensible_defaults",
+      "description": "Default() supplies defaults for all four new fields so that a fresh install or a config file without the new keys works without errors.",
+      "example": "Default() sets ScreenshotMinGapSec=3, ScreenshotIdleBackstopSec=60, ScreenChangeSensitivity=\"medium\", CaptureOnAppSwitch=true.",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "config_uses_existing_validation_pattern",
+      "description": "New field validation is added to Config.Validate() using the same patterns already used for similar fields \u2014 range checks for integers, and a membership check against an exported slice for the sensitivity enum.",
+      "example": "Validate() adds range guards for ScreenshotMinGapSec and ScreenshotIdleBackstopSec, and checks ScreenChangeSensitivity against a ChangeSensitivities slice (analogous to AudioModes or ProcessIntervals).",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "settings_form_uses_existing_optional_field_pattern",
+      "description": "The new screen capture fields in applyForm() treat absent (empty-string) form values as 'keep current value', consistent with how other optional settings fields (like ProcessInterval and AudioMode) are handled.",
+      "example": "applyForm guards each new field with `if v := strings.TrimSpace(f.MinGap); v != \"\" { ... }`, matching the pattern used for ProcessInterval.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "sensitivity_enum_exposed_to_template",
+      "description": "The settings page template receives the allowed sensitivity values for rendering a select element, sourced from the same exported slice used for validation \u2014 the same pattern as Intervals and AudioModes.",
+      "example": "renderSettings populates settingsPage.Sensitivity from config.ChangeSensitivities, and the template iterates over it with {{range .Sensitivity}}.",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "backward_compatible_config_load",
+      "description": "A TOML config file that does not contain the new screen capture keys loads successfully and uses the defaults, so existing users are not broken.",
+      "example": "Load() starts from Default() and overlays only the keys present in the file; an older file with only screenshot_interval_sec loads with ScreenshotIdleBackstopSec=60 and CaptureOnAppSwitch=true.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "recorder_args_no_old_interval_flag",
+      "description": "The recorder is not passed both the old --interval flag and the new --idle-backstop flag simultaneously; the change-driven arguments replace the fixed-timer argument.",
+      "example": "RecorderArgs no longer includes '--interval', strconv.Itoa(c.ScreenshotIntervalSec) in the returned slice.",
+      "max_score": 1,
+      "category": "MUST_NOT"
+    },
+    {
+      "name": "commit_type_is_feat",
+      "description": "The commit message in `COMMIT_MSG.txt` uses the Conventional Commits format and the type is `feat`, because the change adds new user-visible settings to the Settings page.",
+      "example": "feat(settings): add change-driven screen capture settings",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "commit_subject_rules",
+      "description": "The first line of `COMMIT_MSG.txt` is in the imperative mood, starts with a lowercase letter after the type prefix, has no trailing period, and is at most 72 characters including the type prefix.",
+      "example": "'feat(settings): add change-driven screen capture settings' passes; 'Added stuff.' fails (past tense, capitalized, trailing period, no type).",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "commit_not_run",
+      "description": "The agent stages the changes and writes the proposed message to `COMMIT_MSG.txt`, but does not run `git commit`.",
+      "example": "`COMMIT_MSG.txt` exists at the repo root; `git log` has no new commit.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    }
+  ]
+}

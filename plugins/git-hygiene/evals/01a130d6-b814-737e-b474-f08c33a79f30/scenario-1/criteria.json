@@ -1,0 +1,132 @@
+{
+  "context": "Evaluates adding a privacy-filter skill to the work-journal plugin that identifies bystander and personal non-work conversations to drop from audio transcripts, and sensitive identifiers to redact",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "skill_file_exists",
+      "description": "A SKILL.md file exists for the privacy-filter skill within the work-journal skills plugin structure, accessible to the agent when invoked",
+      "example": "Ground truth adds work-journal/skills/work-journal/skills/privacy-filter/SKILL.md with YAML frontmatter name: privacy-filter and description",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "drop_bystander_utterances",
+      "description": "The skill identifies and returns bystander conversations \u2014 those among people near the laptop that do not include the user \u2014 as ranges to drop with reason 'bystander'",
+      "example": "Ground truth SKILL.md defines bystander as a conversation where You neither speaks nor is addressed, and returns drop ranges with reason 'bystander'",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "drop_personal_non_work",
+      "description": "The skill identifies and returns the user's personal non-work conversations with non-coworkers (family, friends, personal calls) as ranges to drop with reason 'personal_non_work'",
+      "example": "Ground truth SKILL.md defines personal_non_work as the user's own conversation with clearly non-work people about non-work matters, including FaceTime/personal calls",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "drop_output_schema",
+      "description": "The skill's output includes a 'drop' array where each entry has 'from', 'to' (inclusive utterance indexes), 'reason' (one of 'bystander' or 'personal_non_work'), and 'confidence' (0-1 numeric)",
+      "example": "Ground truth schema: drop items require from (integer), to (integer), reason (enum bystander|personal_non_work), confidence (number 0-1)",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "redact_sensitive_identifiers",
+      "description": "The skill identifies utterances containing sensitive identifiers (government IDs, bank account/card/routing numbers, passwords, PINs, secret keys/tokens) and returns them with identifiers replaced, while leaving other utterances out of the redact list",
+      "example": "Ground truth SKILL.md lists redact targets: government ID, passport number, bank/routing/IBAN/card number, security code, password, PIN, passcode, secret key or token; returns {index, text} with each replaced by [redacted]",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "keep_coworker_and_meeting_speech",
+      "description": "The skill never drops conversations with coworkers (including personal chat with coworkers) or system-track speech during a work meeting; it errs toward keeping when uncertain",
+      "example": "Ground truth SKILL.md specifies: keep any conversation with coworkers including personal chat, keep system-track speech during a call/meeting unless the whole call is clearly personal, keep when unsure \u2014 only drop what text clearly supports",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "headless_skill_conventions",
+      "description": "The skill follows the codebase's headless skill conventions: reads only the input file named in the prompt, replies with only one JSON object, runs no commands, and never invents content not in the input",
+      "example": "Ground truth SKILL.md starts with Rules section: read only named input file, reply with ONLY one JSON object, no prose no code fences, never invent utterances/people/indexes",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "skill_frontmatter_and_description",
+      "description": "The SKILL.md has YAML frontmatter with 'name' and 'description' fields following the same pattern as other skills in the plugin; description matches when-to-use phrasing for agent dispatch",
+      "example": "Ground truth uses frontmatter: name: privacy-filter, description: Use when the work-journal app asks which transcript utterances of an hour are bystander or personal non-work conversations to remove",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "output_schema_embedded",
+      "description": "The SKILL.md embeds a complete JSON Schema for the output in a code block, following the pattern of the other skills in the plugin",
+      "example": "Ground truth SKILL.md has an '## Output schema' section with a ```json fenced block containing a full JSON Schema object with $schema, title, type, required, and properties",
+      "max_score": 1,
+      "category": "REUSE"
+    },
+    {
+      "name": "plugin_version_bumped",
+      "description": "The plugin version is updated in the plugin metadata files to reflect the new skill being added",
+      "example": "Ground truth bumps version from 0.2.0 to 0.3.1 in plugin.json and tessl-package.json; the description is updated to mention the new skill",
+      "max_score": 1,
+      "category": "INTEGRATION"
+    },
+    {
+      "name": "installed_plugin_synced",
+      "description": "The installed copy of the plugin under .tessl/plugins/local/work-journal/ is updated to match the source (README skill count, plugin.json version and description)",
+      "example": "Ground truth updates .tessl/plugins/local/work-journal/README.md (five\u2192six skills, adds privacy-filter row), plugin.json (version + description), and tessl-package.json",
+      "max_score": 1,
+      "category": "INTEGRATION"
+    },
+    {
+      "name": "fixtures_provided",
+      "description": "At least one sample input fixture file is provided for the privacy-filter skill, following the fixtures/ convention used by all other skills in the plugin",
+      "example": "Ground truth adds skills/privacy-filter/fixtures/01-input.json through 06-input.json with varied scenarios covering bystander, personal non-work, redaction, and context line cases",
+      "max_score": 1,
+      "category": "INTEGRATION"
+    },
+    {
+      "name": "context_lines_handled",
+      "description": "The skill's rules account for context lines: already-decided utterances sent alongside new ones for conversational continuity, which must never be placed in the redact output and may only be added to a drop range when the new utterances reveal the whole conversation is removable",
+      "example": "Ground truth SKILL.md: 'Never put a context line in redact. A drop range may include context lines when they belong to a conversation that the new lines now show is removable; do not drop context lines for any other reason'",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "confidence_thresholds_defined",
+      "description": "The skill specifies confidence thresholds: high confidence (0.9+) for clearly supported drops, moderate (0.5-0.7) for judgment calls, and instructs never to drop below 0.5 (keep instead)",
+      "example": "Ground truth SKILL.md: 'confidence 0-1: 0.9+ when text plainly shows it (e.g. love you mom); 0.5-0.7 when it is a judgement call. Do not drop below 0.5; keep instead'",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "empty_input_behavior",
+      "description": "The skill specifies what to return when the utterances array is empty: {\"drop\": [], \"redact\": []}",
+      "example": "Ground truth SKILL.md: 'Empty input gives {\"drop\":[],\"redact\":[]}'",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    },
+    {
+      "name": "commit_type_is_feat",
+      "description": "The commit message in `COMMIT_MSG.txt` uses the Conventional Commits format and the type is `feat`, because the change adds a new privacy-filter skill, a capability the app could not use before.",
+      "example": "feat(process): add privacy-filter skill for bystander speech",
+      "max_score": 1,
+      "category": "INTENT"
+    },
+    {
+      "name": "commit_subject_rules",
+      "description": "The first line of `COMMIT_MSG.txt` is in the imperative mood, starts with a lowercase letter after the type prefix, has no trailing period, and is at most 72 characters including the type prefix.",
+      "example": "'feat(process): add privacy-filter skill for bystander speech' passes; 'Added stuff.' fails (past tense, capitalized, trailing period, no type).",
+      "max_score": 1,
+      "category": "DESIGN"
+    },
+    {
+      "name": "commit_not_run",
+      "description": "The agent stages the changes and writes the proposed message to `COMMIT_MSG.txt`, but does not run `git commit`.",
+      "example": "`COMMIT_MSG.txt` exists at the repo root; `git log` has no new commit.",
+      "max_score": 1,
+      "category": "EDGE_CASE"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ final class ActivityLog {
         let title: String?
         let mode: String?
         let reason: String?
+        let tz: String?
     }
 
     private let dataDir: URL
@@ -24,16 +25,16 @@ final class ActivityLog {
 
     init(dataDir: URL) { self.dataDir = dataDir }
 
-    /// `app`/`bundle`/`title` are only passed for `app` events, `mode` for `audio_mode` and
-    /// `reason` for `audio_auto_start`.
+    /// `app`/`bundle`/`title` are only passed for `app` events, `mode` for `audio_mode`,
+    /// `reason` for `audio_auto_start` and `tz` (an IANA identifier) for `zone`.
     func append(_ type: String, app: String? = nil, bundle: String? = nil, title: String? = nil,
-                mode: String? = nil, reason: String? = nil) {
+                mode: String? = nil, reason: String? = nil, tz: String? = nil) {
         let now = Date()
         lock.lock()
         defer { lock.unlock() }
         do {
             var line = try encoder.encode(Event(ts: rfc3339(now), type: type, app: app, bundle: bundle, title: title,
-                                                     mode: mode, reason: reason))
+                                                     mode: mode, reason: reason, tz: tz))
             line.append(0x0A)
             let dir = rawDayDir(dataDir, now)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -51,8 +52,34 @@ final class ActivityLog {
     }
 }
 
+/// The Mac's time zone at an instant, as a `zone` event records it, with the local day.
+struct ZoneState: Equatable {
+    let identifier: String
+    let offset: Int
+    let day: String
+}
+
+func zoneState(at date: Date, zone: TimeZone) -> ZoneState {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = zone
+    f.dateFormat = "yyyy-MM-dd"
+    return ZoneState(identifier: zone.identifier, offset: zone.secondsFromGMT(for: date), day: f.string(from: date))
+}
+
+/// Decides when to log a `zone` event: at the first check (recorder start) and whenever the
+/// zone, its UTC offset (DST) or the local day changes, so the journal knows exactly when the
+/// clock moved and each day's log carries its zone.
+struct ZoneWatch {
+    private(set) var last: ZoneState?
+    mutating func changed(_ s: ZoneState) -> Bool {
+        defer { last = s }
+        return s != last
+    }
+}
+
 /// Watches the frontmost app/window, idle time and sleep/wake (main thread only).
-/// Logs `app`, `idle`, `active`, `sleep`, `wake`, `excluded` and `included`; the
+/// Logs `zone`, `app`, `idle`, `active`, `sleep`, `wake`, `excluded` and `included`; the
 /// recorder reacts to exclusion, meeting and sleep changes through the callbacks.
 final class ActivityMonitor {
     private struct Frontmost: Equatable {
@@ -63,6 +90,8 @@ final class ActivityMonitor {
     var onMeetingChange: ((Bool) -> Void)?
     var onSleep: (() -> Void)?
     var onWake: (() -> Void)?
+    /// `idle` changed (an `idle` or `active` event was just logged).
+    var onIdleChange: (() -> Void)?
     /// The frontmost app or its focused window title changed (not fired for the first poll).
     var onSwitch: (() -> Void)?
 
@@ -76,13 +105,16 @@ final class ActivityMonitor {
     private let log: ActivityLog
     private let policy: PolicyConfig
     private let idleSeconds: Double
-    private var idle = false
+    /// No input for `idleMinutes` (an `idle` event was logged).
+    private(set) var idle = false
     private var lastLogged: Frontmost?
     private var lastSeen: Frontmost?
     /// Bundle id and name of the frontmost app at the last poll.
     var frontmostApp: (bundle: String, name: String) { (lastSeen?.bundle ?? "", lastSeen?.app ?? "") }
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
+    private var zoneObserver: NSObjectProtocol?
+    private var zoneWatch = ZoneWatch()
 
     init(log: ActivityLog, policy: PolicyConfig, idleMinutes: Int) {
         self.log = log
@@ -105,8 +137,20 @@ final class ActivityMonitor {
                 self?.onWake?()
             },
         ]
+        zoneObserver = NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil,
+                                                              queue: .main) { [weak self] _ in self?.checkZone() }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
         poll()
+    }
+
+    /// Logs a `zone` event when the zone, offset or day changed (see ZoneWatch). The cached
+    /// system zone is reset first, so event times and file names use the new zone from now on.
+    private func checkZone() {
+        NSTimeZone.resetSystemTimeZone()
+        let s = zoneState(at: Date(), zone: TimeZone.current)
+        if zoneWatch.changed(s) {
+            log.append("zone", tz: s.identifier)
+        }
     }
 
     func stop() {
@@ -114,6 +158,8 @@ final class ActivityMonitor {
         timer = nil
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers = []
+        if let z = zoneObserver { NotificationCenter.default.removeObserver(z) }
+        zoneObserver = nil
     }
 
     /// Re-checks the frontmost app and window title right now (e.g. just before a screenshot),
@@ -125,6 +171,7 @@ final class ActivityMonitor {
     }
 
     private func poll() {
+        checkZone() // defensively every poll: a missed notification still logs the change
         let f = Self.frontmost()
         let nowExcluded = isExcluded(app: f.app, title: f.title, policy)
         if nowExcluded != excluded {
@@ -159,6 +206,7 @@ final class ActivityMonitor {
         if nowIdle != idle {
             idle = nowIdle
             log.append(nowIdle ? "idle" : "active")
+            onIdleChange?()
         }
     }
 

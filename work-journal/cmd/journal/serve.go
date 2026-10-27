@@ -73,6 +73,7 @@ func serveOn(ctx context.Context, a *App, ln net.Listener) error {
 	if serr := srv.Shutdown(shutCtx); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
 		log.Printf("http shutdown: %v", serr)
 	}
+	a.Server.CloseAsks(5 * time.Second) // a running Ask stops its claude
 	wg.Wait()
 	return err
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"workjournal/internal/process"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 type utterRow struct {
@@ -102,22 +102,23 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, dayStart, _ := parseDate(day)
-	hourStart := dayStart.Add(time.Duration(hour) * time.Hour)
 	doc, err := process.Load(s.Paths.DerivedHour(day, hour))
 	switch {
 	case err == nil:
 		for _, u := range doc.Transcript {
+			// Seconds into the hour on the clock the audio was recorded by,
+			// as the chunk names are.
+			hourStart := time.Date(u.Start.Year(), u.Start.Month(), u.Start.Day(), hour, 0, 0, 0, u.Start.Location())
 			off := int(u.Start.Sub(hourStart) / time.Second)
 			if off < 0 {
 				off = 0
 			}
-			p.Transcript = append(p.Transcript, utterRow{Offset: off, Clock: u.Start.Local().Format("15:04:05"),
+			p.Transcript = append(p.Transcript, utterRow{Offset: off, Clock: wallclock.Format(u.Start, "15:04:05"),
 				Speaker: u.Speaker, Track: u.Track, Text: u.Text})
 		}
-		p.Removed, p.Withheld = removedLines(doc.Removed), doc.SpeechWithheld
+		p.Removed, p.Withheld = process.RemovedNotices(doc.Removed), doc.SpeechWithheld
 		for _, sc := range doc.Screens {
-			p.Screens = append(p.Screens, screenRow{File: filepath.Base(sc.File), Clock: sc.Time.Local().Format("15:04:05")})
+			p.Screens = append(p.Screens, screenRow{File: filepath.Base(sc.File), Clock: wallclock.Format(sc.Time, "15:04:05")})
 		}
 	case errors.Is(err, os.ErrNotExist):
 		p.DocNote = "No derived data for this hour yet."
@@ -140,36 +141,10 @@ func (s *Server) handleHour(w http.ResponseWriter, r *http.Request) {
 		if g.Hour != hour {
 			continue
 		}
-		p.Segments = append(p.Segments, segRow{Start: g.Start.Format(time.RFC3339Nano), Clock: g.Start.Local().Format("15:04"),
+		p.Segments = append(p.Segments, segRow{Start: g.Start.Format(time.RFC3339Nano), Clock: wallclock.Clock(g.Start),
 			App: g.App, Title: g.Title, Category: g.Category, Source: g.Source, Dur: g.End.Sub(g.Start), Color: colorOf(colors, g.Category)})
 	}
 	render(w, "hour", p)
-}
-
-// removedLines describes the spans the privacy filter removed, without
-// reason or content: "4 min of non-work audio removed (13:12–13:16)". Spans
-// less than a minute apart read as one.
-func removedLines(spans []process.RemovedSpan) []string {
-	var merged []process.RemovedSpan
-	for _, r := range spans {
-		if n := len(merged); n > 0 && r.Start.Sub(merged[n-1].End) < time.Minute {
-			if r.End.After(merged[n-1].End) {
-				merged[n-1].End = r.End
-			}
-			continue
-		}
-		merged = append(merged, r)
-	}
-	var out []string
-	for _, r := range merged {
-		span := r.Start.Local().Format("15:04") + "–" + r.End.Local().Format("15:04")
-		if d := r.End.Sub(r.Start); d < time.Minute {
-			out = append(out, "Under a minute of non-work audio removed ("+span+")")
-		} else {
-			out = append(out, fmt.Sprintf("%d min of non-work audio removed (%s)", int(math.Round(d.Minutes())), span))
-		}
-	}
-	return out
 }
 
 // audioFor lists the hour's audio chunks (HHMM-<track>.m4a, HHMMSS-… or HHMMSS-<n>-…).

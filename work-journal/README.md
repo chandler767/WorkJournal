@@ -65,6 +65,37 @@ are kept in `cache/<day>/` and reused by later runs and the final pass. A cache 
 redone when its file's size or modification time changes, or the whisper model changes. An
 unchanged in-progress hour is not summarized again.
 
+## Time zones
+
+Times are kept and shown on the clock where they were recorded. A meeting recorded at 10:05 in
+London still reads 10:05 after you fly to New York, marked with its zone (**10:05 BST**)
+whenever that zone is not the Mac's. The zone is named only when the offset leaves no doubt;
+otherwise it reads, for example, **UTC+01:00**. Each day is processed in the zone it was
+recorded in, which comes from the offsets in that day's activity log. Days already processed
+in another zone can be reprocessed, and their cached speech is reused.
+
+Each moment belongs to exactly one hour: the hour its clock read at the time, using the zone
+in force when it happened. A flight is filed under the departure clock's hours until the
+first activity on the new clock.
+
+The recorder logs a `zone` event whenever the Mac's time zone or UTC offset changes, and
+when it starts or a new day begins. That marks exactly when the clock moved. Without one
+(an older recorder, for example), a recording made between the change and the next
+activity event is placed by its name: 10:30 after 09:10 CDT and before 10:45 EDT is
+10:30 EDT. It stays in the hour it is named in, and an exclusion or pause in force then
+still removes it.
+
+Overnight, the hours of a new day before its first event use that day's first offset. If
+the zone changed overnight with no event logged at the change, the first hour of the new day
+can overlap the end of the previous one. The `zone` event logged at the start of each day
+usually prevents this.
+
+Caveat: when the clock goes back during a day (flying west, or the autumn DST change), the
+same clock hour happens twice. Both stretches are filed under that one hour of the day, so
+they read as one hour, though nothing is counted twice. Where an audio chunk or screenshot
+name repeats, only one file can exist. Speech in the repeated stretch can then be placed on
+the wrong side of the change.
+
 ## Claude usage limits
 
 When Claude reports a usage or rate limit, work-journal stops asking Claude until the limit
@@ -79,6 +110,67 @@ limit resets, the waiting hours are processed oldest first. Meanwhile the day an
 button, which tries straight away (and pauses again if Claude is still limited).
 `journal doctor` reports the limit and its reset time. Settings → Claude usage
 (`pause_on_usage_limit`) turns pausing off; Claude is then asked again on the usual schedule.
+
+## Ask your journal
+
+Type a question into the **Ask** box at the top of the day page, or open **Ask** (`/ask`):
+"What did we decide about the release?", "How long was I in meetings yesterday?", "What
+was I doing at 2pm on Tuesday?". `journal serve` runs `claude -p` in the background with
+only the journal's own read-only tools (no file, shell or web tools, no other MCP servers,
+in an empty temporary directory so no project settings or skills load). Answers cite the
+hours and meetings they come from as dashboard links, and say so when the journal does not
+know. The page updates when the answer lands (up to 3 minutes); one question runs at a time,
+and the last 20 questions and answers are kept on the Ask page. During a Claude usage-limit
+pause, questions wait too; **Ask anyway** tries that one question now (summaries stay paused).
+Ask loads no Claude settings files at all (`--setting-sources ""`), so no user hooks see the
+journal data it reads. Because transcripts and screen text can contain anything you saw or heard,
+Claude is told to treat them as untrusted data, and the dashboard shows no images from Claude
+or the journals and keeps only links into the dashboard itself; a Content-Security-Policy
+stops every page from loading anything from another site.
+
+The same tools are available to any Claude client through `journal mcp`, a read-only MCP
+server over stdio. It opens the database read-only, so it runs safely beside `journal serve`.
+It returns only what the dashboard shows: summaries, privacy-filtered transcripts (removed
+speech appears only as "4 min of non-work audio removed"; hours whose privacy check failed
+show that note, not speech), meetings, time totals and the journal entries. It never returns
+raw recordings, screenshots, file paths, `cache/`, voice profiles or privacy decisions.
+
+| Tool | What it returns |
+| --- | --- |
+| `search(query, from?, to?, limit≤50, offset?)` | ranked snippets from transcripts, screen text, notes and meeting summaries, with dashboard links |
+| `get_day(date)` | the daily journal entry, each hour's status, narrative, notes and action items, minutes per category, the day's meetings |
+| `get_hour(date, hour, include_transcript?, transcript_offset?)` | the hour's summary, timeline, activity and meetings; the transcript on request, paged |
+| `list_meetings(from, to, person?)` | meetings with time, app, title, participants and a one-line summary |
+| `get_meeting(id, include_transcript?, offset?)` | summary, decisions, action items, participants; the transcript on request, paged |
+| `time_report(from, to, group_by)` | minutes by `category`, `day` or `app` |
+| `get_week(week)` | the weekly rollup and minutes per category for each day |
+
+Dates are `YYYY-MM-DD`, `today` or `yesterday`; weeks are `YYYY-Www` (e.g. `2026-W41`).
+Each response is capped at about 40 KB; a cut response says which offset to ask for next.
+
+Register it with Claude Code (once, for every project):
+
+```sh
+claude mcp add --scope user work-journal -- /absolute/path/to/work-journal/bin/journal mcp
+```
+
+Add `--config /path/to/config.toml` after `mcp` if your config is not
+`~/WorkJournal/config.toml`. For Claude Desktop, add it to
+`~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "work-journal": {
+      "command": "/absolute/path/to/work-journal/bin/journal",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+`go test -tags=ask -run TestAskEval ./internal/mcpserver/` checks real answers over a
+fixture day (it needs a logged-in `claude`).
 
 ## Screen capture
 
@@ -128,6 +220,19 @@ survives a restart. While Auto records a call, today's page names the app using 
 microphone ("Audio: Auto · recording (Zoom)"). The recorder logs `audio_mode`,
 `audio_auto_start` (with the reason, `call` or `in_person`, and for a call the bundle id of
 the app that triggered it) and `audio_auto_stop` events to `activity.jsonl`.
+
+While audio is **Off**, the recorder reminds you with a notification to switch to Auto:
+
+- when a call looks like it started (a meeting app or window is in front, or another app is
+  using the microphone). The reminder clears when the call ends, and is not shown again
+  within 10 minutes;
+- when you come back after the Mac was idle (`idle_minutes`) or asleep. That reminder clears
+  after 2 minutes.
+
+Either reminder also clears as soon as audio leaves Off, and its **Switch to Auto** button
+switches it. No reminder is shown while paused, while an excluded app or window is in front, or
+while the disk guard has stopped audio. Allow notifications for WorkJournalRecorder
+when macOS asks (System Settings → Notifications).
 
 ## Meetings
 
@@ -260,7 +365,9 @@ already-built recorder.
   run uses the repo root as its working directory, so it loads that repo's project
   settings (`.claude/`, `CLAUDE.md`) and installed skills. Skill inputs are written to,
   and read from, `derived/` only. The session has only the Skill and Read tools and no
-  MCP servers (`--strict-mcp-config`); `derived/` is added with `--add-dir`, and raw media,
+  MCP servers (`--strict-mcp-config`). Only project settings load (`--setting-sources project`),
+  so your user-level settings and hooks never see journal text, and sessions are not saved
+  (`--no-session-persistence`). `derived/` is added with `--add-dir`, and raw media,
   `voices/` and `journal.db` are never passed to it. These are Claude Code's tool and
   directory settings, not an OS sandbox.
 - Screen text sent to Claude is trimmed first: a line already on any of the previous 10

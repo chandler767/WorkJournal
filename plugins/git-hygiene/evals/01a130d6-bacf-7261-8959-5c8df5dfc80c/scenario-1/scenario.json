@@ -1,0 +1,19 @@
+{
+  "description": "Fix WAV header produced by afconvert so the speaker diarizer can read audio converted from .m4a recordings",
+  "fixtures": {
+    "codebase": {
+      "type": "commit",
+      "repoUrl": "https://github.com/chandler767/WorkJournal.git",
+      "ref": "00ec46d5568f21916a535a02cdee187376b39a5f",
+      "installPath": ".",
+      "exclude": [
+        "*.mdc",
+        "*.md",
+        "tile.json",
+        "tessl.json",
+        ".tessl/",
+        ".tessl-plugin/plugin.json"
+      ]
+    }
+  }
+}

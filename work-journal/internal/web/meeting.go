@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"workjournal/internal/config"
@@ -16,6 +15,7 @@ import (
 	"workjournal/internal/scheduler"
 	"workjournal/internal/skills"
 	"workjournal/internal/store"
+	"workjournal/internal/wallclock"
 )
 
 var meetingIDRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{4}-[a-z0-9-]+$`)
@@ -48,19 +48,6 @@ var notices = map[string]string{
 	"enroll-failed": "enrolment failed — name saved, voice not learned (see the log)",
 }
 
-// speakerDisplay is the one name-display rule used by the speaker list and
-// the transcript labels.
-func speakerDisplay(speaker string, p *store.ParticipantRecord, threshold float64) string {
-	switch {
-	case p == nil || p.Name == "":
-		return speaker
-	case p.Confirmed || p.Confidence >= threshold:
-		return p.Name
-	default:
-		return speaker + " (" + p.Name + "?)"
-	}
-}
-
 func (s *Server) loadMeeting(w http.ResponseWriter, id string) (store.MeetingRecord, bool) {
 	if !meetingIDRE.MatchString(id) {
 		http.Error(w, "bad meeting id", http.StatusBadRequest)
@@ -85,7 +72,7 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.Cfg()
 	p := meetingPage{Title: m.Title, ID: m.ID, Day: m.Day, App: m.App,
-		Time:    m.Start.Local().Format("15:04") + "–" + m.End.Local().Format("15:04"),
+		Time:    wallclock.Span(m.Start, m.End),
 		Notice:  notices[r.URL.Query().Get("notice")],
 		CanName: cfg.Diarization != "off"}
 	if m.SummaryJSON != "" {
@@ -105,11 +92,11 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	for i := range parts {
 		byName[parts[i].Speaker] = &parts[i]
 		p.Speakers = append(p.Speakers, speakerRow{Speaker: parts[i].Speaker, Confirmed: parts[i].Confirmed,
-			Display: speakerDisplay(parts[i].Speaker, &parts[i], cfg.NameConfidenceThreshold)})
+			Display: process.SpeakerDisplay(parts[i].Speaker, &parts[i], cfg.NameConfidenceThreshold)})
 	}
 
 	// Walk every hour the meeting touches, keeping utterances in [Start, End].
-	for _, t := range hourStarts(m.Start, m.End, time.Local) {
+	for _, t := range process.HourStarts(m.Start, m.End, m.Start.Location()) {
 		doc, err := process.Load(s.Paths.DerivedHour(config.DayKey(t), t.Hour()))
 		if err != nil {
 			continue // hour not processed yet; the page shows what exists
@@ -118,8 +105,8 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 			if u.Start.Before(m.Start) || u.Start.After(m.End) {
 				continue
 			}
-			p.Transcript = append(p.Transcript, meetingUtter{Clock: u.Start.Local().Format("15:04:05"),
-				Speaker: speakerDisplay(u.Speaker, byName[u.Speaker], cfg.NameConfidenceThreshold), Track: u.Track, Text: u.Text})
+			p.Transcript = append(p.Transcript, meetingUtter{Clock: wallclock.Format(u.Start, "15:04:05"),
+				Speaker: process.SpeakerDisplay(u.Speaker, byName[u.Speaker], cfg.NameConfidenceThreshold), Track: u.Track, Text: u.Text})
 		}
 	}
 	render(w, "meeting", p)
@@ -168,18 +155,4 @@ func (s *Server) handleSpeaker(w http.ResponseWriter, r *http.Request) {
 		to += "?notice=enroll-failed"
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
-}
-
-// hourStarts returns the local clock hours (h:00 in loc) that [start, end)
-// touches, starting with the hour holding start.
-func hourStarts(start, end time.Time, loc *time.Location) []time.Time {
-	s := start.In(loc)
-	var out []time.Time
-	for h := 0; ; h++ {
-		t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour()+h, 0, 0, 0, loc)
-		if !t.Before(end) && h > 0 {
-			return out
-		}
-		out = append(out, t)
-	}
 }

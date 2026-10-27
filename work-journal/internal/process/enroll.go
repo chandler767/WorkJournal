@@ -188,8 +188,8 @@ func (p *Pipeline) EnrollSpeaker(ctx context.Context, m store.MeetingRecord, spe
 // touches; "system" when the label is found on neither.
 func (p *Pipeline) speakerTrack(m store.MeetingRecord, speaker string) string {
 	per := map[string]time.Duration{}
-	s := m.Start.In(time.Local)
-	for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, time.Local); t.Before(m.End) || t.Equal(m.End); t = t.Add(time.Hour) {
+	s := m.Start // its recorded wall clock names the derived hours
+	for t := time.Date(s.Year(), s.Month(), s.Day(), s.Hour(), 0, 0, 0, s.Location()); t.Before(m.End) || t.Equal(m.End); t = t.Add(time.Hour) {
 		doc, err := Load(p.Paths.DerivedHour(config.DayKey(t), t.Hour()))
 		if err != nil {
 			continue
@@ -300,11 +300,12 @@ func (p *Pipeline) meetingChunks(m store.MeetingRecord, track string) ([]timedCh
 	return out, nil
 }
 
-// meetingDays lists the local days from the meeting's start to its end.
+// meetingDays lists the recorded days from the meeting's start to its end.
 func meetingDays(m store.MeetingRecord) []string {
-	s, e := m.Start.In(time.Local), m.End.In(time.Local)
+	loc := m.Start.Location()
+	s, e := m.Start, m.End.In(loc)
 	var days []string
-	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.Local); !d.After(e); d = d.AddDate(0, 0, 1) {
+	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, loc); !d.After(e); d = d.AddDate(0, 0, 1) {
 		days = append(days, config.DayKey(d))
 	}
 	return days
@@ -349,11 +350,7 @@ func (p *Pipeline) relabel(m store.MeetingRecord, track, speaker, name string, h
 // with doc's, leaving the notes and meeting summaries of its summary
 // indexed (unlike IndexText).
 func (p *Pipeline) IndexTranscript(doc *HourDoc) error {
-	start, _, err := hourBounds(doc.Day, doc.Hour)
-	if err != nil {
-		return err
-	}
-	if err := p.Store.ReplaceTextKinds(doc.Day, doc.Hour, []string{"transcript", "ocr"}, textDocs(doc, start)); err != nil {
+	if err := p.Store.ReplaceTextKinds(doc.Day, doc.Hour, []string{"transcript", "ocr"}, textDocs(doc)); err != nil {
 		return fmt.Errorf("index text: %w", err)
 	}
 	return nil
@@ -361,11 +358,7 @@ func (p *Pipeline) IndexTranscript(doc *HourDoc) error {
 
 // IndexText replaces the hour's indexed transcript and OCR text with doc's.
 func (p *Pipeline) IndexText(doc *HourDoc) error {
-	start, _, err := hourBounds(doc.Day, doc.Hour)
-	if err != nil {
-		return err
-	}
-	if err := p.Store.ReplaceText(doc.Day, doc.Hour, textDocs(doc, start)); err != nil {
+	if err := p.Store.ReplaceText(doc.Day, doc.Hour, textDocs(doc)); err != nil {
 		return fmt.Errorf("index text: %w", err)
 	}
 	return nil

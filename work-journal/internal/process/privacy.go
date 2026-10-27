@@ -178,7 +178,7 @@ func (p *Pipeline) decidePrivacy(ctx context.Context, day string, hour int, us [
 		}) {
 			continue
 		}
-		in.Utterances = append(in.Utterances, privacyLine{Index: len(sent), Time: u.Start.In(time.Local).Format("15:04:05"),
+		in.Utterances = append(in.Utterances, privacyLine{Index: len(sent), Time: u.Start.Format("15:04:05"),
 			Track: u.Track, Speaker: speaker(u), Text: u.Text, Context: decided})
 		sent = append(sent, u)
 	}
@@ -254,8 +254,8 @@ func (p *Pipeline) runPrivacy(ctx context.Context, day string, hour int, in priv
 func (p *Pipeline) privacyMeetings(us []media.Utterance, meetings []activity.Meeting) []privacyMeeting {
 	out := []privacyMeeting{}
 	for _, m := range meetings {
-		pm := privacyMeeting{ID: m.ID, App: m.App, Start: m.Start.In(time.Local).Format("15:04:05"),
-			End: m.End.In(time.Local).Format("15:04:05"), Participants: []string{}}
+		pm := privacyMeeting{ID: m.ID, App: m.App, Start: m.Start.Format("15:04:05"),
+			End: m.End.Format("15:04:05"), Participants: []string{}}
 		add := func(s string) {
 			if s != "" && s != "others" && s != unknownSpeaker && !slices.Contains(pm.Participants, s) {
 				pm.Participants = append(pm.Participants, s)
@@ -358,6 +358,8 @@ func removedSpans(us []media.Utterance, dropped map[int]string) []RemovedSpan {
 type hourAudio struct {
 	day        string
 	hour       int
+	midnight   time.Time  // of day, on its recorded clock
+	seen       hourWindow // the hour's instants up to cut
 	start, end time.Time
 	cut        time.Time
 	events     []activity.Event
@@ -385,7 +387,7 @@ type hearing struct {
 // and any other failure, returns the error and nothing is written.
 func (p *Pipeline) filterHour(ctx context.Context, a hourAudio, h *hearing, partial bool) (*hearing, error) {
 	relabel := func(speech []media.Utterance) (*hearing, error) {
-		again, err := p.detectMeetings(a.day, a.hour, a.start, a.cut, a.events, speech)
+		again, err := p.detectMeetings(a.day, a.hour, a.midnight, a.seen, a.events, speech)
 		if err != nil {
 			return nil, err
 		}
@@ -433,7 +435,7 @@ func (p *Pipeline) ForgetPrivacy(day string, hour int) error {
 	if _, err := os.Stat(p.privacyCachePath(day)); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	start, end, err := hourBounds(day, hour)
+	w, err := hourBounds(p.Paths, day, hour)
 	if err != nil {
 		return err
 	}
@@ -443,7 +445,7 @@ func (p *Pipeline) ForgetPrivacy(day string, hour int) error {
 		if len(parts) != 3 {
 			continue
 		}
-		if t, err := time.Parse(time.RFC3339Nano, parts[1]); err == nil && !t.Before(start) && t.Before(end) {
+		if t, err := time.Parse(time.RFC3339Nano, parts[1]); err == nil && w.contains(t) {
 			delete(c.Lines, k)
 		}
 	}
