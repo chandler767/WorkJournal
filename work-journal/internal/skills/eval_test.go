@@ -118,7 +118,7 @@ func check(t *testing.T, name string, out any) {
 				}
 			}
 		}
-	case "summarize-meeting/01": // "Thanks, Priya" cue + on-screen "Priya N."
+	case "summarize-meeting/01": // on-screen "Priya N." label; "Thanks, Priya" alone names no one
 		m := out.(*MeetingSummary)
 		var priya []Participant
 		for _, p := range m.Participants {

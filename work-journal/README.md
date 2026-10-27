@@ -185,8 +185,8 @@ hour, a time range within a day, or a whole day. There are two kinds:
   call". It goes to the hour and meeting summaries for the time it covers, and to the day's
   journal entry (and so to the weekly rollup), and search finds it. It is your note, never a
   recording: it adds no time to any category and cannot create or name a meeting on its
-  own. A context note that names people does not name a speaker unless the transcript ties
-  the name to that speaker.
+  own. A context note that names people does not name a speaker unless that speaker
+  introduces themselves by that name in the transcript.
 - **Correction**: an instruction about what was recorded, such as "13:10–13:20 was people
   next to me, not me; disregard it" or "the person called Speaker 2 at 15:00 is Maya". It
   goes to the [privacy filter](#privacy) as a strong hint for the speech it covers, and to
@@ -267,6 +267,19 @@ survives a restart. While Auto records a call, today's page names the app using 
 microphone ("Audio: Auto · recording (Zoom)"). The recorder logs `audio_mode`,
 `audio_auto_start` (with the reason, `call` or `in_person`, and for a call the bundle id of
 the app that triggered it) and `audio_auto_stop` events to `activity.jsonl`.
+
+While audio is **Off**, the recorder reminds you with a notification to switch to Auto:
+
+- when a call looks like it started (a meeting app or window is in front, or another app is
+  using the microphone). The reminder clears when the call ends, and is not shown again
+  within 10 minutes;
+- when you come back after the Mac was idle (`idle_minutes`) or asleep. That reminder clears
+  after 2 minutes.
+
+Either reminder also clears as soon as audio leaves Off, and its **Switch to Auto** button
+switches it. No reminder is shown while paused, while an excluded app or window is in front, or
+while the disk guard has stopped audio. Allow notifications for WorkJournalRecorder
+when macOS asks (System Settings → Notifications).
 
 ## Meetings
 

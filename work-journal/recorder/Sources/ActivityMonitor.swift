@@ -90,6 +90,8 @@ final class ActivityMonitor {
     var onMeetingChange: ((Bool) -> Void)?
     var onSleep: (() -> Void)?
     var onWake: (() -> Void)?
+    /// `idle` changed (an `idle` or `active` event was just logged).
+    var onIdleChange: (() -> Void)?
     /// The frontmost app or its focused window title changed (not fired for the first poll).
     var onSwitch: (() -> Void)?
 
@@ -103,7 +105,8 @@ final class ActivityMonitor {
     private let log: ActivityLog
     private let policy: PolicyConfig
     private let idleSeconds: Double
-    private var idle = false
+    /// No input for `idleMinutes` (an `idle` event was logged).
+    private(set) var idle = false
     private var lastLogged: Frontmost?
     private var lastSeen: Frontmost?
     /// Bundle id and name of the frontmost app at the last poll.
@@ -203,6 +206,7 @@ final class ActivityMonitor {
         if nowIdle != idle {
             idle = nowIdle
             log.append(nowIdle ? "idle" : "active")
+            onIdleChange?()
         }
     }
 

@@ -24,11 +24,11 @@ Any meeting may also have `user_notes`: notes the user wrote for the journal, ea
 ## Rules specific to this skill
 
 - The mic track speaker (`You`) is always the user; list it as `{"speaker":"You","name":"","confidence":1}` unless a name is given.
-- Name a remote speaker only from transcript cues (for example "thanks, Priya") or on-screen participant labels. Otherwise `name` is `""`.
-- `confidence` is 0-1; direct address or a clear label is high, a weak inference below 0.7. Do not guess from voice or role.
+- Name a remote speaker only when that speaker introduces themselves by name in the transcript (for example "Hi, I'm Priya") or from an on-screen participant label. Being addressed by name never names anyone: "thanks, Priya" does not say which speaker is Priya. Otherwise `name` is `""`.
+- `confidence` is 0-1; a self-introduction or a clear label is high, a weak inference below 0.7. Do not guess from voice or role.
 - List every distinct speaker label in `participants`.
 - `summary`: 2-4 sentences. `decisions` and `action_items` only when stated; `owner` is `""` if unclear.
-- `user_note` is written by the user, not said in the meeting. Use it for context: what the event was, who was there, what the user cares about. Let it shape the summary's focus, but never report as said or decided anything only the note states. A person the note names is not a speaker's name unless the transcript ties that name to that speaker: the speaker introduces themselves by it, or another speaker addresses them by it. A name a speaker says belongs to the person addressed, never to the one saying it (Speaker 1 saying "thanks, Maya" does not make Speaker 1 Maya), and a matching topic (the note says Maya demoed, a speaker talks about a demo) is not enough, so `name` stays `""`.
+- `user_note` is written by the user, not said in the meeting. Use it for context: what the event was, who was there, what the user cares about. Let it shape the summary's focus, but never report as said or decided anything only the note states. A person the note names becomes a speaker's name only when that speaker introduces themselves by it in the transcript. Being addressed by name never names anyone (Speaker 1 asking "Maya, what do you think?" does not say which speaker is Maya), and a matching topic (the note says Maya demoed, a speaker talks about a demo) is not enough, so `name` stays `""`.
 - A `correction` in `user_notes` is the user's own statement about what was recorded and can be used as given: a correction that explicitly names a speaker ("Speaker 2 at 15:00 is Maya") names that speaker, with confidence 1. Speech a correction says to disregard is left out of the summary.
 - Empty transcript gives `{"participants":[],"summary":"","decisions":[],"action_items":[]}`.
 

@@ -1,0 +1,14 @@
+{
+  "name": "Media helpers use Runner for external commands",
+  "instruction": "Media helper files must use the package Runner abstraction instead of directly executing external commands.",
+  "relevant_when": "A non-test Go source file under work-journal/internal/media other than exec.go.",
+  "context": "The media package wraps command-line tools such as afconvert, whisper-cli, sips, file, and afinfo. Keeping direct os/exec usage in exec.go lets tests stub those tools through media.Runner instead of spawning real processes.",
+  "scope": "file",
+  "scope_reason": "Each media helper file either contains direct external command execution or delegates through Runner, so one file has enough evidence for this invariant.",
+  "checklist": [
+    {
+      "name": "no-direct-os-exec",
+      "rule": "The file does not import os/exec and does not call exec.Command or exec.CommandContext directly. Calls through a Runner value are acceptable. If this is exec.go or a test file, return not applicable."
+    }
+  ]
+}
