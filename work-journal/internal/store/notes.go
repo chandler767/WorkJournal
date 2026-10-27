@@ -166,7 +166,11 @@ func enqueue(tx *sql.Tx, queue []NoteQueueItem) error {
 
 // Note returns the note with id.
 func (s *Store) Note(id int64) (NoteRecord, bool, error) {
-	n, err := scanNote(s.db.QueryRow(`SELECT `+noteCols+` FROM notes WHERE id=?`, id))
+	t, err := s.notesTable()
+	if err != nil {
+		return NoteRecord{}, false, err
+	}
+	n, err := scanNote(s.db.QueryRow(`SELECT `+noteCols+` FROM `+t+` WHERE id=?`, id))
 	if isNoRows(err) {
 		return NoteRecord{}, false, nil
 	}
@@ -179,7 +183,11 @@ func (s *Store) Note(id int64) (NoteRecord, bool, error) {
 // NotesOn returns day's notes: whole-day notes first, then by start, then
 // oldest first.
 func (s *Store) NotesOn(day string) ([]NoteRecord, error) {
-	rows, err := s.db.Query(`SELECT `+noteCols+` FROM notes WHERE day=? ORDER BY start, id`, day)
+	t, err := s.notesTable()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT `+noteCols+` FROM `+t+` WHERE day=? ORDER BY start, id`, day)
 	if err != nil {
 		return nil, err
 	}

@@ -21,7 +21,7 @@ JSON object with exactly these fields:
 - `day` (string, YYYY-MM-DD) and `hour` (integer, 0-23).
 - `segments`: array of `{index, app, title, start, minutes, category}` (`start` is `HH:MM`). `category` may be `""` and is informational only; do not copy it into the output.
 - `meetings`: array of `{id, start, end, app}` (`start`/`end` are `HH:MM`).
-- `transcript`: array of `{speaker, text}`; `You` is the mic track.
+- `transcript`: array of `{t, speaker, text}`; `t` is when the line was said, `HH:MM:SS` on the hour's clock, and `You` is the mic track.
 - `ocr`: array of on-screen text lines.
 - `user_notes`: notes the user wrote for the journal, each `{kind, from, to, title, context_lines}`. Join `context_lines` with spaces. `from`/`to` (`HH:MM`, `to` exclusive) is the time range a note covers; both are absent for a note on the whole day. Usually `[]`.
 
@@ -34,7 +34,7 @@ Be concrete. Name the specific files, documents, URLs and sites, repos, tickets 
 - `notes`: at most 12 specific factual bullets, most important first. Each should carry a concrete detail (file, page, ticket, command, person, decision), not a restatement of the app name.
 - `main_focus`: one short phrase for what the hour was mostly about; `""` if nothing happened.
 - `action_items`: only commitments explicitly stated in the transcript or on screen. `owner` is `"You"` for the mic track, otherwise the speaker label or name given; `""` if unknown.
-- `user_notes` are written by the user, not recorded. A `context` note (what a call was, a pasted doc) tells you what the recorded activity was about: use it to name and explain what the segments, meetings and transcript show, but never report as done, said or decided anything only the note states, and never add a timeline entry or time for it. A person a context note names is not a speaker's name unless that speaker introduces themselves by it in the transcript. A `correction` is the user's own statement about what was recorded; follow it (for example "the person called Speaker 2 at 15:00 is Maya" lets you call Speaker 2 Maya; "disregard speech 13:10-13:20" means leave anything said then out).
+- `user_notes` are written by the user, not recorded. A `context` note (what a call was, a pasted doc) tells you what the recorded activity was about: use it to name and explain what the segments, meetings and transcript show, but never report as done, said or decided anything only the note states, and never add a timeline entry or time for it. A person a context note names is not a speaker's name unless that speaker introduces themselves by it in the transcript. A `correction` is the user's own statement about what was recorded; follow it (for example "the person called Speaker 2 at 15:00 is Maya" lets you call Speaker 2 Maya; "disregard speech 13:10-13:20" means leave out the transcript lines whose `t` is in that range, and anything only they show).
 - If segments, meetings, transcript and ocr are all empty, return `{"narrative":"","timeline":[],"notes":[],"main_focus":"","action_items":[]}`.
 
 ## Output schema

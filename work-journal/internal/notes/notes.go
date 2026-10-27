@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -100,14 +101,10 @@ func ReadFile(path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	b := make([]byte, MaxBytes+1)
-	n, err := f.Read(b)
-	for err == nil && n < len(b) {
-		var m int
-		m, err = f.Read(b[n:])
-		n += m
+	b, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	if err != nil {
+		return "", err
 	}
-	b = b[:n]
 	if len(b) > MaxBytes {
 		return "", fmt.Errorf("%s is over the %d KB limit", path, MaxBytes/1024)
 	}
@@ -151,7 +148,9 @@ func Hours(n store.NoteRecord) []int {
 // entry, and the hours it covers summarized again (a context note) or
 // reprocessed with their privacy decisions cleared (a correction). A
 // whole-day correction covers every hour of the day the store has; a
-// whole-day context note only the journal entry.
+// whole-day context note only the journal entry. A meeting the note covers
+// is summarized in the hour it ended (process.HourDoc.EndedMeetings), so
+// that hour is summarized again too, after the hours before it.
 func Queue(st *store.Store, versions ...*store.NoteRecord) ([]store.NoteQueueItem, error) {
 	var out []store.NoteQueueItem
 	for _, n := range versions {
@@ -175,6 +174,22 @@ func Queue(st *store.Store, versions ...*store.NoteRecord) ([]store.NoteQueueIte
 		for _, h := range hours {
 			out = append(out, store.NoteQueueItem{Day: n.Day, Hour: h, Redo: redo})
 		}
+		if n.Start != "" {
+			ms, err := st.MeetingsOn(n.Day)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range ms {
+				if m.Imported || !Covers(*n, m.Start, m.End) {
+					continue
+				}
+				day := config.DayKey(m.End)
+				out = append(out, store.NoteQueueItem{Day: day, Hour: m.End.Hour(), Redo: store.RedoSummary})
+				if day != n.Day {
+					out = append(out, store.NoteQueueItem{Day: day, Hour: -1, Redo: store.RedoSummary})
+				}
+			}
+		}
 		out = append(out, store.NoteQueueItem{Day: n.Day, Hour: -1, Redo: store.RedoSummary})
 	}
 	return out, nil
@@ -188,22 +203,24 @@ func RawGone(p config.Paths, day string) bool {
 }
 
 // spanMinutes returns [start, end) as minutes of day on the clock each
-// time was recorded by, clamped to the day; ok is false when the span
-// misses day.
+// time was recorded by, clamped to the day, with start rounded down and end
+// up so that a span reaching into a minute overlaps it; ok is false when
+// the span misses day.
 func spanMinutes(day string, start, end time.Time) (int, int, bool) {
-	at := func(t time.Time) int {
+	at := func(t time.Time, up bool) int {
 		switch d := config.DayKey(t); {
 		case d < day:
 			return 0
 		case d > day:
 			return 24 * 60
 		}
-		return t.Hour()*60 + t.Minute()
+		m := t.Hour()*60 + t.Minute()
+		if up && (t.Second() > 0 || t.Nanosecond() > 0) {
+			m++
+		}
+		return m
 	}
-	s, e := at(start), at(end)
-	if e == s && end.After(start) {
-		e = s + 1 // under a minute
-	}
+	s, e := at(start, false), at(end, true)
 	return s, e, s < e
 }
 

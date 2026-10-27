@@ -3,6 +3,7 @@ package store
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOpenReadOnlyReadsButNeverWrites(t *testing.T) {
@@ -116,5 +117,43 @@ func TestOpenReadOnlyOlderSchema(t *testing.T) {
 	defer w.Close()
 	if _, ok, err := w.Import("x"); err != nil || ok {
 		t.Fatalf("schema not applied on the next Open: %v %v", ok, err)
+	}
+}
+
+// A read-only store opened before notes existed reads the notes a writer
+// saves later, instead of its empty stand-in.
+func TestOpenReadOnlySeesNotesAddedLater(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "j.db")
+	w, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.db.Exec(`DROP TABLE notes`); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	r, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if ns, err := r.NotesOn("2026-10-07"); err != nil || len(ns) != 0 {
+		t.Fatalf("before: %+v %v", ns, err)
+	}
+	w, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	now := time.Now()
+	id, err := w.AddNote(NoteRecord{Kind: NoteContext, Day: "2026-10-07", Text: "planning", Source: SourceMCP, CreatedAt: now, UpdatedAt: now}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, err := r.NotesOn("2026-10-07"); err != nil || len(ns) != 1 {
+		t.Fatalf("after: %+v %v", ns, err)
+	}
+	if _, ok, err := r.Note(id); err != nil || !ok {
+		t.Fatalf("Note(%d): %v %v", id, ok, err)
 	}
 }

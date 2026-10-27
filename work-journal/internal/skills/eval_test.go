@@ -164,6 +164,10 @@ func check(t *testing.T, name string, out any) {
 		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4, 5, 6, 7}, "personal_non_work")
 	case "privacy-filter/07": // coworkers' work talk the user's correction says to disregard
 		checkDrops(t, out.(*PrivacyResult), []int{1, 2, 3, 4}, "user_note")
+	case "privacy-filter/08": // a correction to disregard one bystander in a work call drops only them
+		checkDrops(t, out.(*PrivacyResult), []int{2, 3}, "user_note")
+	case "privacy-filter/09": // a correction saying who a caller is, on a work call, drops nothing
+		checkDrops(t, out.(*PrivacyResult), nil, "")
 	case "summarize-hour/04": // context note says what the call was
 		h := out.(*HourSummary)
 		all := strings.ToLower(h.Narrative + " " + strings.Join(h.Notes, " ") + " " + h.MainFocus)

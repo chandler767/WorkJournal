@@ -142,17 +142,18 @@ func (j *Jobs) reprocess(ctx context.Context, day string, hour int) error {
 	} else if err != nil {
 		return err
 	}
+	p := j.pipeline()
+	// Ask the privacy filter again, so a wrong removal can be undone. This
+	// comes first: a pending hour (below) has its decisions cleared already.
+	if err := p.ForgetPrivacy(day, hour); err != nil {
+		return err
+	}
 	rec, _, err := j.Store.Hour(day, hour)
 	if err != nil {
 		return err
 	}
 	rec.Day, rec.Hour, rec.Status, rec.UpdatedAt = day, hour, store.StatusPending, j.now()
 	if err := j.Store.UpsertHour(rec); err != nil {
-		return err
-	}
-	p := j.pipeline()
-	// Ask the privacy filter again, so a wrong removal can be undone.
-	if err := p.ForgetPrivacy(day, hour); err != nil {
 		return err
 	}
 	if now := j.now().In(time.Local); day == config.DayKey(now) && hour == now.Hour() {
@@ -192,9 +193,10 @@ func (j *Jobs) resummarize(ctx context.Context, day string, hour int) error {
 // decisions cleared (only summarized again once retention removed the raw
 // recordings), a context note's hours summarized again, and then the day's
 // journal entry and its week's rollup written again where they already
-// were. Hours never processed, or still pending, need nothing: they read
-// the notes when they are. Work that fails stays queued for the next tick,
-// and a day's journal waits for its hours.
+// were. Hours never processed need nothing: they read the notes when they
+// are. Work that fails stays queued for the next tick, and the rest of its
+// day waits: a meeting summarized in a later hour reads the earlier ones,
+// and the journal reads them all.
 func (j *Jobs) ProcessNotes(ctx context.Context) error {
 	queue, err := j.Store.NoteQueue()
 	if err != nil || len(queue) == 0 {
@@ -210,7 +212,7 @@ func (j *Jobs) ProcessNotes(ctx context.Context) error {
 		}
 		var err error
 		switch {
-		case q.Hour < 0 && failed[q.Day]:
+		case failed[q.Day]:
 			continue
 		case q.Hour < 0:
 			err = j.rewriteJournals(ctx, q.Day)
@@ -245,9 +247,11 @@ func (j *Jobs) redoHour(ctx context.Context, q store.NoteQueueItem) error {
 	now := j.now().In(time.Local)
 	current := q.Day == config.DayKey(now) && q.Hour == now.Hour()
 	switch {
-	case !ok && !current, ok && rec.Status == store.StatusPending:
+	case !ok && !current:
 		return nil // processed later, with the notes
-	case q.Redo == store.RedoPrivacy:
+	case q.Redo == store.RedoPrivacy, ok && rec.Status == store.StatusPending:
+		// Only reprocess leaves an hour pending, so a pending hour is one
+		// whose reprocessing was interrupted: finish it.
 		err = j.reprocess(ctx, q.Day, q.Hour)
 		if errors.Is(err, scheduler.ErrMediaExpired) {
 			return nil // nothing left to change

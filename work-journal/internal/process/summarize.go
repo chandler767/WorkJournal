@@ -70,7 +70,7 @@ type (
 		App   string `json:"app"`
 	}
 	lineInput struct {
-		T       string `json:"t,omitempty"`
+		T       string `json:"t,omitempty"` // summarize-hour: HH:MM:SS of the day; summarize-meeting: since its start
 		Speaker string `json:"speaker"`
 		Text    string `json:"text"`
 	}
@@ -382,7 +382,7 @@ func (s *SkillSummarizer) hourInput(doc *HourDoc, cats []string) ([]byte, bool, 
 	}
 	in.Transcript = []lineInput{}
 	for _, u := range visibleSpeech(doc) {
-		in.Transcript = append(in.Transcript, lineInput{Speaker: speaker(u), Text: u.Text})
+		in.Transcript = append(in.Transcript, lineInput{T: u.Start.Format("15:04:05"), Speaker: speaker(u), Text: u.Text})
 	}
 	in.Transcript = splitLines(in.Transcript)
 	ns, err := s.Store.NotesOn(doc.Day)

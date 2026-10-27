@@ -182,8 +182,9 @@ You can add what the recordings miss, or correct what they got wrong, with a not
 hour, a time range within a day, or a whole day. There are two kinds:
 
 - **Context**: free text or a pasted document, such as "this was the Cloudflare planning
-  call". It goes to the hour and meeting summaries for the time it covers, and to the day's
-  journal entry (and so to the weekly rollup), and search finds it. It is your note, never a
+  call". A note with a time range goes to the hour and meeting summaries for that time; a
+  whole-day note does not. Both go to the day's journal entry (and so to the weekly
+  rollup), and search finds them. It is your note, never a
   recording: it adds no time to any category and cannot create or name a meeting on its
   own. A context note that names people does not name a speaker unless that speaker
   introduces themselves by that name in the transcript.
@@ -201,7 +202,8 @@ delete. From the terminal:
 ```sh
 journal note add --date 2026-10-21 --kind correction --from 13:10 --to 13:20 \
   --text "people next to me, not me; disregard it"
-journal note add --date 2026-10-21 --kind context --file ~/Desktop/planning-notes.md
+journal note add --date 2026-10-21 --kind context --from 14:00 --to 15:00 \
+  --file ~/Desktop/planning-notes.md
 journal note list --date 2026-10-21
 ```
 

@@ -1,0 +1,74 @@
+{
+ "day": "2026-10-07",
+ "hour": 13,
+ "meetings": [
+  {
+   "id": "2026-10-07-1300-zoom-us",
+   "app": "zoom.us",
+   "start": "13:00:00",
+   "end": "13:30:00",
+   "participants": [
+    "Remote 1"
+   ]
+  }
+ ],
+ "known_people": [
+  "Priya"
+ ],
+ "user_voice_enrolled": true,
+ "user_notes": [
+  {
+   "kind": "correction",
+   "from": "13:10",
+   "to": "13:20",
+   "title": "",
+   "context_lines": [
+    "Disregard Speaker 3 between 13:10 and 13:20, that was the person at the next desk, not part of my call."
+   ]
+  }
+ ],
+ "utterances": [
+  {
+   "index": 0,
+   "time": "13:10:02",
+   "track": "system",
+   "speaker": "Remote 1",
+   "text": "So the export job times out on accounts with more than ten thousand invoices."
+  },
+  {
+   "index": 1,
+   "time": "13:10:20",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Right, I think we should page through the invoices instead of loading them all."
+  },
+  {
+   "index": 2,
+   "time": "13:11:05",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "Did the vendor send the updated quote for the new chairs yet?"
+  },
+  {
+   "index": 3,
+   "time": "13:11:30",
+   "track": "mic",
+   "speaker": "Speaker 3",
+   "text": "Facilities wants the order in by Friday."
+  },
+  {
+   "index": 4,
+   "time": "13:12:10",
+   "track": "system",
+   "speaker": "Remote 1",
+   "text": "Paging works. Can you open a ticket for it and link the timeout logs?"
+  },
+  {
+   "index": 5,
+   "time": "13:12:40",
+   "track": "mic",
+   "speaker": "You",
+   "text": "Yes, I'll open it after the call."
+  }
+ ]
+}

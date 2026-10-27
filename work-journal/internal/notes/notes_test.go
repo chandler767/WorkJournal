@@ -58,6 +58,10 @@ func TestReadFileRefusesBinary(t *testing.T) {
 	if _, err := ReadFile(bin); err == nil || !strings.Contains(err.Error(), "binary") {
 		t.Fatalf("binary: %v", err)
 	}
+	// A read that fails (here a directory) is an error, not an empty note.
+	if _, err := ReadFile(dir); err == nil {
+		t.Fatal("read error ignored")
+	}
 	big := filepath.Join(dir, "big.txt")
 	os.WriteFile(big, []byte(strings.Repeat("a", MaxBytes+10)), 0o600)
 	if _, err := ReadFile(big); err == nil {
@@ -74,9 +78,33 @@ func TestHoursAndCovers(t *testing.T) {
 	if !Covers(n, at(14, 59), at(15, 30)) || Covers(n, at(15, 0), at(15, 30)) || Covers(n, at(12, 0), at(13, 50)) {
 		t.Error("covers wrong at the range edges")
 	}
+	// Speech reaching a few seconds into 13:50 overlaps a note from 13:50.
+	sec := func(h, m, s int) time.Time { return time.Date(2026, 10, 7, h, m, s, 0, time.Local) }
+	if !Covers(n, sec(13, 49, 50), sec(13, 50, 10)) || Covers(n, sec(13, 49, 0), at(13, 50)) {
+		t.Error("covers wrong within a minute")
+	}
 	whole := store.NoteRecord{Day: day}
 	if !Covers(whole, at(3, 0), at(4, 0)) || Covers(whole, at(3, 0).AddDate(0, 0, 1), at(4, 0).AddDate(0, 0, 1)) {
 		t.Error("whole-day note covers wrong")
+	}
+}
+
+// A ranged note on part of a meeting also queues the hour the meeting
+// ended in, where it is summarized; an imported meeting is not.
+func TestQueueMeetingEndHour(t *testing.T) {
+	st := openStore(t)
+	at := func(h, m int) time.Time { return time.Date(2026, 10, 7, h, m, 0, 0, time.Local) }
+	st.UpsertMeeting(store.MeetingRecord{ID: "m", Day: day, Start: at(9, 30), End: at(10, 30)})
+	q, err := Queue(st, &store.NoteRecord{Kind: store.NoteCorrection, Day: day, Start: "09:40", End: "09:50"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.NoteQueueItem{{Day: day, Hour: 9, Redo: store.RedoPrivacy}, {Day: day, Hour: 10, Redo: store.RedoSummary}, {Day: day, Hour: -1, Redo: store.RedoSummary}}
+	if !reflect.DeepEqual(q, want) {
+		t.Fatalf("queue %+v\nwant %+v", q, want)
+	}
+	if q, _ := Queue(st, &store.NoteRecord{Kind: store.NoteContext, Day: day, Start: "11:00", End: "11:30"}); len(q) != 2 {
+		t.Fatalf("note outside the meeting queued %+v", q)
 	}
 }
 
