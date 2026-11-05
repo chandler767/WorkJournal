@@ -22,7 +22,9 @@ func runPolicyTests() -> Int32 {
     let flat = [UInt8](repeating: 100, count: 256)
     let inverted = flat.map { 255 - $0 }
 
-    let checks: [(String, Bool)] = socketChecks() + zoneChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + audioModeChecks() + audioReminderChecks() + [
+    let checks: [(String, Bool)] = socketChecks() + zoneChecks() + rotateChecks() + restartChecks() + shotChecks() + runOptionChecks() + audioModeChecks() + audioReminderChecks() + micStallChecks() + micDeviceChecks() + [
+        ("meeting title with an en dash", isMeeting(app: "Safari", title: "Meet \u{2013} 30 Min Meeting", PolicyConfig(meetingTitles: ["Meet -"]))),
+        ("meeting title with an em dash", isMeeting(app: "Safari", title: "Meet \u{2014} Standup", PolicyConfig(meetingTitles: ["Meet -"]))),
         ("excluded app 1Password", isExcluded(app: "1Password", title: "", c)),
         ("excluded app case-insensitive", isExcluded(app: "1password", title: "", c)),
         ("excluded title Private Browsing", isExcluded(app: "Safari", title: "Private Browsing — x", c)),

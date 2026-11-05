@@ -195,14 +195,21 @@ func isMeetingContext(app, title string, c config.Config) bool {
 			return true
 		}
 	}
-	lt := strings.ToLower(title)
+	lt := foldTitle(title)
 	for _, k := range c.MeetingTitleKeywords {
-		if k != "" && strings.Contains(lt, strings.ToLower(k)) {
+		if k != "" && strings.Contains(lt, foldTitle(k)) {
 			return true
 		}
 	}
 	return false
 }
+
+// dashFolder maps the dashes window titles use (Safari's "Meet – …" has an en dash) to "-",
+// so the keyword "Meet -" matches whichever one a title has.
+var dashFolder = strings.NewReplacer("\u2013", "-", "\u2014", "-", "\u2012", "-", "\u2212", "-")
+
+// foldTitle lowercases s and folds its dashes to "-" for keyword matching.
+func foldTitle(s string) string { return dashFolder.Replace(strings.ToLower(s)) }
 
 // appAt returns the app/title of the active or idle segment containing t.
 func appAt(segs []Segment, t time.Time) (string, string) {

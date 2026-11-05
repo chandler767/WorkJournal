@@ -100,6 +100,7 @@ final class Recorder {
         autoTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [unowned self] _ in
             autoTick()
             reminderTick()
+            micTick()
         }
         apply()
     }
@@ -154,6 +155,27 @@ final class Recorder {
             })
         case .clear?: n.clear()
         case nil: break
+        }
+    }
+
+    /// Every 2 s: restarts a mic that went silent while running and tells the user, since
+    /// their side of a call is not being recorded; clears that when audio is back.
+    private func micTick() {
+        guard !stopping else { return }
+        switch mic.checkStall() {
+        case .restart(let notify)?:
+            guard notify else { return }
+            eprint("recorder: microphone delivered no audio for \(Int(MicStallWatch.stallAfter)) s; restarting it")
+            log.append("mic_stall")
+            notifier?.showMicStall()
+        case .recovered?:
+            eprint("recorder: microphone audio is back")
+            log.append("mic_recovered")
+            notifier?.clearMicStall()
+        case .clear?:
+            notifier?.clearMicStall()
+        case nil:
+            break
         }
     }
 
