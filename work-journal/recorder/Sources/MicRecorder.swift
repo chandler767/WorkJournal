@@ -114,7 +114,21 @@ func micDeviceChecks() -> [(String, Bool)] {
          chooseMicDevice(defaultID: 9, defaultIsBluetooth: true, builtInID: nil) == 9),
         ("mic device: the built-in mic when there is no default",
          chooseMicDevice(defaultID: nil, defaultIsBluetooth: false, builtInID: 3) == 3),
+        ("mic fallback: the default input when the chosen device fails",
+         micFallbackDevice(chosen: 3, defaultID: 9) == 9),
+        ("mic fallback: none when the default input itself failed",
+         micFallbackDevice(chosen: 9, defaultID: 9) == nil),
+        ("mic fallback: none without a default input",
+         micFallbackDevice(chosen: 3, defaultID: nil) == nil),
     ]
+}
+
+/// The device to try when the engine would not start on `chosen`: the default input, if
+/// that is another device. Selecting the built-in mic while a call app holds a Bluetooth
+/// headset can fail to start (-10868); recording the headset beats recording nothing.
+func micFallbackDevice(chosen: UInt32?, defaultID: UInt32?) -> UInt32? {
+    guard let d = defaultID, d != 0, d != chosen else { return nil }
+    return d
 }
 
 /// CoreAudio queries for picking the microphone device.
@@ -182,6 +196,11 @@ enum MicDevices {
     }
 }
 
+struct MicStartError: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+}
+
 final class MicRecorder {
     /// Wait after an input change before restarting, so a burst of changes (a headset
     /// connecting, then switching profile) restarts the engine once.
@@ -198,6 +217,9 @@ final class MicRecorder {
     private var configObserver: NSObjectProtocol?
     private var pendingRestart: DispatchWorkItem?
     private var lastDevice: AudioDeviceID?
+    /// What `MicDevices.choose()` picked at the last start; the engine may run on the
+    /// fallback instead, and an input change only restarts it when the choice changes.
+    private var chosenDevice: AudioDeviceID?
     /// The input format the running engine started with.
     private var startedFormat: AVAudioFormat?
     var onError: ((String) -> Void)?
@@ -286,7 +308,7 @@ final class MicRecorder {
         guard wanted else { return }
         // Selecting the device posts a change of its own; an engine still running on the
         // device and format it started with needs nothing (restarting it would post another).
-        if running, let engine = engine, engine.isRunning, MicDevices.choose() == lastDevice,
+        if running, let engine = engine, engine.isRunning, MicDevices.choose() == chosenDevice,
            engine.inputNode.outputFormat(forBus: 0) == startedFormat {
             return
         }
@@ -301,29 +323,49 @@ final class MicRecorder {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.changeSettle, execute: work)
     }
 
+    /// Starts on the chosen device, or on the default input when the chosen one fails.
     private func startEngine() {
         guard wanted, !running else { return }
+        let chosen = MicDevices.choose()
+        chosenDevice = chosen
+        let failure: String
+        do {
+            try startEngine(on: chosen)
+            return
+        } catch {
+            failure = error.localizedDescription
+        }
+        guard let fallback = micFallbackDevice(chosen: chosen, defaultID: MicDevices.defaultInput) else {
+            fail(failure)
+            return
+        }
+        eprint("recorder: \(failure); trying \(MicDevices.name(fallback))")
+        do {
+            try startEngine(on: fallback)
+        } catch {
+            fail(error.localizedDescription)
+        }
+    }
+
+    /// The error says which device failed and in what format, so the log tells a format
+    /// problem from a missing device.
+    private func startEngine(on dev: AudioDeviceID?) throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        if let dev = MicDevices.choose() {
+        let label = dev.map(MicDevices.name) ?? "the default input"
+        if let dev = dev {
             // Only when it differs: setting the device posts a configuration change.
             if let unit = input.audioUnit, MicDevices.current(unit) != dev {
                 var id = dev
                 let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                                   &id, UInt32(MemoryLayout<AudioDeviceID>.size))
-                if status != noErr { eprint("recorder: cannot select microphone \(MicDevices.name(dev)) (\(status))") }
-            }
-            if dev != lastDevice {
-                eprint("recorder: microphone input \(MicDevices.name(dev))")
-                lastDevice = dev
+                if status != noErr { eprint("recorder: cannot select microphone \(label) (\(status))") }
             }
         }
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
-            fail("no usable microphone input (format \(inFormat))")
-            return
+            throw MicStartError("no usable microphone input on \(label) (format \(inFormat))")
         }
-        startedFormat = inFormat
         // nil: the tap takes the bus's own format, which never throws a format mismatch;
         // the converter follows each buffer's format.
         input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
@@ -336,16 +378,22 @@ final class MicRecorder {
         }
         do {
             try engine.start()
-            self.engine = engine
-            running = true
-            lastError = nil
-            onRunning?()
         } catch {
             input.removeTap(onBus: 0)
             if let o = configObserver { NotificationCenter.default.removeObserver(o) }
             configObserver = nil
-            fail("cannot start microphone: \(error.localizedDescription)")
+            throw MicStartError("cannot start microphone \(label) (\(Int(inFormat.sampleRate)) Hz, "
+                                + "\(inFormat.channelCount) ch): \(error.localizedDescription)")
         }
+        startedFormat = inFormat
+        if let dev = dev, dev != lastDevice {
+            eprint("recorder: microphone input \(MicDevices.name(dev))")
+            lastDevice = dev
+        }
+        self.engine = engine
+        running = true
+        lastError = nil
+        onRunning?()
     }
 
     /// Reports an error once: start() runs on every state change, and the same denial
