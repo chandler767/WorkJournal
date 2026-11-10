@@ -7,8 +7,14 @@ struct PolicyConfig {
     var meetingTitles: [String] = []
 }
 
+/// Folds the dashes window titles use to "-" (Safari's Google Meet tab is "Meet – …", en dash),
+/// so a keyword such as "Meet -" matches whichever one a title has.
+func foldDashes(_ s: String) -> String {
+    String(s.map { "\u{2012}\u{2013}\u{2014}\u{2212}".contains($0) ? "-" : $0 })
+}
+
 private func containsFold(_ haystack: String, _ needle: String) -> Bool {
-    !needle.isEmpty && haystack.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    !needle.isEmpty && foldDashes(haystack).range(of: foldDashes(needle), options: [.caseInsensitive, .diacriticInsensitive]) != nil
 }
 
 private func equalsFold(_ a: String, _ b: String) -> Bool {

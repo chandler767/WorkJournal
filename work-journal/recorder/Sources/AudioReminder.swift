@@ -99,6 +99,7 @@ func reminderText(_ kind: ReminderKind, app: String) -> (title: String, body: St
 /// Needs the app bundle; without one (or without permission) reminders are only logged.
 final class ReminderNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let id = "audio-reminder"
+    static let micStallID = "mic-stall"
     private static let category = "audio-reminder"
     private static let switchAction = "switch-to-auto"
 
@@ -138,6 +139,24 @@ final class ReminderNotifier: NSObject, UNUserNotificationCenterDelegate {
     func clear() {
         center?.removePendingNotificationRequests(withIdentifiers: [Self.id])
         center?.removeDeliveredNotifications(withIdentifiers: [Self.id])
+    }
+
+    /// The microphone went silent while recording (see `MicStallWatch`). Separate from the
+    /// audio reminder, which only applies while the mode is Off.
+    func showMicStall() {
+        guard let c = center else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Microphone stopped recording"
+        content.body = "No audio has come from the microphone for \(Int(MicStallWatch.stallAfter)) seconds, "
+            + "so your side of a call is not being recorded. Restarting it; this goes away once it records again."
+        c.add(UNNotificationRequest(identifier: Self.micStallID, content: content, trigger: nil)) { error in
+            if let e = error { eprint("recorder: mic stall notification: \(e.localizedDescription)") }
+        }
+    }
+
+    func clearMicStall() {
+        center?.removePendingNotificationRequests(withIdentifiers: [Self.micStallID])
+        center?.removeDeliveredNotifications(withIdentifiers: [Self.micStallID])
     }
 
     /// Shows the reminder even though the recorder (a menu bar app) counts as frontmost.

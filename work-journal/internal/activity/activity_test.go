@@ -403,3 +403,18 @@ func TestAudioModeEventsIgnoredBySegments(t *testing.T) {
 		{at(14, 20), at(15, 0), "B", "b", KindActive},
 	})
 }
+
+func TestMeetingTitleKeywordIgnoresDashKind(t *testing.T) {
+	c := config.Config{MeetingTitleKeywords: []string{"Meet -"}}
+	for _, title := range []string{
+		"Meet – 30 Min Meeting between Jonathan Murray and Chandler Mayo", // Safari: en dash
+		"Meet — Standup", "Meet - Standup",
+	} {
+		if !isMeetingContext("Safari", title, c) {
+			t.Errorf("%q: not a meeting", title)
+		}
+	}
+	if isMeetingContext("Safari", "Meetup notes", c) {
+		t.Error("Meetup notes: matched")
+	}
+}
